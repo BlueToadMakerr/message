@@ -384,3 +384,136 @@ dialog#lightbox img { max-width: 100%; max-height: 100%; border-radius: 8px; }
   .call-tile, .call-tile-video, .call-tile-placeholder { min-height: 125px; }
   .local-stage { width: 34vw; }
 }
+
+
+/* ---------- group call layout ---------- */
+.call-shell {
+  width: min(100%, 760px);
+  height: 100dvh;
+  margin: 0 auto;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.call-shell .call-topbar {
+  flex: none;
+}
+
+.call-stage {
+  flex: 1;
+  min-height: 0;
+  position: relative;
+  display: flex;
+  overflow: hidden;
+  padding: 0;
+}
+
+.remote-grid {
+  flex: 1;
+  min-height: 0;
+  width: 100%;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: .6rem;
+  padding: .75rem;
+  overflow: auto;
+  align-content: center;
+  align-items: center;
+}
+
+.call-controls {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: .6rem;
+  padding: .7rem 1rem;
+  padding-bottom: max(.7rem, env(safe-area-inset-bottom));
+  background: var(--surface);
+  border-top: 1px solid var(--border);
+  z-index: 10;
+}
+
+.call-control {
+  width: 46px;
+  height: 46px;
+  display: grid;
+  place-items: center;
+  border: 1px solid var(--border);
+  border-radius: 50%;
+  background: var(--surface-2);
+  color: var(--text);
+  cursor: pointer;
+}
+
+.call-control:hover { background: var(--surface-3); }
+.call-control.danger { background: var(--danger); color: #fff; border-color: transparent; }
+
+.call-ring-btn {
+  position: absolute;
+  right: 1rem;
+  top: 1rem;
+  z-index: 8;
+  display: inline-flex;
+  align-items: center;
+  gap: .4rem;
+  padding: .55rem .8rem;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--surface) 92%, transparent);
+  color: var(--text);
+  box-shadow: var(--shadow);
+  cursor: pointer;
+}
+
+.call-ring-btn:hover { background: var(--surface-2); }
+
+.call-ring-menu {
+  position: absolute;
+  right: 1rem;
+  bottom: 1rem;
+  z-index: 20;
+  width: min(360px, calc(100% - 2rem));
+  max-height: min(70dvh, 520px);
+  overflow-y: auto;
+  padding: .75rem;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  box-shadow: var(--shadow);
+}
+
+.call-ring-menu-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: .5rem;
+  margin-bottom: .5rem;
+}
+
+.call-ring-menu .call-participants {
+  display: flex;
+  flex-direction: column;
+  gap: .5rem;
+}
+
+@media (max-width: 600px) {
+  .remote-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: .4rem;
+    padding: .5rem;
+  }
+
+  .call-ring-menu {
+    right: .5rem;
+    bottom: .5rem;
+    width: calc(100% - 1rem);
+  }
+
+  .call-controls {
+    gap: .4rem;
+    padding-left: .6rem;
+    padding-right: .6rem;
+  }
+}
