@@ -27,31 +27,32 @@
   <main id="callLobby" class="call-lobby">
     <div class="call-lobby-head">
       <div>
-        <h2>Call someone</h2>
-        <p class="muted">Choose someone in this chat to ring.</p>
+        <h2>Group call</h2>
+        <p class="muted">You automatically join this chat’s call. Ring anyone who is not already connected.</p>
       </div>
     </div>
     <div id="callParticipants" class="call-participants"></div>
   </main>
 
   <main id="callStage" class="call-stage hidden">
-    <div id="remoteStage" class="remote-stage">
-      <video id="remoteVideo" class="remote-video hidden" autoplay playsinline></video>
-      <div id="remotePlaceholder" class="call-placeholder">
-        <span id="remoteAvatar"></span>
-        <div id="remoteName">Connecting…</div>
-        <div id="remoteState">Waiting for video…</div>
-      </div>
-    </div>
+    <div id="remoteGrid" class="remote-grid"></div>
+
     <div id="localStage" class="local-stage">
       <video id="localVideo" class="local-video" autoplay muted playsinline></video>
-      <div id="localPlaceholder" class="local-placeholder hidden"><span id="localAvatar"></span></div>
+      <div id="localPlaceholder" class="local-placeholder hidden">
+        <span id="localAvatar"></span>
+      </div>
+      <div class="local-label">You</div>
     </div>
+
     <div id="screenShareBadge" class="call-badge hidden">
-      <span data-icon="monitor"></span><span>You're sharing your screen</span>
+      <span data-icon="monitor"></span>
+      <span>You're sharing your screen</span>
     </div>
+
     <div id="connectionStatus" class="connection-status">
-      <span class="status-dot"></span><span id="connectionStatusText">Connecting…</span>
+      <span class="status-dot"></span>
+      <span id="connectionStatusText">Joining…</span>
     </div>
   </main>
 
