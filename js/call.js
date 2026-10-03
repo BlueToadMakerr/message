@@ -123,6 +123,8 @@ function makeTile(uid, profile) {
 
   const video = document.createElement("video");
   video.autoplay = true;
+  video.volume = 1;
+  video.controls = false;
   video.playsInline = true;
   video.className = "call-tile-video hidden";
 
@@ -132,9 +134,41 @@ function makeTile(uid, profile) {
 
   const label = document.createElement("div");
   label.className = "call-tile-label";
+
+  const tileControls = document.createElement("div");
+  tileControls.className = "call-tile-controls";
+
+  const volume = document.createElement("input");
+  volume.type = "range";
+  volume.min = "0";
+  volume.max = "1";
+  volume.step = "0.01";
+  volume.value = "1";
+  volume.className = "call-tile-volume";
+  volume.title = "Volume";
+  volume.addEventListener("input", () => {
+    video.volume = Number(volume.value);
+  });
+
+  const fullscreen = document.createElement("button");
+  fullscreen.type = "button";
+  fullscreen.className = "call-tile-action";
+  fullscreen.textContent = "⛶";
+  fullscreen.title = "Fullscreen";
+  fullscreen.addEventListener("click", async () => {
+    try {
+      if (document.fullscreenElement === tile) {
+        await document.exitFullscreen();
+      } else {
+        await tile.requestFullscreen();
+      }
+    } catch (_) {}
+  });
+
+  tileControls.append(volume, fullscreen);
   label.textContent = uid === me ? "You" : profile.displayName;
 
-  tile.append(video, placeholder, label);
+  tile.append(video, placeholder, label, tileControls);
   remoteGrid.append(tile);
 
   return { tile, video, placeholder, label };
