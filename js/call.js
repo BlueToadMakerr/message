@@ -1,1349 +1,459 @@
 import { auth, db } from "./firebase.js";
-
+import { onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.0.1/firebase-auth.js";
 import {
-  onAuthStateChanged
-} from "https://www.gstatic.com/firebasejs/11.0.1/firebase-auth.js";
-
-import {
-  ref,
-  get,
-  set,
-  update,  onValue,
-  onChildAdded,
-  onDisconnect
+  ref, push, set, get, update, remove, onValue, onChildAdded, onDisconnect
 } from "https://www.gstatic.com/firebasejs/11.0.1/firebase-database.js";
+import { avatarEl, hydrateIcons, toast } from "./ui.js";
+import { getProfile, ensureProfile } from "./users.js";
 
-import {
-  avatarEl,
-  hydrateIcons
-} from "./ui.js";
+hydrateIcons();
 
-
-/*
- * ------------------------------------------------------------
- * CONFIG
- * ------------------------------------------------------------
- */
-
-const RTC_CONFIG = {
-  iceServers: [
-    {
-      urls: "stun:stun.l.google.com:19302"
-    }
-  ]
-};
-
-
-/*
- * ------------------------------------------------------------
- * DOM
- * ------------------------------------------------------------
- */
-
-const remoteVideo = document.getElementById("remoteVideo");
-const localVideo = document.getElementById("localVideo");
-
-const remotePlaceholder =
-  document.getElementById("remotePlaceholder");
-
-const localPlaceholder =
-  document.getElementById("localPlaceholder");
-
-const remoteAvatar =
-  document.getElementById("remoteAvatar");
-
-const localAvatar =
-  document.getElementById("localAvatar");
-
-const remoteName =
-  document.getElementById("remoteName");
-
-const remoteState =
-  document.getElementById("remoteState");
-
-const callTitle =
-  document.getElementById("callTitle");
-
-const callStatus =
-  document.getElementById("callStatus");
-
-const connectionStatus =
-  document.getElementById("connectionStatus");
-
-const connectionStatusText =
-  document.getElementById("connectionStatusText");
-
-const muteBtn =
-  document.getElementById("muteBtn");
-
-const cameraBtn =
-  document.getElementById("cameraBtn");
-
-const screenShareBtn =
-  document.getElementById("screenBtn");
-
-const switchCameraBtn =
-  document.getElementById("switchCameraBtn");
-
-const endCallBtn =
-  document.getElementById("endCallBtn");
-
-const audioOnlyToggle =
-  document.getElementById("audioOnlyBtn");
-
-const speakerBtn =
-  document.getElementById("speakerBtn");
-
-
-/*
- * ------------------------------------------------------------
- * STATE
- * ------------------------------------------------------------
- */
-
-let currentUser = null;
-
-let callId = null;
-let peerUid = null;
-
-let isCaller = false;
-let callEnded = false;
-
-let peerConnection = null;
-
-let localStream = null;
-let remoteStream = null;
-
-let screenStream = null;
-let cameraTrack = null;
-
-let muted = false;
-let cameraEnabled = true;
-let screenSharing = false;
-
-let remoteCandidateQueue = [];
-let remoteDescriptionSet = false;
-
-const cleanupFunctions = [];
-
-
-/*
- * ------------------------------------------------------------
- * URL
- * ------------------------------------------------------------
- *
- * Expected:
- *
- * call.html?callId=ABC123&peerUid=USER_UID
- *
- */
-
+const $ = id => document.getElementById(id);
 const params = new URLSearchParams(location.search);
+const chatId = params.get("chatId");
+if (!chatId || !/^[\w-]{1,64}$/.test(chatId)) {
+  location.replace("index.html");
+  throw new Error("Missing or invalid chatId");
+}
 
-callId = params.get("callId");
-peerUid = params.get("peerUid");
+const chatPath = `privateChats/${chatId}`;
+const callPath = `calls/${chatId}`;
+const callLobby = $("callLobby"), callStage = $("callStage"), callControls = $("callControls");
+const participantsEl = $("callParticipants"), callTitle = $("callTitle"), callStatus = $("callStatus");
+const headAvatar = $("headAvatar"), remoteVideo = $("remoteVideo"), localVideo = $("localVideo");
+const remotePlaceholder = $("remotePlaceholder"), localPlaceholder = $("localPlaceholder");
+const remoteAvatar = $("remoteAvatar"), localAvatar = $("localAvatar"), remoteName = $("remoteName"), remoteState = $("remoteState");
+const connectionStatusText = $("connectionStatusText");
+const incomingDialog = $("incomingDialog"), incomingProfile = $("incomingProfile"), incomingText = $("incomingText");
+const acceptCallBtn = $("acceptCallBtn"), declineCallBtn = $("declineCallBtn");
+const muteBtn = $("muteBtn"), cameraBtn = $("cameraBtn"), screenShareBtn = $("screenBtn");
+const switchCameraBtn = $("switchCameraBtn"), endCallBtn = $("endCallBtn");
 
-isCaller = params.get("caller") === "1";
+const RTC_CONFIG = { iceServers: [{ urls: "stun:stun.l.google.com:19302" }] };
 
-
-/*
- * ------------------------------------------------------------
- * BASIC HELPERS
- * ------------------------------------------------------------
- */
+let me = null, participants = [], profiles = new Map(), customName = "";
+let activeSessionId = null, activePeerUid = null, isCaller = false, ended = false;
+let peerConnection = null, localStream = null, remoteStream = null, cameraTrack = null, screenStream = null;
+let screenSharing = false, muted = false, cameraEnabled = true, remoteCandidateQueue = [];
+let incomingSessionId = null, incomingCallerUid = null, unsubs = [];
 
 function setStatus(text) {
-  if (callStatus) {
-    callStatus.textContent = text;
-  }
-
-  if (connectionStatusText) {
-    connectionStatusText.textContent = text;
-  }
+  callStatus.textContent = text;
+  connectionStatusText.textContent = text;
 }
-
-
-function setRemoteState(text) {
-  if (remoteState) {
-    remoteState.textContent = text;
-  }
+function setRemoteState(text) { remoteState.textContent = text; }
+function showLobby(show) {
+  callLobby.classList.toggle("hidden", !show);
+  callStage.classList.toggle("hidden", show);
+  callControls.classList.toggle("hidden", show);
 }
-
-
-function showLocalVideo(show) {
-  if (localVideo) {
-    localVideo.classList.toggle("hidden", !show);
-  }
-
-  if (localPlaceholder) {
-    localPlaceholder.classList.toggle("hidden", show);
-  }
-}
-
-
-function showRemoteVideo(show) {
-  if (remoteVideo) {
-    remoteVideo.classList.toggle("hidden", !show);
-  }
-
-  if (remotePlaceholder) {
-    remotePlaceholder.classList.toggle("hidden", show);
-  }
-}
-
-
 function stopStream(stream) {
-  if (!stream) return;
+  stream?.getTracks().forEach(track => { try { track.stop(); } catch (_) {} });
+}
+function pushKey() { return push(ref(db, "_callKeys")).key; }
 
-  for (const track of stream.getTracks()) {
+async function loadChat() {
+  const [pSnap, nSnap] = await Promise.all([
+    get(ref(db, `${chatPath}/participants`)),
+    get(ref(db, `${chatPath}/chatData/name`))
+  ]);
+  const value = pSnap.val() || {};
+  if (!value[me]) throw new Error("You are no longer in this chat.");
+  participants = Object.keys(value);
+  customName = nSnap.val() || "";
+
+  const loaded = await Promise.all(participants.map(getProfile));
+  profiles = new Map(loaded.map(p => [p.uid, p]));
+
+  const others = participants.filter(uid => uid !== me);
+  const title = customName.trim() || others.map(uid => profiles.get(uid)?.displayName || "User").join(", ") || "Call";
+  callTitle.textContent = title;
+  document.title = `${title} · QuickMessage`;
+  const own = profiles.get(me);
+  headAvatar.replaceChildren(avatarEl(title, others.length === 1 ? profiles.get(others[0])?.pfp || "" : own?.pfp || "", "avatar sm"));
+  localAvatar.replaceChildren(avatarEl(own?.displayName || "You", own?.pfp || "", "avatar"));
+  renderParticipants();
+}
+
+function renderParticipants() {
+  participantsEl.replaceChildren();
+  for (const uid of participants) {
+    const p = profiles.get(uid) || { uid, displayName: "User", pfp: "" };
+    const row = document.createElement("div");
+    row.className = "call-participant";
+    row.append(avatarEl(p.displayName, p.pfp, "avatar"));
+
+    const info = document.createElement("div");
+    info.className = "call-participant-info";
+    const name = document.createElement("strong");
+    name.textContent = p.displayName;
+    const status = document.createElement("div");
+    status.className = "call-participant-status muted";
+    status.textContent = uid === me ? "You" : "Ready to ring";
+    info.append(name, status);
+
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "btn primary small";
+    button.textContent = uid === me ? "You" : "Ring";
+    button.disabled = uid === me;
+    button.addEventListener("click", () => ringParticipant(uid, button, status));
+    row.append(info, button);
+    participantsEl.append(row);
+  }
+}
+
+async function ringParticipant(uid, button, statusEl) {
+  if (activeSessionId) return toast("Finish the current call before ringing someone else.", "error");
+  button.disabled = true;
+  statusEl.textContent = "Creating call…";
+
+  const sessionRef = push(ref(db, `${callPath}/sessions`));
+  const sessionId = sessionRef.key;
+  const now = Date.now();
+
+  try {
+    await set(sessionRef, { fromUid: me, toUid: uid, state: "ringing", createdAt: now });
+    await set(ref(db, `${callPath}/ringing/${uid}`), {
+      sessionId, fromUid: me, createdAt: now, notifyStatus: "sending"
+    });
+
+    statusEl.textContent = "Sending notification…";
+    let result = null;
     try {
-      track.stop();
-    } catch (_) {}
+      const idToken = await auth.currentUser.getIdToken();
+      const response = await fetch("call-notify.php", {
+        method: "POST",
+        body: new URLSearchParams({ chatId, targetUid: uid, sessionId, idToken })
+      });
+      result = await response.json().catch(() => null);
+    } catch (err) {
+      console.warn("Call notification request failed", err);
+    }
+
+    const notifyStatus = result?.status === "sent" ? "sent" : result?.status === "no_token" ? "no_token" : "failed";
+    await update(ref(db), { [`${callPath}/ringing/${uid}/notifyStatus`]: notifyStatus }).catch(() => {});
+
+    statusEl.textContent = notifyStatus === "sent"
+      ? "Notification sent"
+      : notifyStatus === "no_token"
+        ? "No notification device"
+        : "Notification failed";
+
+    activeSessionId = sessionId;
+    activePeerUid = uid;
+    isCaller = true;
+    await startWebRTC();
+  } catch (err) {
+    console.error(err);
+    await remove(sessionRef).catch(() => {});
+    await remove(ref(db, `${callPath}/ringing/${uid}`)).catch(() => {});
+    button.disabled = false;
+    statusEl.textContent = "Could not ring";
+    toast(err.message || "Couldn't start the call.", "error");
   }
 }
 
+function listenForIncoming() {
+  const off = onValue(ref(db, `${callPath}/ringing/${me}`), async snap => {
+    const ring = snap.val();
+    if (!ring || ring.notifyStatus === "declined" || ring.notifyStatus === "ended") return;
+    if (activeSessionId || incomingSessionId === ring.sessionId) return;
 
-/*
- * ------------------------------------------------------------
- * AUTH
- * ------------------------------------------------------------ */
+    incomingSessionId = ring.sessionId;
+    incomingCallerUid = ring.fromUid;
+    const p = profiles.get(ring.fromUid) || await getProfile(ring.fromUid);
+    profiles.set(ring.fromUid, p);
+    incomingProfile.replaceChildren(avatarEl(p.displayName, p.pfp, "avatar"));
+    incomingText.textContent = `${p.displayName} is calling you.`;
+    acceptCallBtn.disabled = false;
+    declineCallBtn.disabled = false;
+    if (!incomingDialog.open) incomingDialog.showModal();
+  });
+  unsubs.push(off);
+}
 
-onAuthStateChanged(auth, async user => {
-  if (!user) {
-    location.href = "index.html";
-    return;
-  }
-
-  currentUser = user;
+async function acceptIncoming() {
+  if (!incomingSessionId || !incomingCallerUid) return;
+  const sessionId = incomingSessionId, callerUid = incomingCallerUid;
+  acceptCallBtn.disabled = true; declineCallBtn.disabled = true;
 
   try {
-    await startCall();
+    const snap = await get(ref(db, `${callPath}/sessions/${sessionId}`));
+    const session = snap.val();
+    if (!session || session.toUid !== me || session.fromUid !== callerUid || session.state !== "ringing") {
+      throw new Error("That call is no longer available.");
+    }
+    await update(ref(db, `${callPath}/sessions/${sessionId}`), { state: "accepted", acceptedAt: Date.now() });
+    await remove(ref(db, `${callPath}/ringing/${me}`));
+
+    activeSessionId = sessionId;
+    activePeerUid = callerUid;
+    isCaller = false;
+    incomingSessionId = null; incomingCallerUid = null;
+    incomingDialog.close();
+    await startWebRTC();
   } catch (err) {
-    console.error("Failed to start call:", err);
-
-    setStatus("Could not start call");
-    setRemoteState(
-      err?.message || "An unexpected error occurred."
-    );
-  }
-});
-
-
-/*
- * ------------------------------------------------------------
- * START
- * ------------------------------------------------------------ */
-
-async function startCall() {
-  if (!callId) {
-    throw new Error("Missing callId.");
-  }
-
-  if (!peerUid) {
-    throw new Error("Missing peerUid.");
-  }
-
-  if (peerUid === currentUser.uid) {
-    throw new Error("You cannot call yourself.");
-  }
-
-  setStatus("Starting…");
-
-  /*
-   * Get peer information.
-   */
-  await loadPeerProfile();
-
-  /*
-   * Get camera/microphone.
-   */
-  await setupLocalMedia();
-
-  /*
-   * Create WebRTC connection.
-   */
-  createPeerConnection();
-
-  /*
-   * Set up Firebase signaling.
-   */
-  await setupSignaling();
-
-  /*
-   * Caller creates offer.
-   */
-  if (isCaller) {
-    await createCallOffer();
-  } else {
-    setStatus("Waiting for call…");
-    setRemoteState("Connecting…");
+    console.error(err);
+    toast(err.message || "Couldn't answer the call.", "error");
+    acceptCallBtn.disabled = false; declineCallBtn.disabled = false;
   }
 }
 
-
-/*
- * ------------------------------------------------------------
- * PEER PROFILE
- * ------------------------------------------------------------ */
-
-async function loadPeerProfile() {
-  try {
-    const snap = await get(
-      ref(db, `accsettings/${peerUid}/settings`)
-    );
-
-    if (!snap.exists()) {
-      remoteName.textContent = "User";
-      return;
-    }
-
-    const settings = snap.val() || {};
-
-    const name =
-      typeof settings.displayName === "string" &&
-      settings.displayName.trim()
-        ? settings.displayName.trim()
-        : "User";
-
-    if (remoteName) {
-      remoteName.textContent = name;
-    }
-
-    if (callTitle) {
-      callTitle.textContent = name;
-    }
-
-    /*
-     * Reuse the existing avatar helper.
-     */
-    if (remoteAvatar) {
-      remoteAvatar.innerHTML = "";
-
-      try {
-        remoteAvatar.appendChild(
-          avatarEl(name, settings.pfp || "")
-        );
-      } catch (err) {
-        console.warn("Could not create remote avatar:", err);
-      }
-    }
-  } catch (err) {
-    console.warn("Could not load peer profile:", err);
-  }
+async function declineIncoming() {
+  if (!incomingSessionId) return;
+  const sessionId = incomingSessionId;
+  incomingSessionId = null; incomingCallerUid = null;
+  await update(ref(db, `${callPath}/sessions/${sessionId}`), { state: "declined", endedAt: Date.now() }).catch(() => {});
+  await remove(ref(db, `${callPath}/ringing/${me}`)).catch(() => {});
+  incomingDialog.close();
 }
-
-
-/*
- * ------------------------------------------------------------
- * LOCAL MEDIA
- * ------------------------------------------------------------ */
+acceptCallBtn.addEventListener("click", acceptIncoming);
+declineCallBtn.addEventListener("click", declineIncoming);
 
 async function setupLocalMedia() {
   setStatus("Requesting camera…");
-
   try {
     localStream = await navigator.mediaDevices.getUserMedia({
       audio: true,
-      video: {
-        width: { ideal: 1280 },
-        height: { ideal: 720 },
-        facingMode: "user"
-      }
+      video: { width: { ideal: 1280 }, height: { ideal: 720 }, facingMode: "user" }
     });
-  } catch (err) {
-    console.warn("Camera/microphone failed:", err);
-
-    /*
-     * Try audio-only if camera access failed.
-     */
-    try {
-      localStream = await navigator.mediaDevices.getUserMedia({
-        audio: true,
-        video: false
-      });
-
-      cameraEnabled = false;
-
-      if (cameraBtn) {
-        cameraBtn.disabled = true;
-      }
-    } catch (audioErr) {
-      throw new Error(
-        "Could not access your microphone or camera."
-      );
-    }
+  } catch (_) {
+    localStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+    cameraEnabled = false;
+    cameraBtn.disabled = true;
   }
-
-  cameraTrack =
-    localStream.getVideoTracks()[0] || null;
-
-  if (localVideo) {
-    localVideo.srcObject = localStream;
-    localVideo.muted = true;
-    localVideo.playsInline = true;
-
-    try {
-      await localVideo.play();
-    } catch (_) {}
-  }
-
-  showLocalVideo(!!cameraTrack);
-
-  /*
-   * Make sure audio starts enabled.
-   */
-  for (const track of localStream.getAudioTracks()) {
-    track.enabled = true;
-  }
+  cameraTrack = localStream.getVideoTracks()[0] || null;
+  localVideo.srcObject = localStream;
+  localVideo.muted = true;
+  localVideo.play().catch(() => {});
+  localPlaceholder.classList.toggle("hidden", !!cameraTrack);
+  localVideo.classList.toggle("hidden", !cameraTrack);
 }
-
-
-/*
- * ------------------------------------------------------------
- * PEER CONNECTION
- * ------------------------------------------------------------ */
 
 function createPeerConnection() {
   peerConnection = new RTCPeerConnection(RTC_CONFIG);
-
   remoteStream = new MediaStream();
+  remoteVideo.srcObject = remoteStream;
 
-  if (remoteVideo) {
-    remoteVideo.srcObject = remoteStream;
-    remoteVideo.playsInline = true;
-  }
+  localStream.getTracks().forEach(track => peerConnection.addTrack(track, localStream));
 
-  /*
-   * Add local tracks.
-   */
-  for (const track of localStream.getTracks()) {
-    peerConnection.addTrack(track, localStream);
-  }
-
-  /*
-   * Receive remote tracks.
-   */
   peerConnection.ontrack = event => {
     const stream = event.streams[0];
-
-    if (stream) {
-      for (const track of stream.getTracks()) {
-        if (!remoteStream.getTrackById(track.id)) {
-          remoteStream.addTrack(track);
-        }
-      }
-    } else {
-      if (!remoteStream.getTrackById(event.track.id)) {
-        remoteStream.addTrack(event.track);
-      }
-    }
-
-    showRemoteVideo(
-      remoteStream.getVideoTracks().length > 0
-    );
-
+    if (stream) stream.getTracks().forEach(track => {
+      if (!remoteStream.getTrackById(track.id)) remoteStream.addTrack(track);
+    });
+    if (!stream && !remoteStream.getTrackById(event.track.id)) remoteStream.addTrack(event.track);
+    const hasVideo = remoteStream.getVideoTracks().length > 0;
+    remoteVideo.classList.toggle("hidden", !hasVideo);
+    remotePlaceholder.classList.toggle("hidden", hasVideo);
     setRemoteState("Connected");
     setStatus("Connected");
-
-    if (remoteVideo) {
-      remoteVideo.play().catch(() => {});
-    }
+    remoteVideo.play().catch(() => {});
   };
 
-  /*
-   * ICE candidates are sent through Firebase.
-   */
   peerConnection.onicecandidate = async event => {
-    if (!event.candidate) {
-      return;
-    }
-
-    const candidate = event.candidate.toJSON();
-
-    const candidateRef = ref(
-      db,
-      `calls/${callId}/candidates/${currentUser.uid}/${pushKey()}`
-    );
-
+    if (!event.candidate || !activeSessionId) return;
     try {
-      await set(candidateRef, candidate);
-    } catch (err) {
-      console.error(
-        "Could not send ICE candidate:",
-        err
-      );
-    }
+      await set(ref(db, `${callPath}/sessions/${activeSessionId}/candidates/${me}/${pushKey()}`), event.candidate.toJSON());
+    } catch (err) { console.warn("Could not send ICE candidate", err); }
   };
 
-  /*
-   * Connection state.
-   */
   peerConnection.onconnectionstatechange = () => {
-    const state =
-      peerConnection.connectionState;
-
-    console.log(
-      "WebRTC connection state:",
-      state
-    );
-
-    switch (state) {
-      case "new":
-      case "connecting":
-        setStatus("Connecting…");
-        setRemoteState("Connecting…");
-        break;
-
-      case "connected":
-        setStatus("Connected");
-        setRemoteState("Connected");
-        break;
-
-      case "disconnected":
-        setStatus("Disconnected");
-        setRemoteState("Disconnected");
-        break;
-
-      case "failed":
-        setStatus("Connection failed");
-        setRemoteState("Connection failed");
-        break;
-
-      case "closed":
-        setStatus("Call ended");
-        break;
+    const state = peerConnection.connectionState;
+    if (state === "connected") {
+      setStatus("Connected"); setRemoteState("Connected");
+    } else if (state === "connecting" || state === "new") {
+      setStatus(isCaller ? "Calling…" : "Connecting…"); setRemoteState("Connecting…");
+    } else if (state === "disconnected") {
+      setStatus("Disconnected"); setRemoteState("Disconnected");
+    } else if (state === "failed") {
+      setStatus("Connection failed"); setRemoteState("Connection failed");
     }
-  };
-
-  /*
-   * ICE connection state.
-   */
-  peerConnection.oniceconnectionstatechange = () => {
-    console.log(
-      "ICE state:",
-      peerConnection.iceConnectionState
-    );
   };
 }
-
-
-/*
- * ------------------------------------------------------------
- * FIREBASE SIGNALING
- * ------------------------------------------------------------ */
 
 async function setupSignaling() {
-  const callRef = ref(db, `calls/${callId}`);
+  const base = `${callPath}/sessions/${activeSessionId}`;
+  const offerRef = ref(db, `${base}/offer`);
+  const answerRef = ref(db, `${base}/answer`);
+  const peerCandidatesRef = ref(db, `${base}/candidates/${activePeerUid}`);
+  const stateRef = ref(db, `${base}/state`);
 
-  /*
-   * Caller creates the call record.
-   */
-  if (isCaller) {
-    const existing = await get(callRef);
-
-    if (!existing.exists()) {
-      await set(callRef, {
-        fromUid: currentUser.uid,
-        toUid: peerUid,
-        state: "ringing",
-        createdAt: Date.now()
-      });
-    }
-  }
-
-  /*
-   * Listen for answer.
-   */
-  const answerRef = ref(
-    db,
-    `calls/${callId}/answer`
-  );
-
-  const unsubscribeAnswer = onValue(
-    answerRef,
-    async snapshot => {
-      if (!isCaller) return;
-
-      const answer = snapshot.val();
-
-      if (!answer || !peerConnection) {
-        return;
-      }
-
-      /*
-       * Don't apply the answer more than once.
-       */
-      if (
-        peerConnection.currentRemoteDescription
-      ) {
-        return;
-      }
-
-      try {
-        await peerConnection.setRemoteDescription(
-          new RTCSessionDescription(answer)
-        );
-
-        remoteDescriptionSet = true;
-
-        await flushCandidateQueue();
-
-        setStatus("Connecting…");
-        setRemoteState("Connecting…");
-      } catch (err) {
-        console.error(
-          "Could not apply answer:",
-          err
-        );
-      }
-    }
-  );
-
-  cleanupFunctions.push(
-    unsubscribeAnswer
-  );
-
-  /*
-   * Listen for offer.
-   */
-  const offerRef = ref(
-    db,
-    `calls/${callId}/offer`
-  );
-
-  const unsubscribeOffer = onValue(
-    offerRef,
-    async snapshot => {
-      if (isCaller) return;
-
-      const offer = snapshot.val();
-
-      if (!offer || !peerConnection) {
-        return;
-      }
-
-      if (
-        peerConnection.currentRemoteDescription
-      ) {
-        return;
-      }
-
-      try {
-        await peerConnection.setRemoteDescription(
-          new RTCSessionDescription(offer)
-        );
-
-        remoteDescriptionSet = true;
-
-        await flushCandidateQueue();
-
-        await createCallAnswer();
-      } catch (err) {
-        console.error(
-          "Could not apply offer:",
-          err
-        );
-
-        setStatus("Could not connect");
-      }
-    }
-  );
-
-  cleanupFunctions.push(
-    unsubscribeOffer
-  );
-
-  /*
-   * Listen for ICE candidates from peer.
-   */
-  const candidatesRef = ref(
-    db,
-    `calls/${callId}/candidates/${peerUid}`
-  );
-
-  const unsubscribeCandidates = onChildAdded(
-    candidatesRef,
-    async snapshot => {
-      const candidate = snapshot.val();
-
-      if (!candidate || !peerConnection) {
-        return;
-      }
-
-      try {
-        const iceCandidate =
-          new RTCIceCandidate(candidate);
-
-        if (
-          !peerConnection.remoteDescription
-        ) {
-          remoteCandidateQueue.push(
-            iceCandidate
-          );
-          return;
-        }
-
-        await peerConnection.addIceCandidate(
-          iceCandidate
-        );
-      } catch (err) {
-        console.warn(
-          "Could not add ICE candidate:",
-          err
-        );
-      }
-    }
-  );
-
-  cleanupFunctions.push(
-    unsubscribeCandidates
-  );
-
-  /*
-   * Watch call state.
-   */
-  const stateRef = ref(
-    db,
-    `calls/${callId}/state`
-  );
-
-  const unsubscribeState = onValue(
-    stateRef,
-    snapshot => {
-      const state = snapshot.val();
-
-      if (!state) return;
-
-      if (state === "ended") {
-        finishCall(false);
-      }
-    }
-  );
-
-  cleanupFunctions.push(
-    unsubscribeState
-  );
-
-  /*
-   * Caller cleans up if the page disappears.
-   */
-  if (isCaller) {
-    await onDisconnect(stateRef).set("ended");
-  }
-}
-
-
-/*
- * ------------------------------------------------------------
- * OFFER
- * ------------------------------------------------------------ */
-
-async function createCallOffer() {
-  if (!peerConnection) {
-    return;
-  }
-
-  setStatus("Calling…");
-  setRemoteState("Calling…");
-
-  const offer =
-    await peerConnection.createOffer({
-      offerToReceiveAudio: true,
-      offerToReceiveVideo: true
-    });
-
-  await peerConnection.setLocalDescription(
-    offer
-  );
-
-  await set(
-    ref(db, `calls/${callId}/offer`),
-    {
-      type: offer.type,
-      sdp: offer.sdp
-    }
-  );
-
-  await update(
-    ref(db, `calls/${callId}`),
-    {
-      state: "ringing"
-    }
-  );
-}
-
-
-/*
- * ------------------------------------------------------------
- * ANSWER
- * ------------------------------------------------------------ */
-
-async function createCallAnswer() {
-  if (!peerConnection) {
-    return;
-  }
-
-  setStatus("Answering…");
-  setRemoteState("Connecting…");
-
-  const answer =
-    await peerConnection.createAnswer();
-
-  await peerConnection.setLocalDescription(
-    answer
-  );
-
-  await set(
-    ref(db, `calls/${callId}/answer`),
-    {
-      type: answer.type,
-      sdp: answer.sdp
-    }
-  );
-
-  await update(
-    ref(db, `calls/${callId}`),
-    {
-      state: "connected"
-    }
-  );
-}
-
-
-/*
- * ------------------------------------------------------------
- * ICE QUEUE
- * ------------------------------------------------------------ */
-
-async function flushCandidateQueue() {
-  if (!peerConnection) {
-    return;
-  }
-
-  if (!peerConnection.remoteDescription) {
-    return;
-  }
-
-  const queue =
-    remoteCandidateQueue.splice(
-      0,
-      remoteCandidateQueue.length
-    );
-
-  for (const candidate of queue) {
+  unsubs.push(onValue(answerRef, async snap => {
+    if (!isCaller || peerConnection?.currentRemoteDescription) return;
+    const answer = snap.val();
+    if (!answer) return;
     try {
-      await peerConnection.addIceCandidate(
-        candidate
-      );
+      await peerConnection.setRemoteDescription(new RTCSessionDescription(answer));
+      await flushCandidates();
+    } catch (err) { console.error("Could not apply answer", err); }
+  }));
+
+  unsubs.push(onValue(offerRef, async snap => {
+    if (isCaller || peerConnection?.currentRemoteDescription) return;
+    const offer = snap.val();
+    if (!offer) return;
+    try {
+      await peerConnection.setRemoteDescription(new RTCSessionDescription(offer));
+      await flushCandidates();
+      await createAnswer();
     } catch (err) {
-      console.warn(
-        "Could not add queued ICE candidate:",
-        err
-      );
+      console.error("Could not apply offer", err);
+      setStatus("Could not connect");
     }
-  }
+  }));
+
+  unsubs.push(onChildAdded(peerCandidatesRef, async snap => {
+    const candidate = snap.val();
+    if (!candidate || !peerConnection) return;
+    try {
+      const ice = new RTCIceCandidate(candidate);
+      if (!peerConnection.remoteDescription) remoteCandidateQueue.push(ice);
+      else await peerConnection.addIceCandidate(ice);
+    } catch (err) { console.warn("Could not add ICE candidate", err); }
+  }));
+
+  unsubs.push(onValue(stateRef, snap => {
+    const state = snap.val();
+    if (state === "declined") {
+      toast("The call was declined.", "error");
+      finishCall(false);
+    } else if (state === "ended") {
+      finishCall(false);
+    }
+  }));
+
+  if (isCaller) await onDisconnect(stateRef).set("ended");
 }
 
-
-/*
- * ------------------------------------------------------------
- * BUTTONS
- * ------------------------------------------------------------ */
-
-muteBtn?.addEventListener(
-  "click",
-  () => {
-    if (!localStream) return;
-
-    const audioTracks =
-      localStream.getAudioTracks();
-
-    if (!audioTracks.length) {
-      return;
-    }
-
-    muted = !muted;
-
-    for (const track of audioTracks) {
-      track.enabled = !muted;
-    }
-
-    muteBtn.classList.toggle(
-      "active",
-      muted
-    );
-
-    muteBtn.setAttribute(
-      "aria-label",
-      muted ? "Unmute microphone" : "Mute microphone"
-    );
-
-    setStatus(
-      muted ? "Microphone muted" : "Connected"
-    );
-  }
-);
-
-
-cameraBtn?.addEventListener(
-  "click",
-  () => {
-    if (!cameraTrack) return;
-
-    cameraEnabled = !cameraEnabled;
-
-    cameraTrack.enabled =
-      cameraEnabled;
-
-    cameraBtn.classList.toggle(
-      "active",
-      !cameraEnabled
-    );
-
-    showLocalVideo(
-      cameraEnabled
-    );
-  }
-);
-
-
-screenShareBtn?.addEventListener(
-  "click",
-  async () => {
-    if (screenSharing) {
-      await stopScreenShare();
-    } else {
-      await startScreenShare();
-    }
-  }
-);
-
-
-switchCameraBtn?.addEventListener(
-  "click",
-  async () => {
-    /*
-     * Camera switching is intentionally kept
-     * simple for the first version.
-     *
-     * Mobile browsers generally require replacing
-     * the current track with a newly acquired one.
-     */
-    if (!cameraTrack || !localStream) {
-      return;
-    }
-
-    try {
-      const currentFacing =
-        cameraTrack.getSettings().facingMode;
-
-      const nextFacing =
-        currentFacing === "environment"
-          ? "user"
-          : "environment";
-
-      const newStream =
-        await navigator.mediaDevices.getUserMedia({
-          audio: false,
-          video: {
-            facingMode: {
-              exact: nextFacing
-            }
-          }
-        });
-
-      const newTrack =
-        newStream.getVideoTracks()[0];
-
-      if (!newTrack) {
-        return;
-      }
-
-      const sender =
-        peerConnection
-          ?.getSenders()
-          .find(
-            s =>
-              s.track &&
-              s.track.kind === "video"
-          );
-
-      if (sender) {
-        await sender.replaceTrack(
-          newTrack
-        );
-      }
-
-      const oldTrack =
-        cameraTrack;
-
-      localStream.removeTrack(
-        oldTrack
-      );
-
-      oldTrack.stop();
-
-      localStream.addTrack(
-        newTrack
-      );
-
-      cameraTrack =
-        newTrack;
-
-      if (localVideo) {
-        localVideo.srcObject =
-          localStream;
-      }
-    } catch (err) {
-      console.warn(
-        "Could not switch camera:",
-        err
-      );
-    }
-  }
-);
-
-
-endCallBtn?.addEventListener(
-  "click",
-  async () => {
-    await finishCall(true);
-  }
-);
-
-
-/*
- * ------------------------------------------------------------
- * SCREEN SHARING
- * ------------------------------------------------------------ */
-
-async function startScreenShare() {
-  if (!peerConnection) {
-    return;
-  }
+async function startWebRTC() {
+  if (!activeSessionId || !activePeerUid) throw new Error("Missing call session.");
+  showLobby(false);
+  setStatus(isCaller ? "Calling…" : "Connecting…");
+  const p = profiles.get(activePeerUid) || await getProfile(activePeerUid);
+  profiles.set(activePeerUid, p);
+  remoteName.textContent = p.displayName;
+  callTitle.textContent = p.displayName;
+  remoteAvatar.replaceChildren(avatarEl(p.displayName, p.pfp, "avatar"));
 
   try {
-    screenStream =
-      await navigator.mediaDevices.getDisplayMedia({
-        video: true,
-        audio: false
-      });
-
-    const screenTrack =
-      screenStream.getVideoTracks()[0];
-
-    if (!screenTrack) {
-      return;
-    }
-
-    const sender =
-      peerConnection
-        .getSenders()
-        .find(
-          s =>
-            s.track &&
-            s.track.kind === "video"
-        );
-
-    if (sender) {
-      await sender.replaceTrack(
-        screenTrack
-      );
-    }
-
-    screenSharing = true;
-
-    screenShareBtn?.classList.add(
-      "active"
-    );
-
-    if (localVideo) {
-      localVideo.srcObject =
-        screenStream;
-    }
-
-    screenTrack.addEventListener(
-      "ended",
-      () => {
-        stopScreenShare();
-      },
-      { once: true }
-    );
+    await setupLocalMedia();
+    createPeerConnection();
+    await setupSignaling();
+    if (isCaller) await createOffer();
   } catch (err) {
-    console.warn(
-      "Screen sharing was cancelled or failed:",
-      err
-    );
+    await finishCall(false);
+    throw err;
   }
 }
 
+async function createOffer() {
+  const offer = await peerConnection.createOffer({ offerToReceiveAudio: true, offerToReceiveVideo: true });
+  await peerConnection.setLocalDescription(offer);
+  await set(ref(db, `${callPath}/sessions/${activeSessionId}/offer`), { type: offer.type, sdp: offer.sdp });
+}
+
+async function createAnswer() {
+  const answer = await peerConnection.createAnswer();
+  await peerConnection.setLocalDescription(answer);
+  await set(ref(db, `${callPath}/sessions/${activeSessionId}/answer`), { type: answer.type, sdp: answer.sdp });
+  await update(ref(db, `${callPath}/sessions/${activeSessionId}`), { state: "connected" });
+}
+
+async function flushCandidates() {
+  if (!peerConnection?.remoteDescription) return;
+  const queued = remoteCandidateQueue.splice(0);
+  for (const ice of queued) {
+    try { await peerConnection.addIceCandidate(ice); } catch (_) {}
+  }
+}
+
+async function startScreenShare() {
+  if (!peerConnection) return;
+  try {
+    screenStream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: false });
+    const track = screenStream.getVideoTracks()[0];
+    const sender = peerConnection.getSenders().find(s => s.track?.kind === "video");
+    if (sender && track) {
+      await sender.replaceTrack(track);
+      screenSharing = true;
+      $("screenShareBadge").classList.remove("hidden");
+      track.addEventListener("ended", stopScreenShare, { once: true });
+    }
+  } catch (err) { console.warn("Screen share failed", err); }
+}
 
 async function stopScreenShare() {
-  if (!screenSharing) {
-    return;
-  }
-
-  const camera =
-    cameraTrack;
-
-  const sender =
-    peerConnection
-      ?.getSenders()
-      .find(
-        s =>
-          s.track &&
-          s.track.kind === "video"
-      );
-
-  if (sender && camera) {
-    await sender.replaceTrack(
-      camera
-    );
-  }
-
-  if (screenStream) {
-    stopStream(screenStream);
-    screenStream = null;
-  }
-
-  screenSharing = false;
-
-  screenShareBtn?.classList.remove(
-    "active"
-  );
-
-  if (localVideo) {
-    localVideo.srcObject =
-      localStream;
-  }
-}
-
-
-/*
- * ------------------------------------------------------------
- * SPEAKER
- * ------------------------------------------------------------ */
-
-speakerBtn?.addEventListener(
-  "click",
-  async () => {
-    if (!remoteVideo) return;
-
-    /*
-     * setSinkId is not available in every
-     * browser, especially mobile browsers.
-     */
-    if (
-      typeof remoteVideo.setSinkId !==
-      "function"
-    ) {
-      setStatus(
-        "Speaker selection isn't supported here"
-      );
-      return;
-    }
-
-    try {
-      const devices =
-        await navigator.mediaDevices.enumerateDevices();
-
-      const outputs =
-        devices.filter(
-          device =>
-            device.kind ===
-            "audiooutput"
-        );
-
-      if (!outputs.length) {
-        return;
-      }
-
-      /*
-       * Prefer the default output.
-       */
-      await remoteVideo.setSinkId(
-        outputs[0].deviceId
-      );
-    } catch (err) {
-      console.warn(
-        "Could not change speaker:",
-        err
-      );
-    }
-  }
-);
-
-
-/*
- * ------------------------------------------------------------
- * AUDIO ONLY
- * ------------------------------------------------------------ */
-
-audioOnlyToggle?.addEventListener(
-  "change",
-  () => {
-    const enabled =
-      audioOnlyToggle.checked;
-
-    if (!cameraTrack) {
-      return;
-    }
-
-    cameraTrack.enabled =
-      !enabled;
-
-    cameraEnabled =
-      !enabled;
-
-    showLocalVideo(
-      !enabled
-    );
-  }
-);
-
-
-/*
- * ------------------------------------------------------------
- * END CALL
- * ------------------------------------------------------------ */
-
-async function finishCall(writeState = true) {
-  if (callEnded) {
-    return;
-  }
-
-  callEnded = true;
-
-  setStatus("Ending call…");
-
-  if (writeState && callId) {
-    try {
-      await set(
-        ref(db, `calls/${callId}/state`),
-        "ended"
-      );
-    } catch (err) {
-      console.warn(
-        "Could not update call state:",
-        err
-      );
-    }
-  }
-
-  for (const cleanup of cleanupFunctions) {
-    try {
-      cleanup();
-    } catch (_) {}
-  }
-
-  cleanupFunctions.length = 0;
-
-  if (peerConnection) {
-    try {
-      peerConnection.close();
-    } catch (_) {}
-  }
-
-  stopStream(localStream);
-  stopStream(remoteStream);
+  if (!screenSharing) return;
+  const sender = peerConnection?.getSenders().find(s => s.track?.kind === "video");
+  try { if (sender && cameraTrack) await sender.replaceTrack(cameraTrack); } catch (_) {}
   stopStream(screenStream);
-
-  localStream = null;
-  remoteStream = null;
   screenStream = null;
-
-  if (remoteVideo) {
-    remoteVideo.srcObject = null;
-  }
-
-  if (localVideo) {
-    localVideo.srcObject = null;
-  }
-
-  setStatus("Call ended");
-
-  setTimeout(() => {
-    history.back();
-  }, 500);
+  screenSharing = false;
+  $("screenShareBadge").classList.add("hidden");
 }
 
+muteBtn.addEventListener("click", () => {
+  if (!localStream) return;
+  muted = !muted;
+  localStream.getAudioTracks().forEach(track => track.enabled = !muted);
+  muteBtn.classList.toggle("active", muted);
+  muteBtn.setAttribute("aria-label", muted ? "Unmute microphone" : "Mute microphone");
+});
 
-/*
- * ------------------------------------------------------------
- * PAGE CLEANUP
- * ------------------------------------------------------------ */
+cameraBtn.addEventListener("click", () => {
+  if (!cameraTrack) return;
+  cameraEnabled = !cameraEnabled;
+  cameraTrack.enabled = cameraEnabled;
+  cameraBtn.classList.toggle("active", !cameraEnabled);
+  localVideo.classList.toggle("hidden", !cameraEnabled);
+  localPlaceholder.classList.toggle("hidden", cameraEnabled);
+});
 
-window.addEventListener(
-  "beforeunload",
-  () => {
-    /*
-     * Don't await anything here.
-     *
-     * onDisconnect handles the Firebase
-     * cleanup/state notification.
-     */
-    stopStream(localStream);
-    stopStream(screenStream);
+screenShareBtn.addEventListener("click", () => screenSharing ? stopScreenShare() : startScreenShare());
 
-    if (peerConnection) {
-      try {
-        peerConnection.close();
-      } catch (_) {}
-    }
+switchCameraBtn.addEventListener("click", async () => {
+  if (!cameraTrack || !localStream) return;
+  const current = cameraTrack.getSettings().facingMode || "user";
+  const next = current === "user" ? "environment" : "user";
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: false, video: { facingMode: { exact: next } } });
+    const nextTrack = stream.getVideoTracks()[0];
+    const sender = peerConnection?.getSenders().find(s => s.track?.kind === "video");
+    if (sender) await sender.replaceTrack(nextTrack);
+    const oldTrack = localStream.getVideoTracks()[0];
+    oldTrack?.stop();
+    if (oldTrack) localStream.removeTrack(oldTrack);
+    localStream.addTrack(nextTrack);
+    cameraTrack = nextTrack;
+    localVideo.srcObject = localStream;
+  } catch (err) { console.warn("Could not switch camera", err); }
+});
+
+endCallBtn.addEventListener("click", () => finishCall(true));
+
+async function finishCall(writeState) {
+  if (ended) return;
+  ended = true;
+
+  if (writeState && activeSessionId) {
+    await update(ref(db, `${callPath}/sessions/${activeSessionId}`), { state: "ended", endedAt: Date.now() }).catch(() => {});
   }
-);
+  if (activePeerUid) await remove(ref(db, `${callPath}/ringing/${activePeerUid}`)).catch(() => {});
+  await remove(ref(db, `${callPath}/ringing/${me}`)).catch(() => {});
 
+  unsubs.forEach(fn => { try { fn(); } catch (_) {} });
+  unsubs = [];
+  stopStream(screenStream); stopStream(localStream);
+  peerConnection?.close();
 
-/*
- * ------------------------------------------------------------
- * FIREBASE PUSH-KEY COMPATIBILITY
- * ------------------------------------------------------------
- *
- * We don't need Firebase push() just to generate
- * an ID, so use a Firebase-compatible random key.
- */
-
-function pushKey() {
-  const chars =
-    "-0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ_abcdefghijklmnopqrstuvwxyz";
-
-  let key = "";
-
-  const now =
-    Date.now();
-
-  let timestamp =
-    now;
-
-  const timeChars = new Array(8);
-
-  for (let i = 7; i >= 0; i--) {
-    timeChars[i] =
-      chars.charAt(timestamp % 64);
-
-    timestamp =
-      Math.floor(timestamp / 64);
-  }
-
-  key += timeChars.join("");
-
-  for (let i = 0; i < 12; i++) {
-    key += chars.charAt(
-      Math.floor(
-        Math.random() * 64
-      )
-    );
-  }
-
-  return key;
+  activeSessionId = null; activePeerUid = null; peerConnection = null; localStream = null; remoteStream = null;
+  screenStream = null; cameraTrack = null; remoteCandidateQueue = [];
+  showLobby(true);
+  setStatus("Ready");
+  renderParticipants();
+  ended = false;
 }
 
-
-/*
- * ------------------------------------------------------------
- * ICONS
- * ------------------------------------------------------------ */
-
-try {
-  hydrateIcons?.();
-} catch (_) {}
+$("callOptionsBtn")?.addEventListener("click", () => {});
