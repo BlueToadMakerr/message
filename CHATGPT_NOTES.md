@@ -23,10 +23,7 @@ Last updated: 2026-10-03
 
 ## Current call-page wiring
 - call.html uses screenBtn for screen sharing.
-- call.html uses audioOnlyBtn for the audio/video toggle.
-- js/call.js must match those IDs.
-- Caller URL: call.html?callId=CALL_ID&peerUid=USER_UID&caller=1
-- Callee URL uses the same URL without caller=1.
+- Call page URL: `call.html?chatId=CHAT_ID`; push notifications may add `&session=SESSION_ID`.
 
 ## Firebase rules note
 - The current Firebase rules supplied during development do not yet contain a calls section.
@@ -85,7 +82,7 @@ Add this inside the existing top-level `rules` object:
         },
         "candidates": {
           "$uid": {
-            ".read": "auth != null && data.parent().parent().child('fromUid').val() === auth.uid || auth != null && data.parent().parent().child('toUid').val() === auth.uid",
+            ".read": "auth != null && (data.parent().parent().child('fromUid').val() === auth.uid || data.parent().parent().child('toUid').val() === auth.uid)",
             ".write": "auth != null && $uid === auth.uid && (data.parent().parent().child('fromUid').val() === auth.uid || data.parent().parent().child('toUid').val() === auth.uid)",
             "$candidateId": {
               ".validate": "newData.hasChildren(['candidate']) && newData.child('candidate').isString()"
