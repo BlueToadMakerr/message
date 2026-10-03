@@ -53,43 +53,46 @@ Last updated: 2026-10-03
 7. Later, consider an SFU if group calls become large; mesh connection count grows with each participant.
 
 ## /calls rules required in Firebase
-The client changes are committed, but the live Realtime Database rules still need a `calls` section. Do not put a broad `.read` or `.write` on `calls/$chatId`, because Realtime Database rules cascade from parent paths. citeturn2search0turn2search6
-
-Add this inside the existing top-level `rules` object:
+The previous session-based rules no longer match the call implementation. The live Firebase rules need a chat-room/mesh section like this inside the existing top-level rules object:
 
 ```json
 "calls": {
   "$chatId": {
-    "ringing": {
+    ".read": "auth != null && root.child('privateChats').child($chatId).child('participants').child(auth.uid).exists()",
+    "members": {
       "$uid": {
-        ".read": "auth != null && root.child('privateChats').child($chatId).child('participants').child(auth.uid).exists() && ($uid === auth.uid || (data.child('fromUid').val() === auth.uid))",
-        ".write": "auth != null && root.child('privateChats').child($chatId).child('participants').child(auth.uid).exists() && root.child('privateChats').child($chatId).child('participants').child($uid).exists() && ($uid === auth.uid || data.child('fromUid').val() === auth.uid || newData.child('fromUid').val() === auth.uid)",
-        ".validate": "newData.hasChildren(['sessionId','fromUid','createdAt']) && newData.child('sessionId').isString() && newData.child('fromUid').val() === auth.uid && newData.child('createdAt').isNumber()"
+        ".read": "auth != null && root.child('privateChats').child($chatId).child('participants').child(auth.uid).exists()",
+        ".write": "auth != null && $uid === auth.uid && root.child('privateChats').child($chatId).child('participants').child(auth.uid).exists()",
+        ".validate": "newData.child('uid').val() === auth.uid && newData.child('joinedAt').isNumber()"
       }
     },
-    "sessions": {
-      "$sessionId": {
-        ".read": "auth != null && root.child('privateChats').child($chatId).child('participants').child(auth.uid).exists() && (data.child('fromUid').val() === auth.uid || data.child('toUid').val() === auth.uid)",
-        ".write": "!data.exists() && auth != null && root.child('privateChats').child($chatId).child('participants').child(auth.uid).exists() && newData.child('fromUid').val() === auth.uid && root.child('privateChats').child($chatId).child('participants').child(newData.child('toUid').val()).exists()",
-        ".validate": "newData.hasChildren(['fromUid','toUid','state','createdAt']) && newData.child('fromUid').isString() && newData.child('toUid').isString() && newData.child('fromUid').val() !== newData.child('toUid').val() && newData.child('state').isString() && newData.child('createdAt').isNumber()",
-        "offer": {
-          ".write": "auth != null && data.parent().child('fromUid').val() === auth.uid",
-          ".validate": "newData.hasChildren(['type','sdp']) && newData.child('type').val() === 'offer' && newData.child('sdp').isString()"
-        },
-        "answer": {
-          ".write": "auth != null && data.parent().child('toUid').val() === auth.uid",
-          ".validate": "newData.hasChildren(['type','sdp']) && newData.child('type').val() === 'answer' && newData.child('sdp').isString()"
-        },
-        "state": {
-          ".write": "auth != null && (data.parent().child('fromUid').val() === auth.uid || data.parent().child('toUid').val() === auth.uid)",
-          ".validate": "newData.val() === 'ringing' || newData.val() === 'accepted' || newData.val() === 'connected' || newData.val() === 'declined' || newData.val() === 'ended'"
-        },
-        "candidates": {
-          "$uid": {
-            ".read": "auth != null && (data.parent().parent().child('fromUid').val() === auth.uid || data.parent().parent().child('toUid').val() === auth.uid)",
-            ".write": "auth != null && $uid === auth.uid && (data.parent().parent().child('fromUid').val() === auth.uid || data.parent().parent().child('toUid').val() === auth.uid)",
-            "$candidateId": {
-              ".validate": "newData.hasChildren(['candidate']) && newData.child('candidate').isString()"
+    "ringing": {
+      "$uid": {
+        ".read": "auth != null && ($uid === auth.uid || data.child('fromUid').val() === auth.uid) && root.child('privateChats').child($chatId).child('participants').child(auth.uid).exists()",
+        ".write": "auth != null && root.child('privateChats').child($chatId).child('participants').child(auth.uid).exists() && root.child('privateChats').child($chatId).child('participants').child($uid).exists() && ($uid === auth.uid || data.child('fromUid').val() === auth.uid || newData.child('fromUid').val() === auth.uid)",
+        ".validate": "newData.hasChildren(['ringId','fromUid','createdAt']) && newData.child('ringId').isString() && newData.child('fromUid').isString() && newData.child('createdAt').isNumber() && newData.child('fromUid').val() !== $uid"
+      }
+    },
+    "peers": {
+      "$fromUid": {
+        "$toUid": {
+          ".read": "auth != null && (auth.uid === $fromUid || auth.uid === $toUid) && root.child('privateChats').child($chatId).child('participants').child(auth.uid).exists()",
+          ".write": "auth != null && (auth.uid === $fromUid || auth.uid === $toUid) && root.child('privateChats').child($chatId).child('participants').child(auth.uid).exists() && root.child('privateChats').child($chatId).child('participants').child($fromUid).exists() && root.child('privateChats').child($chatId).child('participants').child($toUid).exists()",
+          "offer": {
+            ".write": "auth != null && auth.uid === $fromUid && root.child('privateChats').child($chatId).child('participants').child(auth.uid).exists()",
+            ".validate": "newData.hasChildren(['type','sdp','fromUid']) && newData.child('type').val() === 'offer' && newData.child('sdp').isString() && newData.child('fromUid').val() === $fromUid"
+          },
+          "answer": {
+            ".write": "auth != null && auth.uid === $toUid && root.child('privateChats').child($chatId).child('participants').child(auth.uid).exists()",
+            ".validate": "newData.hasChildren(['type','sdp','fromUid']) && newData.child('type').val() === 'answer' && newData.child('sdp').isString() && newData.child('fromUid').val() === $toUid"
+          },
+          "candidates": {
+            "$uid": {
+              ".read": "auth != null && (auth.uid === $fromUid || auth.uid === $toUid)",
+              ".write": "auth != null && $uid === auth.uid && (auth.uid === $fromUid || auth.uid === $toUid)",
+              "$candidateId": {
+                ".validate": "newData.child('candidate').isString()"
+              }
             }
           }
         }
@@ -99,4 +102,4 @@ Add this inside the existing top-level `rules` object:
 }
 ```
 
-These rules intentionally grant only the session participants access to their signaling data and let the caller write the initial session while the callee writes the answer. Realtime Database uses `auth.uid`, `data`, `newData`, and `root` for these checks. citeturn2search1turn2search5
+Do not add a broad root write to calls. The existing Firebase rules should remain unchanged outside this calls section.
