@@ -9,173 +9,73 @@
   <link rel="icon" href="icons/icon.svg" type="image/svg+xml">
   <link rel="apple-touch-icon" href="icons/icon-192.png">
   <link rel="stylesheet" href="style.css">
-  <script>
-    try {
-      document.documentElement.dataset.theme =
-        localStorage.getItem('theme') || 'system';
-    } catch (e) {}
-  </script>
+  <script>try { document.documentElement.dataset.theme = localStorage.getItem('theme') || 'system'; } catch (e) {}</script>
 </head>
-
 <body class="call-body">
-
 <div class="call-shell">
-
   <header class="topbar call-topbar">
-    <a
-      href="javascript:history.back()"
-      class="icon-btn"
-      aria-label="Back"
-      data-icon="back">
-    </a>
-
+    <a href="javascript:history.back()" class="icon-btn" aria-label="Back" data-icon="back"></a>
     <div class="chat-title-wrap">
       <span id="headAvatar"></span>
-
       <div class="titles">
         <h1 id="callTitle">Call</h1>
-        <div id="callStatus" class="sub">Connecting…</div>
+        <div id="callStatus" class="sub">Loading…</div>
       </div>
-    </div>
-
-    <div class="call-top-actions">
-      <button
-        id="callOptionsBtn"
-        class="icon-btn"
-        type="button"
-        aria-label="Call options"
-        data-icon="more">
-      </button>
     </div>
   </header>
 
-  <main class="call-stage">
+  <main id="callLobby" class="call-lobby">
+    <div class="call-lobby-head">
+      <div>
+        <h2>Call someone</h2>
+        <p class="muted">Choose someone in this chat to ring.</p>
+      </div>
+    </div>
+    <div id="callParticipants" class="call-participants"></div>
+  </main>
 
-    <!-- Remote participant -->
+  <main id="callStage" class="call-stage hidden">
     <div id="remoteStage" class="remote-stage">
-
-      <video
-        id="remoteVideo"
-        class="remote-video hidden"
-        autoplay
-        playsinline>
-      </video>
-
+      <video id="remoteVideo" class="remote-video hidden" autoplay playsinline></video>
       <div id="remotePlaceholder" class="call-placeholder">
         <span id="remoteAvatar"></span>
         <div id="remoteName">Connecting…</div>
         <div id="remoteState">Waiting for video…</div>
       </div>
-
     </div>
-
-    <!-- Local participant -->
     <div id="localStage" class="local-stage">
-
-      <video
-        id="localVideo"
-        class="local-video"
-        autoplay
-        muted
-        playsinline>
-      </video>
-
-      <div id="localPlaceholder" class="local-placeholder hidden">
-        <span id="localAvatar"></span>
-      </div>
-
+      <video id="localVideo" class="local-video" autoplay muted playsinline></video>
+      <div id="localPlaceholder" class="local-placeholder hidden"><span id="localAvatar"></span></div>
     </div>
-
-    <!-- Screen sharing indicator -->
     <div id="screenShareBadge" class="call-badge hidden">
-      <span data-icon="monitor"></span>
-      <span>You're sharing your screen</span>
+      <span data-icon="monitor"></span><span>You're sharing your screen</span>
     </div>
-
-    <!-- Connection status -->
     <div id="connectionStatus" class="connection-status">
-      <span class="status-dot"></span>
-      <span id="connectionStatusText">Connecting…</span>
+      <span class="status-dot"></span><span id="connectionStatusText">Connecting…</span>
     </div>
-
   </main>
 
-  <footer class="call-controls">
-
-    <button
-      id="muteBtn"
-      class="call-control"
-      type="button"
-      aria-label="Mute microphone"
-      data-icon="mic">
-    </button>
-
-    <button
-      id="cameraBtn"
-      class="call-control"
-      type="button"
-      aria-label="Turn camera off"
-      data-icon="camera">
-    </button>
-
-    <button
-      id="screenBtn"
-      class="call-control"
-      type="button"
-      aria-label="Share screen"
-      data-icon="monitor">
-    </button>
-
-    <button
-      id="switchCameraBtn"
-      class="call-control"
-      type="button"
-      aria-label="Switch camera"
-      data-icon="refresh">
-    </button>
-
-    <button
-      id="endCallBtn"
-      class="call-control danger"
-      type="button"
-      aria-label="End call"
-      data-icon="phone">
-    </button>
-
+  <footer id="callControls" class="call-controls hidden">
+    <button id="muteBtn" class="call-control" type="button" aria-label="Mute microphone" data-icon="mic"></button>
+    <button id="cameraBtn" class="call-control" type="button" aria-label="Turn camera off" data-icon="camera"></button>
+    <button id="screenBtn" class="call-control" type="button" aria-label="Share screen" data-icon="monitor"></button>
+    <button id="switchCameraBtn" class="call-control" type="button" aria-label="Switch camera" data-icon="refresh"></button>
+    <button id="endCallBtn" class="call-control danger" type="button" aria-label="End call" data-icon="phone"></button>
   </footer>
-
 </div>
 
-<!-- Call options -->
-<dialog id="callOptionsDialog" class="modal">
+<dialog id="incomingDialog" class="modal">
   <div class="modal-body">
-
-    <div class="modal-head">
-      <h2>Call options</h2>
-
-      <button
-        type="button"
-        class="icon-btn"
-        id="callOptionsClose"
-        aria-label="Close"
-        data-icon="close">
-      </button>
+    <div class="modal-head"><h2>Incoming call</h2></div>
+    <div id="incomingProfile" class="profile-preview"></div>
+    <p id="incomingText" class="hint">Someone is calling you.</p>
+    <div class="row">
+      <button id="declineCallBtn" class="btn danger grow" type="button">Decline</button>
+      <button id="acceptCallBtn" class="btn primary grow" type="button">Answer</button>
     </div>
-
-    <div class="section-title">Call</div>
-
-    <button id="audioOnlyBtn" class="btn grow" type="button">
-      Switch to audio only
-    </button>
-
-    <button id="speakerBtn" class="btn grow" type="button">
-      Speaker
-    </button>
-
   </div>
 </dialog>
 
 <script type="module" src="js/call.js"></script>
-
 </body>
 </html>
