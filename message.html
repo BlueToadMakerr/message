@@ -1,0 +1,102 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="system">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content">
+  <title>Chat · QuickMessage</title>
+  <meta name="theme-color" content="#4f46e5">
+  <link rel="manifest" href="manifest.json">
+  <link rel="icon" href="icons/icon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="icons/icon-192.png">
+  <link rel="stylesheet" href="style.css">
+  <script>try { document.documentElement.dataset.theme = localStorage.getItem('theme') || 'system'; } catch (e) {}</script>
+</head>
+<body class="chat-body">
+<div class="chat-shell">
+  <header class="topbar">
+    <a href="index.html" class="icon-btn" aria-label="Back to chats" data-icon="back"></a>
+    <div class="chat-title-wrap">
+      <span id="headAvatar"></span>
+      <div class="titles">
+        <h1 id="chatTitle">Chat</h1>
+        <div id="chatSub" class="sub"></div>
+      </div>
+    </div>
+    <button id="chatOptionsBtn" class="icon-btn" type="button" aria-label="Chat options" data-icon="users"></button>
+  </header>
+
+  <div id="messages" class="messages" role="log" aria-live="polite">
+    <div id="historyStatus"></div>
+    <div id="typingRow" class="typing-row hidden">
+      <div class="typing-bubble" aria-hidden="true"><span></span><span></span><span></span></div>
+      <span id="typingLabel" class="typing-label"></span>
+    </div>
+  </div>
+
+  <button id="jumpBtn" class="jump hidden" type="button" aria-label="Jump to latest" data-icon="down"></button>
+
+  <form id="composer" class="composer" autocomplete="off">
+    <button id="attachBtn" class="icon-btn" type="button" aria-label="Send a photo or video" data-icon="image"></button>
+    <textarea id="msgInput" rows="1" placeholder="Message" maxlength="4000" aria-label="Message"></textarea>
+    <button id="sendBtn" class="send-btn" type="submit" aria-label="Send" data-icon="send" data-size="18"></button>
+  </form>
+</div>
+
+<div id="msgMenu" class="hidden" role="menu"></div>
+
+<!-- Chat options -->
+<dialog id="optionsDialog" class="modal">
+  <div class="modal-body">
+    <div class="modal-head">
+      <h2>Chat options</h2>
+      <button type="button" class="icon-btn" id="optionsClose" aria-label="Close" data-icon="close"></button>
+    </div>
+
+    <div>
+      <label class="lbl" for="chatNameInput">Chat name</label>
+      <div class="row">
+        <input id="chatNameInput" class="field" placeholder="Optional name" maxlength="60">
+        <button id="saveChatNameBtn" class="btn primary" type="button">Save</button>
+      </div>
+    </div>
+
+    <div class="section-title">Participants</div>
+    <div id="participantsList"></div>
+
+    <div>
+      <label class="lbl" for="addUserUid">Add someone by UID</label>
+      <div class="row">
+        <input id="addUserUid" class="field" placeholder="Paste a UID" autocomplete="off" spellcheck="false">
+        <button id="addUserBtn" class="btn" type="button">Add</button>
+      </div>
+    </div>
+  </div>
+</dialog>
+
+<!-- Attach media -->
+<dialog id="attachDialog" class="modal">
+  <div class="modal-body">
+    <div class="modal-head">
+      <h2>Send media</h2>
+      <button type="button" class="icon-btn" id="attachClose" aria-label="Close" data-icon="close"></button>
+    </div>
+    <div class="row">
+      <button id="pickFileBtn" class="btn grow" type="button">Choose file</button>
+      <button id="pickCameraBtn" class="btn grow" type="button">Camera</button>
+    </div>
+    <input id="fileInput" type="file" accept="image/*,video/*" class="hidden">
+    <input id="cameraInput" type="file" accept="image/*,video/*" capture="environment" class="hidden">
+    <div class="divider">or paste a link</div>
+    <div class="row">
+      <input id="mediaUrl" class="field" type="url" placeholder="https://… image or video" autocomplete="off">
+      <button id="sendLinkBtn" class="btn primary" type="button">Send</button>
+    </div>
+    <p class="hint">Images are resized automatically. Uploaded videos are limited to 8&nbsp;MB — for bigger ones, send a link.</p>
+  </div>
+</dialog>
+
+<dialog id="lightbox"><div class="lb"><img id="lightboxImg" alt=""></div></dialog>
+
+<script type="module" src="js/message.js"></script>
+</body>
+</html>
