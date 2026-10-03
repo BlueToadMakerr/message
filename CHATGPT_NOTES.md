@@ -62,7 +62,7 @@ Add this inside the existing top-level `rules` object:
     "ringing": {
       "$uid": {
         ".read": "auth != null && root.child('privateChats').child($chatId).child('participants').child(auth.uid).exists() && ($uid === auth.uid || (data.child('fromUid').val() === auth.uid))",
-        ".write": "auth != null && root.child('privateChats').child($chatId).child('participants').child(auth.uid).exists() && root.child('privateChats').child($chatId).child('participants').child($uid).exists() && ($uid === auth.uid || newData.child('fromUid').val() === auth.uid)",
+        ".write": "auth != null && root.child('privateChats').child($chatId).child('participants').child(auth.uid).exists() && root.child('privateChats').child($chatId).child('participants').child($uid).exists() && ($uid === auth.uid || data.child('fromUid').val() === auth.uid || newData.child('fromUid').val() === auth.uid)",
         ".validate": "newData.hasChildren(['sessionId','fromUid','createdAt']) && newData.child('sessionId').isString() && newData.child('fromUid').val() === auth.uid && newData.child('createdAt').isNumber()"
       }
     },
