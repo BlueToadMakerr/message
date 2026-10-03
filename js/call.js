@@ -42,6 +42,9 @@ const screenShareBtn = $("screenBtn");
 const switchCameraBtn = $("switchCameraBtn");
 const endCallBtn = $("endCallBtn");
 const remoteGrid = $("remoteGrid");
+const ringBtn = $("ringBtn");
+const ringMenu = $("ringMenu");
+const closeRingBtn = $("closeRingBtn");
 
 const RTC_CONFIG = {
   iceServers: [{ urls: "stun:stun.l.google.com:19302" }]
@@ -96,7 +99,22 @@ function showCall(show) {
   callLobby.classList.toggle("hidden", show);
   callStage.classList.toggle("hidden", !show);
   callControls.classList.toggle("hidden", !show);
+  if (!show) ringMenu?.classList.add("hidden");
 }
+
+ringBtn?.addEventListener("click", () => {
+  ringMenu?.classList.toggle("hidden");
+});
+
+closeRingBtn?.addEventListener("click", () => {
+  ringMenu?.classList.add("hidden");
+});
+
+document.addEventListener("click", event => {
+  if (!ringMenu || ringMenu.classList.contains("hidden")) return;
+  if (ringMenu.contains(event.target) || ringBtn?.contains(event.target)) return;
+  ringMenu.classList.add("hidden");
+});
 
 function makeTile(uid, profile) {
   const tile = document.createElement("div");
