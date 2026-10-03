@@ -160,6 +160,13 @@ function listenForIncoming() {
     if (!ring || ring.notifyStatus === "declined" || ring.notifyStatus === "ended") return;
     if (activeSessionId || incomingSessionId === ring.sessionId) return;
 
+    const sessionSnap = await get(ref(db, `${callPath}/sessions/${ring.sessionId}`)).catch(() => null);
+    const session = sessionSnap?.val();
+    if (!session || session.state !== "ringing" || session.toUid !== me) {
+      await remove(ref(db, `${callPath}/ringing/${me}`)).catch(() => {});
+      return;
+    }
+
     incomingSessionId = ring.sessionId;
     incomingCallerUid = ring.fromUid;
     const p = profiles.get(ring.fromUid) || await getProfile(ring.fromUid);
