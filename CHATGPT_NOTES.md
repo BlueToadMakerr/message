@@ -49,3 +49,53 @@ Last updated: 2026-10-03
 3. Test camera, microphone, ICE, hangup, and screen sharing.
 4. Add TURN for connections that cannot establish a direct/STUN path.
 5. Later, extend the existing chat room/session structure for true multi-party calls.
+
+
+## /calls rules required in Firebase
+The client changes are committed, but the live Realtime Database rules still need a `calls` section. Do not put a broad `.read` or `.write` on `calls/$chatId`, because Realtime Database rules cascade from parent paths. citeturn2search0turn2search6
+
+Add this inside the existing top-level `rules` object:
+
+```json
+"calls": {
+  "$chatId": {
+    "ringing": {
+      "$uid": {
+        ".read": "auth != null && root.child('privateChats').child($chatId).child('participants').child(auth.uid).exists() && ($uid === auth.uid || (data.child('fromUid').val() === auth.uid))",
+        ".write": "auth != null && root.child('privateChats').child($chatId).child('participants').child(auth.uid).exists() && root.child('privateChats').child($chatId).child('participants').child($uid).exists() && ($uid === auth.uid || newData.child('fromUid').val() === auth.uid)",
+        ".validate": "newData.hasChildren(['sessionId','fromUid','createdAt']) && newData.child('sessionId').isString() && newData.child('fromUid').val() === auth.uid && newData.child('createdAt').isNumber()"
+      }
+    },
+    "sessions": {
+      "$sessionId": {
+        ".read": "auth != null && root.child('privateChats').child($chatId).child('participants').child(auth.uid).exists() && (data.child('fromUid').val() === auth.uid || data.child('toUid').val() === auth.uid)",
+        ".write": "!data.exists() && auth != null && root.child('privateChats').child($chatId).child('participants').child(auth.uid).exists() && newData.child('fromUid').val() === auth.uid && root.child('privateChats').child($chatId).child('participants').child(newData.child('toUid').val()).exists()",
+        ".validate": "newData.hasChildren(['fromUid','toUid','state','createdAt']) && newData.child('fromUid').isString() && newData.child('toUid').isString() && newData.child('fromUid').val() !== newData.child('toUid').val() && newData.child('state').isString() && newData.child('createdAt').isNumber()",
+        "offer": {
+          ".write": "auth != null && data.parent().child('fromUid').val() === auth.uid",
+          ".validate": "newData.hasChildren(['type','sdp']) && newData.child('type').val() === 'offer' && newData.child('sdp').isString()"
+        },
+        "answer": {
+          ".write": "auth != null && data.parent().child('toUid').val() === auth.uid",
+          ".validate": "newData.hasChildren(['type','sdp']) && newData.child('type').val() === 'answer' && newData.child('sdp').isString()"
+        },
+        "state": {
+          ".write": "auth != null && (data.parent().child('fromUid').val() === auth.uid || data.parent().child('toUid').val() === auth.uid)",
+          ".validate": "newData.val() === 'ringing' || newData.val() === 'accepted' || newData.val() === 'connected' || newData.val() === 'declined' || newData.val() === 'ended'"
+        },
+        "candidates": {
+          "$uid": {
+            ".read": "auth != null && data.parent().parent().child('fromUid').val() === auth.uid || auth != null && data.parent().parent().child('toUid').val() === auth.uid",
+            ".write": "auth != null && $uid === auth.uid && (data.parent().parent().child('fromUid').val() === auth.uid || data.parent().parent().child('toUid').val() === auth.uid)",
+            "$candidateId": {
+              ".validate": "newData.hasChildren(['candidate']) && newData.child('candidate').isString()"
+            }
+          }
+        }
+      }
+    }
+  }
+}
+```
+
+These rules intentionally grant only the session participants access to their signaling data and let the caller write the initial session while the callee writes the answer. Realtime Database uses `auth.uid`, `data`, `newData`, and `root` for these checks. citeturn2search1turn2search5
