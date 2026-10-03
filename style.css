@@ -308,3 +308,79 @@ dialog#lightbox img { max-width: 100%; max-height: 100%; border-radius: 8px; }
 .call-participant-status { font-size: .82rem; }
 .call-stage.hidden, .call-controls.hidden { display: none; }
 .call-body { min-height: 100dvh; display: flex; flex-direction: column; }
+
+
+/* ---------- group calls ---------- */
+.remote-grid {
+  flex: 1;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: .6rem;
+  padding: .75rem;
+  overflow: auto;
+  align-content: center;
+}
+.call-tile {
+  position: relative;
+  min-height: 180px;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  background: var(--surface);
+  display: grid;
+  place-items: center;
+}
+.call-tile-video {
+  width: 100%;
+  height: 100%;
+  min-height: 180px;
+  object-fit: cover;
+  display: block;
+}
+.call-tile-placeholder {
+  display: grid;
+  place-items: center;
+  gap: .5rem;
+  width: 100%;
+  min-height: 180px;
+  color: var(--muted);
+}
+.call-tile-label, .local-label {
+  position: absolute;
+  left: .55rem;
+  bottom: .55rem;
+  padding: .25rem .5rem;
+  border-radius: 8px;
+  background: rgb(0 0 0 / .55);
+  color: #fff;
+  font-size: .75rem;
+  z-index: 2;
+}
+.local-label { bottom: .45rem; }
+.call-stage {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  overflow: hidden;
+}
+.local-stage {
+  position: absolute;
+  right: .85rem;
+  bottom: .85rem;
+  z-index: 4;
+  width: min(30vw, 220px);
+  aspect-ratio: 16 / 10;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: var(--surface);
+  box-shadow: var(--shadow);
+}
+.local-video { width: 100%; height: 100%; object-fit: cover; }
+.local-placeholder { width: 100%; height: 100%; display: grid; place-items: center; }
+@media (max-width: 600px) {
+  .remote-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); padding: .5rem; gap: .4rem; }
+  .call-tile, .call-tile-video, .call-tile-placeholder { min-height: 125px; }
+  .local-stage { width: 34vw; }
+}
