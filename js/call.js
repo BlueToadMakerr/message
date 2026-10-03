@@ -432,6 +432,7 @@ function createPeer(uid) {
     uid,
     pc,
     remoteStream: new MediaStream(),
+    remoteStreams: new Map(),
     remoteCandidates: [],
     initializedRemote: false,
     offerListener: null,
@@ -443,24 +444,48 @@ function createPeer(uid) {
 
   localStream.getTracks().forEach(track => pc.addTrack(track, localStream));
 
-  const tile = ensureTile(uid);
-  tile.video.srcObject = entry.remoteStream;
+  let primaryTile = ensureTile(uid);
+  const cameraStream = entry.remoteStream;
 
   pc.ontrack = event => {
-    const stream = event.streams[0];
-    if (stream) {
-      stream.getTracks().forEach(track => {
-        if (!entry.remoteStream.getTrackById(track.id)) {
-          entry.remoteStream.addTrack(track);
-        }
-      });
-    } else if (!entry.remoteStream.getTrackById(event.track.id)) {
-      entry.remoteStream.addTrack(event.track);
+    const stream = event.streams[0] || cameraStream;
+    let targetStream = entry.remoteStreams.get(stream.id);
+
+    if (!targetStream) {
+      targetStream = new MediaStream();
+      entry.remoteStreams.set(stream.id, targetStream);
     }
 
-    const hasVideo = entry.remoteStream.getVideoTracks().length > 0;
-    tile.video.classList.toggle("hidden", !hasVideo);
-    tile.placeholder.classList.toggle("hidden", hasVideo);
+    if (!targetStream.getTrackById(event.track.id)) {
+      targetStream.addTrack(event.track);
+    }
+
+    const isScreen = stream.id !== cameraStream.id && entry.remoteStreams.size > 1;
+    let tile = primaryTile;
+
+    if (isScreen) {
+      const screenKey = uid + ":screen:" + stream.id;
+      let screenTile = remoteGrid.querySelector('.call-tile[data-stream-id="' + CSS.escape(screenKey) + '"]');
+
+      if (!screenTile) {
+        screenTile = makeTile(uid, profiles.get(uid) || { displayName: "User", pfp: "" }).tile;
+        screenTile.dataset.streamId = screenKey;
+        screenTile.classList.add("screen-share");
+        screenTile.querySelector(".call-tile-label").textContent =
+          (profiles.get(uid)?.displayName || "User") + " — Screen";
+      }
+
+      tile = {
+        tile: screenTile,
+        video: screenTile.querySelector("video"),
+        placeholder: screenTile.querySelector(".call-tile-placeholder"),
+        label: screenTile.querySelector(".call-tile-label")
+      };
+    }
+
+    tile.video.srcObject = targetStream;
+    tile.video.classList.remove("hidden");
+    tile.placeholder.classList.add("hidden");
     tile.video.play().catch(() => {});
     renderParticipants();
   };
@@ -682,8 +707,7 @@ async function startScreenShare() {
     const track = screenStream.getVideoTracks()[0];
 
     for (const entry of peers.values()) {
-      const sender = entry.pc.getSenders().find(s => s.track?.kind === "video");
-      if (sender) await sender.replaceTrack(track);
+      entry.pc.addTrack(track, screenStream);
     }
 
     screenSharing = true;
@@ -698,10 +722,11 @@ async function stopScreenShare() {
   if (!screenSharing) return;
 
   for (const entry of peers.values()) {
-    const sender = entry.pc.getSenders().find(s => s.track?.kind === "video");
-    try {
-      if (sender && cameraTrack) await sender.replaceTrack(cameraTrack);
-    } catch (_) {}
+    for (const sender of entry.pc.getSenders()) {
+      if (sender.track === screenStream?.getVideoTracks()[0]) {
+        try { entry.pc.removeTrack(sender); } catch (_) {}
+      }
+    }
   }
 
   stopStream(screenStream);
