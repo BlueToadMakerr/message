@@ -12,7 +12,7 @@ Last updated: 2026-10-03
 - Calling uses the chat ID as the call room (`calls/{chatId}`); individual 1-to-1 WebRTC sessions live underneath that room.
 - WebRTC signaling uses `calls/{chatId}/sessions/{sessionId}` so the chat remains the room identity while each ring gets its own 1-to-1 session.
 - Current WebRTC configuration has Google public STUN only. TURN has not been added yet.
-- Group calling is intentionally deferred until 1-to-1 calling works.
+- Calling now uses a chat-wide room with a WebRTC mesh: each connected member has one direct peer connection to every other connected member.
 
 ## Important implementation conventions
 - Reuse helpers from js/ui.js instead of duplicating avatar/icon code.
@@ -31,22 +31,26 @@ Last updated: 2026-10-03
 - Do not loosen existing root rules just to make calling work; add a narrowly scoped /calls rule for authenticated call participants.
 
 ## Current call-system flow
-- Opening `call.html?chatId=...` loads every member of that chat automatically.
-- Every other member gets a **Ring** button.
-- Ringing writes `calls/{chatId}/ringing/{targetUid}` and creates a session under `calls/{chatId}/sessions/{sessionId}`.
-- `call-notify.php` verifies the Firebase ID token, verifies both users are chat participants, sends FCM to the target's saved device tokens, and returns a notification status.
-- The ring list displays `Notification sent`, `No notification device`, or `Notification failed`.
-- Incoming calls can be accepted or declined from the call page.
-- The actual WebRTC connection remains 1-to-1 for now; the chat ID is the room identity so group-call signaling can be expanded later.
+- Opening call.html?chatId=... authenticates, loads the chat participants, and automatically joins the chat call room.
+- The room is calls/{chatId}.
+- Active callers are tracked at calls/{chatId}/members/{uid}.
+- When a member appears, every other connected member creates/accepts a direct WebRTC peer connection with them.
+- This is a mesh group call: each participant has one direct peer connection to every other connected participant.
+- A participant who is not currently in the room can be rung through calls/{chatId}/ringing/{uid}.
+- The notification still uses call-notify.php; its ring ID identifies the invitation. The recipient then opens the chat call and automatically joins the existing room.
+- The participant list shows In call, Not in call, or You. Only people not already in the call get a Ring button.
+- The old one-remote-video/single-session architecture has been removed.
+- The call page now has explicit Firebase auth-state initialization. The previous version never initialized me, which is why it displayed only “Call / Loading…” and no participants.
 - WebRTC currently uses Google public STUN only. TURN has not been added yet.
 
 ## Next call-system steps
-1. Add the `/calls` Realtime Database rules to the live Firebase rules.
-2. Test ring notification delivery and accept/decline.
-3. Test camera, microphone, ICE, hangup, and screen sharing.
-4. Add TURN for connections that cannot establish a direct/STUN path.
-5. Later, extend the existing chat room/session structure for true multi-party calls.
-
+1. Replace the old /calls rules with rules matching members, peers, and ringing.
+2. Test two users entering the same chat call and verify they connect automatically without ringing.
+3. Test a third user joining an existing call and verify all three mesh connections form.
+4. Test ringing another chat member who is not currently in the call.
+5. Test camera, microphone, ICE, hangup, and screen sharing with multiple participants.
+6. Add TURN if direct/STUN connections fail on restrictive networks.
+7. Later, consider an SFU if group calls become large; mesh connection count grows with each participant.
 
 ## /calls rules required in Firebase
 The client changes are committed, but the live Realtime Database rules still need a `calls` section. Do not put a broad `.read` or `.write` on `calls/$chatId`, because Realtime Database rules cascade from parent paths. citeturn2search0turn2search6
