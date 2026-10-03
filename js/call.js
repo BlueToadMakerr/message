@@ -8,9 +8,7 @@ import {
   ref,
   get,
   set,
-  update,
-  remove,
-  onValue,
+  update,  onValue,
   onChildAdded,
   onDisconnect
 } from "https://www.gstatic.com/firebasejs/11.0.1/firebase-database.js";
@@ -18,7 +16,7 @@ import {
 import {
   avatarEl,
   hydrateIcons
-} from "./users.js";
+} from "./ui.js";
 
 
 /*
@@ -82,7 +80,7 @@ const cameraBtn =
   document.getElementById("cameraBtn");
 
 const screenShareBtn =
-  document.getElementById("screenShareBtn");
+  document.getElementById("screenBtn");
 
 const switchCameraBtn =
   document.getElementById("switchCameraBtn");
@@ -91,7 +89,7 @@ const endCallBtn =
   document.getElementById("endCallBtn");
 
 const audioOnlyToggle =
-  document.getElementById("audioOnlyToggle");
+  document.getElementById("audioOnlyBtn");
 
 const speakerBtn =
   document.getElementById("speakerBtn");
@@ -323,11 +321,7 @@ async function loadPeerProfile() {
 
       try {
         remoteAvatar.appendChild(
-          avatarEl({
-            uid: peerUid,
-            name,
-            pfp: settings.pfp || ""
-          })
+          avatarEl(name, settings.pfp || "")
         );
       } catch (err) {
         console.warn("Could not create remote avatar:", err);
