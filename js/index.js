@@ -395,6 +395,14 @@ async function setupNotifications(uid) {
 
   onMessage(messaging, payload => {
     const n = payload.notification || {};
+    const d = payload.data || {};
+
+    if (d.call === "1" && d.chatId) {
+      toast(`${n.title || "Incoming call"}${n.body ? ": " + n.body : ""}`);
+      location.href = `call.html?chatId=${encodeURIComponent(d.chatId)}${d.sessionId ? `&session=${encodeURIComponent(d.sessionId)}` : ""}`;
+      return;
+    }
+
     toast(`${n.title || "New message"}${n.body ? ": " + n.body : ""}`);
   });
 }
