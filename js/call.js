@@ -45,6 +45,7 @@ const remoteGrid = $("remoteGrid");
 const ringBtn = $("ringBtn");
 const ringMenu = $("ringMenu");
 const closeRingBtn = $("closeRingBtn");
+const localStage = $("localStage");
 
 const RTC_CONFIG = {
   iceServers: [{ urls: "stun:stun.l.google.com:19302" }]
@@ -388,6 +389,67 @@ async function declineIncoming() {
 
 acceptCallBtn.addEventListener("click", acceptIncoming);
 declineCallBtn.addEventListener("click", declineIncoming);
+
+function setupLocalVideoDrag() {
+  if (!localStage) return;
+
+  let dragging = false;
+  let startX = 0;
+  let startY = 0;
+  let startLeft = 0;
+  let startTop = 0;
+
+  const move = event => {
+    if (!dragging) return;
+
+    const rect = callStage.getBoundingClientRect();
+    const width = localStage.offsetWidth;
+    const height = localStage.offsetHeight;
+
+    let left = startLeft + (event.clientX - startX);
+    let top = startTop + (event.clientY - startY);
+
+    left = Math.max(0, Math.min(left, rect.width - width));
+    top = Math.max(0, Math.min(top, rect.height - height));
+
+    localStage.style.left = `${left}px`;
+    localStage.style.top = `${top}px`;
+    localStage.style.right = "auto";
+    localStage.style.bottom = "auto";
+  };
+
+  const end = () => {
+    if (!dragging) return;
+    dragging = false;
+    localStage.classList.remove("dragging");
+    document.removeEventListener("pointermove", move);
+    document.removeEventListener("pointerup", end);
+    document.removeEventListener("pointercancel", end);
+  };
+
+  localStage.addEventListener("pointerdown", event => {
+    if (event.button !== 0) return;
+    if (event.target.closest("button, input, a")) return;
+
+    const stageRect = callStage.getBoundingClientRect();
+    const localRect = localStage.getBoundingClientRect();
+
+    dragging = true;
+    startX = event.clientX;
+    startY = event.clientY;
+    startLeft = localRect.left - stageRect.left;
+    startTop = localRect.top - stageRect.top;
+
+    localStage.setPointerCapture?.(event.pointerId);
+    localStage.classList.add("dragging");
+
+    document.addEventListener("pointermove", move);
+    document.addEventListener("pointerup", end);
+    document.addEventListener("pointercancel", end);
+
+    event.preventDefault();
+  });
+}
 
 async function setupLocalMedia() {
   if (localStream) return;
@@ -802,6 +864,8 @@ switchCameraBtn.addEventListener("click", async () => {
 endCallBtn.addEventListener("click", leaveCall);
 
 async function init() {
+  setupLocalVideoDrag();
+
   try {
     await loadChat();
     await listenForIncomingRings();
