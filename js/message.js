@@ -761,3 +761,10 @@ onAuthStateChanged(auth, async user => {
     historyStatus.textContent = "Couldn't load messages. Check your connection and reload.";
   }
 });
+
+
+/* ---------- calling ---------- */
+callBtn.onclick = event => {
+  event.preventDefault();
+  location.href = `call.html?chatId=${encodeURIComponent(chatId)}`;
+};
