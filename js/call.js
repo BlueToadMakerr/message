@@ -433,6 +433,7 @@ function createPeer(uid) {
     pc,
     remoteStream: new MediaStream(),
     remoteStreams: new Map(),
+    cameraRemoteStreamId: null,
     remoteCandidates: [],
     initializedRemote: false,
     offerListener: null,
@@ -449,6 +450,7 @@ function createPeer(uid) {
 
   pc.ontrack = event => {
     const stream = event.streams[0] || cameraStream;
+    if (!entry.cameraRemoteStreamId) entry.cameraRemoteStreamId = stream.id;
     let targetStream = entry.remoteStreams.get(stream.id);
 
     if (!targetStream) {
@@ -460,7 +462,7 @@ function createPeer(uid) {
       targetStream.addTrack(event.track);
     }
 
-    const isScreen = stream.id !== cameraStream.id && entry.remoteStreams.size > 1;
+    const isScreen = stream.id !== entry.cameraRemoteStreamId;
     let tile = primaryTile;
 
     if (isScreen) {
