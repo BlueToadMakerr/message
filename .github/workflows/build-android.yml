@@ -1,70 +1,22 @@
-name: Build Android companion
-
+name: Build Android app
 on:
   push:
-    paths:
-      - "android/**"
-      - "quickmessage-call-git.zip"
-      - ".github/workflows/build-android.yml"
+    paths: ["android/**", ".github/workflows/build-android.yml"]
   workflow_dispatch:
-
-permissions:
-  contents: read
-
 jobs:
-  build:
-    name: Build debug APK
+  apk:
     runs-on: ubuntu-latest
-
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Locate Android project
-        shell: bash
-        run: |
-          if [ -f "android/settings.gradle.kts" ]; then
-            echo "ANDROID_DIR=android" >> "$GITHUB_ENV"
-          elif [ -f "quickmessage-call-git.zip" ]; then
-            rm -rf .quickmessage-source
-            mkdir .quickmessage-source
-            unzip -q "quickmessage-call-git.zip" -d .quickmessage-source
-            if [ ! -f ".quickmessage-source/android/settings.gradle.kts" ]; then
-              echo "::error::The ZIP does not contain android/settings.gradle.kts"
-              exit 1
-            fi
-            echo "ANDROID_DIR=.quickmessage-source/android" >> "$GITHUB_ENV"
-          else
-            echo "::error::No android/ project or quickmessage-call-git.zip was found"
-            exit 1
-          fi
-
-      - name: Set up Java 17
-        uses: actions/setup-java@v4
-        with:
-          distribution: temurin
-          java-version: "17"
-
-      - name: Set up Android SDK
-        uses: android-actions/setup-android@v4
-
-      - name: Install Android SDK 35
-        run: sdkmanager "platform-tools" "platforms;android-35" "build-tools;35.0.0"
-
-      - name: Set up Gradle
-        uses: gradle/actions/setup-gradle@v4
-        with:
-          gradle-version: "8.9"
-
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with: { distribution: temurin, java-version: 17 }
+      - uses: android-actions/setup-android@v3
+      - uses: gradle/actions/setup-gradle@v4
+        with: { gradle-version: 8.14.3 }
       - name: Build debug APK
-        shell: bash
-        run: |
-          cd "$ANDROID_DIR"
-          gradle assembleDebug --no-daemon
-
-      - name: Upload APK
-        uses: actions/upload-artifact@v4
+        working-directory: android
+        run: gradle assembleDebug --no-daemon
+      - uses: actions/upload-artifact@v4
         with:
-          name: quickmessage-companion-debug
-          path: ${{ env.ANDROID_DIR }}/app/build/outputs/apk/debug/app-debug.apk
-          if-no-files-found: error
+          name: quickmessage-debug
+          path: android/app/build/outputs/apk/debug/app-debug.apk
