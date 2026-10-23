@@ -10,6 +10,25 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-java@v4
         with: { distribution: temurin, java-version: 17 }
+      # The runner image already ships the Android SDK (ANDROID_HOME); the setup-android action's "sdkmanager tools" step now fails, so it isn't used.
       - name: Accept SDK licenses
         run: yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses > /dev/null || true
       - uses: gradle/actions/setup-gradle@v4
+        with: { gradle-version: 8.14.3 }
+      - name: Build debug APK
+        working-directory: android
+        run: set -o pipefail; gradle assembleDebug --no-daemon --stacktrace 2>&1 | tee build.log
+      - name: Show compile errors in the job summary
+        if: failure()
+        run: |
+          { echo '### Build errors'; echo '```'; grep -E '^e: |error:|FAILED|What went wrong' -A3 android/build.log | head -80; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+      - name: Upload the build log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-build-log
+          path: android/build.log
+      - uses: actions/upload-artifact@v4
+        with:
+          name: quickmessage-debug
+          path: android/app/build/outputs/apk/debug/app-debug.apk
