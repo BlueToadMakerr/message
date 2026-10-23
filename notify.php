@@ -177,7 +177,7 @@ foreach (array_keys($participants) as $pUid) {
 
 // ---------------------------------------------------------------- 6. send
 $link    = rtrim($config['app_url'], '/') . '/message.html?chatId=' . rawurlencode($chatId);
-$body    = mb_strimwidth((string)$lastMessage['text'], 0, 100, '…');
+$body    = !empty($lastMessage['enc']) ? '🔒 New message' : mb_strimwidth((string)$lastMessage['text'], 0, 100, '…');   // encrypted chats: the server can't read the text
 $fcmUrl  = 'https://fcm.googleapis.com/v1/projects/' . $config['project_id'] . '/messages:send';
 $results = [];
 

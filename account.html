@@ -2,14 +2,14 @@
 <html lang="en" data-theme="system">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
   <title>Account · QuickMessage</title>
   <meta name="theme-color" content="#4f46e5">
   <link rel="manifest" href="manifest.json">
   <link rel="icon" href="icons/icon.svg" type="image/svg+xml">
   <link rel="apple-touch-icon" href="icons/icon-192.png">
   <link rel="stylesheet" href="style.css">
-  <script>try { document.documentElement.dataset.theme = localStorage.getItem('theme') || 'system'; } catch (e) {}</script>
+  <script src="js/themeboot.js"></script>
 </head>
 <body>
 <div class="shell">
@@ -59,6 +59,122 @@
         </form>
       </section>
 
+      <section class="card" id="themeCard">
+        <h2>Colours</h2>
+        <p class="muted" style="margin-top:0">Saved on this device. Light / dark / match-my-device is the Appearance choice in Profile above.</p>
+        <div class="stack">
+          <label class="switch-row"><input type="checkbox" id="midnight"> <span><strong>Midnight</strong><br><small class="muted">Dark mode only: backgrounds and panels become pure black (nice on OLED screens). Light mode is unchanged.</small></span></label>
+          <label id="materialRow" class="switch-row hidden"><input type="checkbox" id="material"> <span><strong>Material You</strong><br><small class="muted">Android 12 or newer: use the colours of your wallpaper. It replaces the accent colour below while it is on.</small></span></label>
+          <div id="accentBox" class="stack">
+            <label class="lbl" for="accentPick">Accent colour</label>
+            <div id="accentSwatches" class="swatches"></div>
+            <div class="row wrap" style="align-items:center;gap:.6rem">
+              <input id="accentPick" type="color" value="#4f46e5" aria-label="Pick any colour">
+              <span id="accentHex" class="muted"></span>
+              <button id="accentReset" class="btn small" type="button">Use the default</button>
+            </div>
+            <small class="muted">Buttons, links and your own messages use this colour. Very light colours are darkened a little so text stays readable.</small>
+          </div>
+        </div>
+      </section>
+
+      <section class="card">
+        <h2>Email &amp; sign-in</h2>
+        <p id="verifyRow" class="muted" style="margin-top:0"></p>
+        <div id="providersList" class="stack"></div>
+        <div id="addPasswordBox" class="stack hidden">
+          <input id="newPw1" class="field" type="password" autocomplete="new-password" placeholder="Choose a password (6+ characters)" minlength="6">
+          <button id="addPwBtn" class="btn primary" type="button">Add password sign-in</button>
+        </div>
+        <div class="row wrap">
+          <button id="linkGoogleBtn" class="btn hidden" type="button">Link my Google account</button>
+          <button id="showAddPwBtn" class="btn hidden" type="button">Create a password</button>
+        </div>
+      </section>
+
+      <section class="card">
+        <h2>Privacy</h2>
+        <label class="switch-row"><input type="checkbox" id="emailAddToggle"> <span><strong>Let people add me by email</strong><br><small class="muted">Your email is never shown to anyone. When this is off, people need your UID to add you.</small></span></label>
+        <label class="switch-row" style="margin-top:.8rem"><input type="checkbox" id="previewToggle"> <span><strong>Link previews</strong><br><small class="muted">Shows what links in messages are (title, picture, video). Fetching a preview asks this site's server to open the link; nothing is stored.</small></span></label>
+      </section>
+
+      <section class="card" id="audioCard">
+        <h2>Audio</h2>
+        <p class="muted" style="margin-top:0">Microphone, speakers and microphone volume for calls. Changes also apply to a call that is running.</p>
+        <div id="audioHost"></div>
+      </section>
+
+      <section class="card">
+        <h2>Screen sharing: defaults</h2>
+        <p class="muted" style="margin-top:0">Starting quality for when you share your screen. These settings only change what you send; what you watch from others is always the best the sender provides (your browser lowers it by itself if needed). When you press Share screen in a call you see these settings again and can change them for that share, or start with them as they are. Higher settings use more bandwidth, CPU and battery, and the people in the call need a connection that can keep up.</p>
+        <div class="stack">
+          <label class="lbl" for="scPreset">Preset</label>
+          <select id="scPreset" class="field"></select>
+          <details class="adv" id="scAdv">
+            <summary>Custom settings</summary>
+            <div class="stack" style="margin-top:.6rem">
+              <label class="lbl" for="scRes">Resolution (largest size to ask for)</label>
+              <select id="scRes" class="field"></select>
+              <div id="scWeb" class="stack">
+              <label class="lbl" for="scFps">Frame rate: <span id="scFpsOut"></span> fps</label>
+              <input id="scFps" type="range" min="1" max="60" step="1">
+              <label class="lbl" for="scBitrate">Maximum bitrate (kbps, 0 = automatic)</label>
+              <input id="scBitrate" class="field" type="number" min="0" max="50000" step="100" inputmode="numeric">
+              <label class="lbl" for="scHint">Optimise for</label>
+              <select id="scHint" class="field"><option value="detail">Sharp text and detail</option><option value="motion">Smooth motion</option><option value="text">Text</option><option value="auto">Let the browser decide</option></select>
+              <label class="lbl" for="scDegrade">When the connection is slow, give up</label>
+              <select id="scDegrade" class="field"><option value="auto">Let the browser decide</option><option value="resolution">Frame rate (keep it sharp)</option><option value="framerate">Sharpness (keep it smooth)</option><option value="balanced">A bit of both</option></select>
+              <label class="lbl" for="scCodec">Video codec (if the browser supports it)</label>
+              <select id="scCodec" class="field"><option value="auto">Automatic</option><option value="vp9">VP9</option><option value="av1">AV1</option><option value="h264">H.264</option><option value="vp8">VP8</option></select>
+              </div>
+              <label class="switch-row"><input type="checkbox" id="scAudio"> <span><strong>Share sound too</strong><br><small class="muted">When the browser offers it.</small></span></label>
+              <div id="scApp" class="stack hidden">
+                <div class="muted" style="font-size:.8rem">The Android app captures the screen itself and sends it as a stream of pictures, so it has its own two settings:</div>
+                <label class="lbl" for="scJpeg">Picture quality: <span id="scJpegOut"></span>%</label>
+                <input id="scJpeg" type="range" min="30" max="95" step="1">
+                <label class="lbl" for="scAfps">Frames per second: <span id="scAfpsOut"></span></label>
+                <input id="scAfps" type="range" min="1" max="30" step="1">
+              </div>
+              <button id="scReset" class="btn" type="button">Reset to defaults</button>
+            </div>
+          </details>
+          <div id="scSummary" class="muted" style="font-size:.8rem"></div>
+          <div id="scHelpHost"></div>
+        </div>
+      </section>
+
+      <section id="notifBtnCard" class="card hidden">
+        <h2>Call notification</h2>
+        <p class="muted" style="margin-top:0">Android shows at most three buttons in the ongoing-call notification, and one is always Hang up. Choose the third one next to Mute.</p>
+        <select id="notifBtn" class="field"><option value="screen">Share screen</option><option value="deafen">Deafen</option></select>
+      </section>
+
+      <section class="card">
+        <h2>Developer</h2>
+        <label class="switch-row"><input type="checkbox" id="devToggle"> <span><strong>Developer mode</strong><br><small class="muted">Adds small <code>{ }</code> buttons (chat list, chats, messages, calls) that open raw, copyable information: what is loaded, call frame rate, connection and WebRTC details, raw message data. Nothing changes on screen otherwise. Saved on this device.</small></span></label>
+        <div class="row wrap" style="margin-top:.7rem;align-items:center"><label class="lbl" style="margin:0">Update speed of live views</label><span id="devRateHost"></span></div>
+        <div class="row wrap" style="margin-top:.7rem"><button id="devAccountBtn" class="dev-btn" type="button">{ } Account info</button></div>
+      </section>
+
+      <section class="card">
+        <h2>Encryption</h2>
+        <p class="muted" style="margin-top:0">Chats are end-to-end encrypted by default. Your key lives on this device; the recovery code is the only way to unlock it elsewhere.</p>
+        <p>Key fingerprint: <code id="fpText">…</code></p>
+        <div class="row wrap">
+          <button id="showCodeBtn" class="btn" type="button">Show recovery code</button>
+          <button id="newCodeBtn" class="btn" type="button">Make a new recovery code</button>
+        </div>
+        <div id="encLocked" class="hidden">
+          <p><strong>Encrypted chats are locked on this device.</strong> Unencrypted chats work as usual. Enter your recovery code whenever you have it and everything unlocks.</p>
+          <button id="unlockBtn" class="btn primary" type="button">Enter recovery code</button>
+        </div>
+        <details class="adv" style="margin-top:.9rem">
+          <summary>Lost your recovery code?</summary>
+          <p class="muted">You can reset your encryption keys, but it is a last resort: your old keys on other devices stop working and older encrypted messages may stay unreadable. Try your recovery code or another signed-in device first.</p>
+          <button id="resetKeysBtn" class="btn danger" type="button">Reset encryption keys…</button>
+        </details>
+      </section>
+
       <section id="passwordSection" class="card hidden">
         <h2>Password</h2>
         <form id="passwordForm" class="stack">
@@ -69,6 +185,12 @@
             <button id="resetBtn" class="btn" type="button">Email me a reset link</button>
           </div>
         </form>
+      </section>
+
+      <section id="appCard" class="card">
+        <h2 id="appTitle">Site updates</h2>
+        <p id="appText" class="muted" style="margin-top:0">Not seeing the newest version after an update? This downloads a fresh copy of every page and script and then reloads QuickMessage. You stay signed in.</p>
+        <button id="refreshCacheBtn" class="btn" type="button">Refresh site</button>
       </section>
 
       <section class="card">
@@ -85,6 +207,7 @@
   </main>
 </div>
 
+<script type="module" src="js/bars.js"></script>
 <script type="module" src="js/account.js"></script>
 </body>
 </html>

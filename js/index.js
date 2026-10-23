@@ -1,19 +1,28 @@
+import { nativeGoogleSignIn } from "./native.js";
 import { app, auth, db, VAPID_KEY } from "./firebase.js";
 import {
   onAuthStateChanged, createUserWithEmailAndPassword, signInWithEmailAndPassword,
-  signInWithPopup, GoogleAuthProvider, sendPasswordResetEmail
-} from "https://www.gstatic.com/firebasejs/11.0.1/firebase-auth.js";
+  signInWithPopup, signInWithCredential, GoogleAuthProvider, sendPasswordResetEmail
+} from "./sdk.js";
 import {
   ref, push, set, get, update, remove, onChildAdded, onChildRemoved, onValue
-} from "https://www.gstatic.com/firebasejs/11.0.1/firebase-database.js";
+} from "./sdk.js";
 import {
   getMessaging, getToken, deleteToken, onMessage, isSupported
 } from "https://www.gstatic.com/firebasejs/11.0.1/firebase-messaging.js";
 import {
-  toast, avatarEl, icon, hydrateIcons, formatListTime, authErrorMessage, wireDialog, promptDialog
+  toast, avatarEl, icon, hydrateIcons, formatListTime, authErrorMessage, wireDialog, promptDialog, confirmDialog
 } from "./ui.js";
 import { getProfile, ensureProfile, profileExists } from "./users.js";
 import { applyTheme } from "./theme.js";
+import { QM, initShell, resetShell } from "./shell.js";
+import * as E2E from "./crypto.js";
+import { devButton, showDev, envInfo, devCard, devGrid, devPill, devWho } from "./dev.js";
+import { activeDbUrl } from "./dburl.js";
+import { DEFAULT_DB_URL, customDbUrl, cleanDbUrl, setDbUrl } from "./dburl.js";
+import { openPreview } from "./msgcrypto.js";
+import { requireVerified, isVerified, refreshVerified, resendVerification, watchVerified } from "./verify.js";
+import { resolveRecipient } from "./recipient.js";
 
 hydrateIcons();
 
@@ -33,6 +42,9 @@ if ("serviceWorker" in navigator) {
   });
 }
 
+// ---------- Android app download (Android browsers only, never inside the app itself) ----------
+if (/Android/i.test(navigator.userAgent) && !window.QMApp) document.querySelectorAll(".apk-link").forEach(a => a.classList.remove("hidden"));
+
 // ---------- PWA install ----------
 let deferredPrompt = null;
 window.addEventListener("beforeinstallprompt", e => {
@@ -50,7 +62,15 @@ installBtn.addEventListener("click", async () => {
 window.addEventListener("appinstalled", () => installBtn.classList.add("hidden"));
 
 // ---------- auth ----------
+// App: Google sign-in happens in the browser and comes back as an ID token (see app-login.html / js/app-login.js).
+window.__qmGoogleSignIn = async (idToken, err) => {
+  if (window.__qmGoogleLink) { const f = window.__qmGoogleLink; window.__qmGoogleLink = null; return f(idToken, err); }   // Account → "Link Google" in the app
+  if (!idToken) { toast(err ? "Google sign-in didn't finish." : "Google sign-in was cancelled.", "error"); return; }
+  try { await signInWithCredential(auth, GoogleAuthProvider.credential(idToken)); }
+  catch (e) { const m = authErrorMessage(e); toast(m || "Couldn't sign in with Google.", "error"); }
+};
 $("googleBtn").onclick = async () => {
+  if (nativeGoogleSignIn()) return;
   try { await signInWithPopup(auth, new GoogleAuthProvider()); }
   catch (err) { const m = authErrorMessage(err); if (m) toast(m, "error"); }
 };
@@ -67,11 +87,26 @@ $("authForm").addEventListener("submit", async e => {
 $("signupBtn").onclick = async () => {
   const btn = $("signupBtn");
   btn.disabled = true;
-  try { await createUserWithEmailAndPassword(auth, emailInput.value.trim(), passwordInput.value); }
+  try {
+    const cred = await createUserWithEmailAndPassword(auth, emailInput.value.trim(), passwordInput.value);
+    resendVerification().then(() => toast("We sent a verification link to your email.", "success", 5000)).catch(() => {});
+  }
   catch (err) { const m = authErrorMessage(err); if (m) toast(m, "error"); }
   finally { btn.disabled = false; }
 };
 
+// "Advanced": use another Firebase database (stored on this device; the page reloads to connect to it)
+{
+  const inp = $("dbUrl"), msg = $("dbMsg");
+  inp.value = customDbUrl() || DEFAULT_DB_URL;
+  if (customDbUrl()) $("dbOpt").open = true;
+  $("dbSave").onclick = () => {
+    const c = cleanDbUrl(inp.value);
+    if (!c) { msg.textContent = "That doesn't look like a Firebase database URL (https://….firebaseio.com or https://….firebasedatabase.app)."; return; }
+    setDbUrl(c); msg.textContent = "Saved. Reloading…"; setTimeout(() => location.reload(), 300);
+  };
+  $("dbReset").onclick = () => { setDbUrl(""); msg.textContent = "Back to the default database. Reloading…"; setTimeout(() => location.reload(), 300); };
+}
 $("forgotBtn").onclick = async () => {
   let email = emailInput.value.trim();
   if (!email) {
@@ -93,7 +128,7 @@ $("forgotBtn").onclick = async () => {
 const chats = new Map();      // chatId -> state
 let globalUnsubs = [];
 let currentUid = null;
-let renderQueued = false;
+let renderQueued = false, settleOverride = false;
 
 function schedule() {
   if (renderQueued) return;
@@ -102,6 +137,7 @@ function schedule() {
 }
 
 function teardown() {
+  listTimers.forEach(clearTimeout); listTimers = [];
   globalUnsubs.forEach(fn => { try { fn(); } catch { /* ignore */ } });
   globalUnsubs = [];
   chats.forEach(s => s.off.forEach(fn => { try { fn(); } catch { /* ignore */ } }));
@@ -109,9 +145,19 @@ function teardown() {
   chatListEl.replaceChildren();
 }
 
+// "loading" → "slow" (a few seconds in) → "ready", or "error" when the list can't be fetched; the empty state only shows once the
+// list really arrived and is empty.
+let listState = "loading", listTimers = [], listErr = "";
 function loadChats(uid) {
   const listRef = ref(db, `chatList/${uid}`);
-  globalUnsubs.push(onChildAdded(listRef, snap => attachChat(uid, snap.key)));
+  listTimers.forEach(clearTimeout); listTimers = [];
+  listState = "loading"; listErr = "";
+  const fail = err => { if (listState === "ready") return; listState = "error"; listErr = navigator.onLine === false || /offline/i.test(String(err && err.message)) ? "offline" : "failed"; schedule(); };
+  listTimers.push(setTimeout(() => { if (listState === "loading") { listState = "slow"; schedule(); } }, 5000));
+  listTimers.push(setTimeout(() => { if (listState === "loading" || listState === "slow") fail(new Error("timeout")); }, 20000));
+  listTimers.push(setTimeout(() => { settleOverride = true; schedule(); }, 25000));
+  get(listRef).then(() => { listState = "ready"; schedule(); }, fail);
+  globalUnsubs.push(onChildAdded(listRef, snap => attachChat(uid, snap.key), fail));
   globalUnsubs.push(onChildRemoved(listRef, snap => detachChat(snap.key)));
 }
 
@@ -119,7 +165,7 @@ async function attachChat(uid, chatId) {
   if (chats.has(chatId)) return;
   const s = {
     id: chatId, participants: null, otherUids: [], otherNames: [], otherProfiles: [],
-    customName: "", last: null, lastSender: "", readKey: null, typing: [], off: []
+    customName: "", customPhoto: "", settled: false, last: null, lastSender: "", readKey: null, typing: [], off: []
   };
   chats.set(chatId, s);
 
@@ -143,14 +189,25 @@ async function attachChat(uid, chatId) {
   });
 
   const listen = (path, cb) => s.off.push(onValue(ref(db, path), cb, () => {}));
+  listen(`privateChats/${chatId}/chatData/photo`, snap => { s.customPhoto = snap.val() || ""; schedule(); });
+  listen(`privateChats/${chatId}/chatData/encrypted`, snap => {
+    const on = snap.val() === true;
+    if (on && !s.keysChecked && E2E.ready()) { s.keysChecked = true; E2E.ensureMemberKeys(chatId, s.participants || []).catch(() => {}); }
+    s.encrypted = on; checkKey(s);
+    if (on) schedule();
+  });
+  listen(`privateChats/${chatId}/keys`, snap => { s.keys = snap.val() || null; checkKey(s); });
   listen(`privateChats/${chatId}/chatData/name`, snap => { s.customName = snap.val() || ""; schedule(); });
   listen(`privateChats/${chatId}/lastMessage`, snap => {
+    s.settled = true;
     if (!snap.exists()) {
       detachChat(chatId);
       remove(ref(db, `chatList/${uid}/${chatId}`)).catch(() => {});
       return;
     }
     s.last = snap.val();
+    if (s.last.enc) { s.lastText = "🔒 Encrypted message"; openPreview(chatId, s.last).then(t => { s.lastText = t; schedule(); }); }
+    else s.lastText = s.last.text || "";
     if (s.last.fromUid) {
       if (s.last.fromUid === uid) { s.lastSender = "You"; schedule(); }
       else getProfile(s.last.fromUid).then(p => { s.lastSender = p.displayName; schedule(); });
@@ -165,6 +222,16 @@ async function attachChat(uid, chatId) {
   });
 }
 
+/** Does this device hold the key of an encrypted chat? Chats without one get a small "No key" tag in the list. */
+async function checkKey(s) {
+  const should = !!(s.encrypted || s.keys);
+  let nokey = false;
+  if (should && s.keys) { nokey = !s.keys[currentUid] || !E2E.ready() || !(await E2E.getChatKey(s.id).catch(() => null)); }
+  else if (should && s.encrypted) nokey = true;
+  if (nokey !== !!s.noKey) { s.noKey = nokey; schedule(); }
+}
+E2E.onIdentity(() => { for (const s of chats.values()) checkKey(s); });
+
 function detachChat(chatId) {
   const s = chats.get(chatId);
   if (!s) return;
@@ -173,16 +240,46 @@ function detachChat(chatId) {
   schedule();
 }
 
+let dupIndex = new Map();     // chat id -> 2, 3, … when several unnamed chats have exactly the same people
 function chatTitle(s) {
-  return s.customName.trim() || s.otherNames.join(", ") || "Chat";
+  const base = s.customName.trim() || s.otherNames.join(", ") || "Chat";
+  return !s.customName.trim() && dupIndex.has(s.id) ? `${base} (${dupIndex.get(s.id)})` : base;
+}
+function indexDuplicates() {
+  const groups = new Map();
+  for (const c of chats.values()) {
+    if (!c.participants || c.customName.trim()) continue;
+    const k = [...c.participants].sort().join("|");
+    (groups.get(k) || groups.set(k, []).get(k)).push(c.id);
+  }
+  dupIndex = new Map();
+  for (const ids of groups.values()) if (ids.length > 1) ids.sort().forEach((id, i) => { if (i) dupIndex.set(id, i + 1); });
 }
 
 function renderList() {
+  indexDuplicates();
   const items = [...chats.values()]
     .filter(s => s.participants && s.last)
     .sort((a, b) => (b.last.timestamp || 0) - (a.last.timestamp || 0));
 
   chatListEl.replaceChildren();
+  const unsettled = !settleOverride && [...chats.values()].some(c => !c.settled);
+  if (!items.length && (listState === "loading" || listState === "slow" || (listState === "ready" && unsettled))) {
+    const box = document.createElement("div");
+    box.className = "empty list-loading";
+    box.setAttribute("role", "status");
+    box.innerHTML = `<div class="big"><span class="spinner"></span></div><strong>Loading your chats…</strong>${listState === "slow" ? "<p>This is taking longer than usual. Your connection may be slow.</p>" : ""}`;
+    chatListEl.append(box);
+    return;
+  }
+  if (!items.length && listState === "error") {
+    const box = document.createElement("div");
+    box.className = "empty";
+    box.innerHTML = `<div class="big">${icon("chat", 30)}</div><strong>${listErr === "offline" ? "You're offline" : "Couldn't load your chats"}</strong><p>${listErr === "offline" ? "Connect to the internet and try again." : "There was a problem reaching the server. Check your connection and try again."}</p><button type="button" class="btn primary" id="retryChats">Try again</button>`;
+    chatListEl.append(box);
+    box.querySelector("#retryChats").onclick = () => { const u = currentUid; if (!u) return; teardown(); settleOverride = false; loadChats(u); };
+    return;
+  }
   if (!items.length) {
     const empty = document.createElement("div");
     empty.className = "empty";
@@ -198,10 +295,17 @@ function renderList() {
     const a = document.createElement("a");
     a.className = "chat-item" + (unread ? " unread" : "");
     a.href = `message.html?chatId=${encodeURIComponent(s.id)}`;
+    a.dataset.chat = s.id;
+    if (QM.state.chatId === s.id) a.classList.add("active");
+    a.addEventListener("click", e => {
+      if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey || e.button !== 0) return;
+      e.preventDefault();
+      QM.openChat(s.id);
+    });
 
     const title = chatTitle(s);
     const useOther = !s.customName.trim() && s.otherProfiles.length === 1;
-    a.append(avatarEl(title, useOther ? s.otherProfiles[0].pfp : "", "avatar"));
+    a.append(avatarEl(title, s.customPhoto || (useOther ? s.otherProfiles[0].pfp : ""), "avatar"));
 
     const body = document.createElement("div");
     body.className = "body";
@@ -214,7 +318,8 @@ function renderList() {
     const time = document.createElement("span");
     time.className = "chat-time";
     time.textContent = formatListTime(s.last.timestamp);
-    head.append(t, time);
+    if (s.noKey) { const nk = document.createElement("span"); nk.className = "nokey"; nk.textContent = "🔑 No key"; nk.title = "This device doesn't have this chat's encryption key. It arrives when another member opens the chat, or restore your recovery code."; head.append(t, nk, time); }
+    else head.append(t, time);
 
     const prev = document.createElement("div");
     prev.className = "chat-preview";
@@ -224,7 +329,7 @@ function renderList() {
       txt.classList.add("typing-text");
       txt.textContent = s.typing.length === 1 ? "typing…" : `${s.typing.length} people typing…`;
     } else {
-      const text = s.last.text || "";
+      const text = s.lastText ?? (s.last.text || "");
       txt.textContent = (s.lastSender ? `${s.lastSender}: ` : "") + text;
     }
     prev.append(txt);
@@ -270,15 +375,16 @@ ncForm.addEventListener("submit", async e => {
   if (!uid) return;
 
   if (!ncTarget) {
-    const other = ncInput.value.trim();
     const fail = msg => { ncError.textContent = msg; ncError.classList.remove("hidden"); };
-    if (!other) return fail("Enter a UID.");
-    if (other === uid) return fail("You can't chat with yourself.");
-    if (!/^[\w-]{6,128}$/.test(other)) return fail("That doesn't look like a valid UID.");
+    if (!ncInput.value.trim()) return fail("Enter a UID or an email address.");
+    if (!requireVerified("start chats")) return;
 
     ncGo.disabled = true;
     try {
-      if (!(await profileExists(other))) { fail("No user found with that UID."); return; }
+      let other;
+      try { other = await resolveRecipient(ncInput.value); } catch (e) { fail(e.message); return; }
+      if (other === uid) { fail("You can't chat with yourself."); return; }
+      if (!(await profileExists(other))) { fail("No user found."); return; }
       const p = await getProfile(other);
       ncPreview.replaceChildren(avatarEl(p.displayName, p.pfp, "avatar"));
       const n = document.createElement("div");
@@ -295,26 +401,34 @@ ncForm.addEventListener("submit", async e => {
   }
 
   // Reuse an existing 1:1 chat instead of creating duplicates
-  const existing = [...chats.values()].find(s =>
-    s.participants && s.participants.length === 2 && s.participants.includes(ncTarget));
+  // (more than one chat between the same two people is fine: that is also how group chats start. Ask which one is meant.)
+  const existing = [...chats.values()].filter(s => s.participants && s.participants.length === 2 && s.participants.includes(ncTarget))
+    .sort((a, b) => (b.last?.timestamp || 0) - (a.last?.timestamp || 0))[0];
   if (existing) {
-    location.href = `message.html?chatId=${encodeURIComponent(existing.id)}`;
-    return;
+    const again = await confirmDialog({
+      title: "You already have a chat with them",
+      message: "Open that chat, or start a separate new one? Two people can have as many chats as they like (for example one you'll later add friends to).",
+      okText: "New chat", cancelText: "Open existing chat"
+    });
+    if (!again) { ncDialog.close?.(); QM.openChat(existing.id); return; }
   }
 
   ncGo.disabled = true;
   try {
     const newRef = push(ref(db, "privateChats"));
     const chatId = newRef.key;
-    await set(newRef, {
+    const chat = {
       participants: { [uid]: true, [ncTarget]: true },
       lastMessage: { fromUid: "", text: "(No messages yet)", timestamp: Date.now() }
-    });
+    };
+    // New chats start unencrypted (so notifications and previews work everywhere); encryption is a switch in the chat's options.
+    await set(newRef, chat);
     await update(ref(db), {
       [`chatList/${uid}/${chatId}`]: true,
       [`chatList/${ncTarget}/${chatId}`]: true
     });
-    location.href = `message.html?chatId=${encodeURIComponent(chatId)}`;
+    ncDialog.close?.();
+    QM.openChat(chatId);
   } catch (err) {
     ncGo.disabled = false;
     ncError.textContent = "Couldn't create the chat: " + (err.message || err);
@@ -332,8 +446,38 @@ function getMsg() {
 }
 
 async function setupNotifications(uid) {
-  const messaging = await getMsg();
   const btn = toggleNotifBtn;
+  // Android app: a WebView has no web push, so the app itself watches for messages/calls and shows the notifications.
+  if (window.QMApp && window.QMApp.notifyEnabled) {
+    btn.classList.remove("hidden");
+    // "On" is only claimed when Android actually allows notifications; otherwise the bell turns red and opens the settings.
+    const allowed = () => !window.QMApp.canNotify || window.QMApp.canNotify();
+    const paint = () => {
+      const on = window.QMApp.notifyEnabled(), blocked = on && !allowed();
+      btn.innerHTML = icon(on && !blocked ? "bell" : "bellOff", 20);
+      btn.title = blocked ? "Notification permissions are off" : on ? "Disable notifications" : "Enable notifications";
+      btn.setAttribute("aria-label", btn.title);
+      btn.classList.toggle("active", on && !blocked);
+      btn.classList.toggle("notif-blocked", blocked);
+      btn.disabled = false;
+    };
+    paint();
+    setInterval(paint, 2000);
+    document.addEventListener("visibilitychange", paint);
+    btn.onclick = () => {
+      const on = window.QMApp.notifyEnabled();
+      if (on && !allowed()) {
+        toast("Notification permissions are off. Opening Android settings…", "error", 4000);
+        if (window.QMApp.openNotificationSettings) window.QMApp.openNotificationSettings();
+        return;
+      }
+      window.QMApp.setNotify(!on);
+      paint();
+      toast(!on ? "Notifications enabled in the app." : "Notifications disabled in the app.", !on ? "success" : "info");
+    };
+    return;
+  }
+  const messaging = await getMsg();
   btn.classList.remove("hidden");
 
   const setState = (label, ico, active, disabled = false) => {
@@ -395,25 +539,70 @@ async function setupNotifications(uid) {
 
   onMessage(messaging, payload => {
     const n = payload.notification || {};
-    const d = payload.data || {};
-
-    if (d.call === "1" && d.chatId) {
-      toast(`${n.title || "Incoming call"}${n.body ? ": " + n.body : ""}`);
-      location.href = `call.html?chatId=${encodeURIComponent(d.chatId)}${d.sessionId ? `&session=${encodeURIComponent(d.sessionId)}` : ""}`;
-      return;
-    }
-
     toast(`${n.title || "New message"}${n.body ? ": " + n.body : ""}`);
   });
 }
+
+// ---------- encryption identity: recovery code / restore ----------
+const recDlg = $("recoveryDialog"), resDlg = $("restoreDialog");
+wireDialog(recDlg); wireDialog(resDlg);
+function showRecovery(code, after) {
+  $("recoveryCode").textContent = code;
+  $("recoveryCopy").onclick = () => navigator.clipboard?.writeText(code).then(() => toast("Copied", "success", 1200)).catch(() => {});
+  $("recoveryDone").onclick = () => { recDlg.close(); after && after(); };
+  recDlg.showModal();
+}
+function showRestore(uid, replaced) {
+  const err = $("restoreError");
+  err.classList.add("hidden"); $("restoreInput").value = "";
+  $("restoreText").textContent = replaced
+    ? "Your encryption keys were reset on another device, so the key this device had doesn't work any more. Enter the NEW recovery code to unlock your encrypted chats here."
+    : "This device doesn't have your encryption key yet. Enter the recovery code you saved when you first signed in.";
+  $("restoreGo").onclick = async () => {
+    try { await E2E.restore(uid, $("restoreInput").value); resDlg.close(); toast("Encrypted chats unlocked.", "success"); setTimeout(() => location.reload(), 600); }
+    catch (e) { err.textContent = e.message === "badcode" ? "That code doesn't match." : "Couldn't restore: " + e.message; err.classList.remove("hidden"); }
+  };
+  // not now: carry on without the key. Unencrypted chats work as usual; the code can be entered later under Account → Encryption.
+  $("restoreSkip").onclick = () => { E2E.setSkipped(uid, true); resDlg.close(); toast("Okay. Encrypted messages stay locked until you enter the code (Account → Encryption).", "info", 6000); };
+  $("restoreFresh").onclick = async () => {
+    resDlg.close();
+    if (!(await confirmDialog({ title: "Reset your encryption keys?", message: E2E.RESET_WARNING, okText: "Reset keys", danger: true }))) { resDlg.showModal(); return; }
+    try { await E2E.startFresh(uid); const c = await E2E.takeNewCode(uid); if (c) showRecovery(c, () => location.reload()); else location.reload(); }
+    catch (e) { err.textContent = "Couldn't start fresh keys: " + e.message; err.classList.remove("hidden"); resDlg.showModal(); }
+  };
+  resDlg.showModal();
+}
+async function setupEncryption(user) {
+  let st;
+  try { st = await Promise.race([E2E.init(user.uid), new Promise((_, rej) => setTimeout(() => rej(new Error("timeout")), 10000))]); }
+  catch (e) { console.warn("encryption init failed", e); return; }
+  if ((st === "needs-restore" || st === "replaced") && (st === "replaced" || !E2E.skipped(user.uid))) showRestore(user.uid, st === "replaced");
+  // (a brand-new key's recovery code is shown later, the first time encryption is switched on in a chat; Account → Encryption has it too)
+}
+
+// ---------- verify-your-email banner ----------
+const vb = $("verifyBanner");
+function paintVerifyBanner() {
+  const u = auth.currentUser, show = !!u && !u.emailVerified;
+  vb.hidden = !show;
+  document.documentElement.classList.toggle("has-vb", show);
+  document.documentElement.style.setProperty("--vb-h", show ? vb.offsetHeight + "px" : "0px");
+  $("vbEmail").textContent = show && u.email ? "(sent to " + u.email + ")" : "";
+}
+setInterval(paintVerifyBanner, 1000);
+addEventListener("resize", paintVerifyBanner);
+$("vbResend").onclick = async () => { try { await resendVerification(); toast("Verification email sent.", "success"); } catch (e) { toast(e.code === "auth/too-many-requests" ? "Please wait a bit before asking again." : "Couldn't send the email.", "error"); } };
+$("vbDone").onclick = async () => { if (await refreshVerified()) { paintVerifyBanner(); toast("Email verified. You're all set.", "success"); } else toast("Not verified yet — open the link in the email first.", "info", 4000); };
 
 // ---------- auth state ----------
 onAuthStateChanged(auth, async user => {
   teardown();
   loadingEl.classList.add("hidden");
+  window.__qmReady = true;
 
   if (!user) {
     currentUid = null;
+    resetShell();
     authEl.classList.remove("hidden");
     appEl.classList.add("hidden");
     topActions.classList.add("hidden");
@@ -439,6 +628,38 @@ onAuthStateChanged(auth, async user => {
   }
 
   if (auth.currentUser?.uid !== user.uid) return; // signed out/switched meanwhile
+  paintVerifyBanner(); watchVerified(paintVerifyBanner);
+  await setupEncryption(user);
+  if (auth.currentUser?.uid !== user.uid) return;
   loadChats(user.uid);
+  initShell(user.uid);
+  accountLink.onclick = e => { if (e.metaKey || e.ctrlKey || e.shiftKey) return; e.preventDefault(); QM.openPane("account"); };
   setupNotifications(user.uid).catch(err => console.error("Notification setup failed", err));
 });
+
+
+// ---------- developer mode: raw view of what the chat list has loaded ----------
+topActions.prepend(devButton("{ }", () => {
+  const raw = async () => {
+  const sw = navigator.serviceWorker ? await navigator.serviceWorker.getRegistrations().then(r => r.map(x => ({ scope: x.scope, active: x.active && x.active.state }))).catch(() => null) : null;
+  return {
+    uid: currentUid, database: activeDbUrl(), listState, listErr, e2e: { ready: E2E.ready(), fingerprint: E2E.myFingerprint() },
+    shell: { state: QM.state },
+    chats: [...chats.values()].map(c => ({ id: c.id, title: chatTitle(c), participants: c.participants, otherUids: c.otherUids, customName: c.customName, encrypted: c.encrypted, readKey: c.readKey, last: c.last, typing: c.typing, settled: c.settled })),
+    serviceWorkers: sw, notificationPermission: window.Notification ? Notification.permission : "n/a", env: envInfo()
+  };
+};
+  return showDev("Developer: loaded data", { raw, every: 0, visual: async () => {
+    const env = envInfo(), me = await getProfile(currentUid).catch(() => null);
+    const sw = navigator.serviceWorker ? await navigator.serviceWorker.getRegistrations().catch(() => []) : [];
+    const list = [...chats.values()];
+    const people = devCard("Chats", list.map(c => [chatTitle(c), (() => { const w = document.createElement("span"); w.append(devPill(c.encrypted ? "encrypted" : "plain", c.encrypted ? "info" : ""), " ", devPill(c.noKey ? "no key" : c.encrypted || c.keys ? "key ok" : "", c.noKey ? "warn" : "ok")); return w; })()]));
+    return devGrid(
+      devCard("", [["User id", currentUid], ["Database", activeDbUrl()], ["Chat list", devPill(String(listState), listState === "ready" ? "ok" : "warn")], ["Chats loaded", list.length]], { head: devWho((me && me.displayName) || "You", me && me.pfp, "signed in") }),
+      devCard("Encryption", [["Identity", E2E.ready() ? devPill("unlocked", "ok") : devPill("locked", "warn")], ["Fingerprint", E2E.myFingerprint()], ["Chats without key", list.filter(c => c.noKey).length]]),
+      people,
+      devCard("Chat details", list.flatMap(c => [{ section: chatTitle(c) }, ["Members", c.participants ? c.participants.length : "?"], ["Last message", c.last ? new Date(c.last.timestamp).toLocaleString() : ""], ["Unread", c.last && c.last.fromUid && c.last.fromUid !== currentUid && String(c.readKey) !== String(c.last.id) ? devPill("yes", "info") : "no"], ["Key copies", c.keys ? Object.keys(c.keys).length : "0"], ["Live listeners", c.off ? c.off.length : ""]])),
+      devCard("This device", [["App", env.app ? "Android app" : "browser"], ["Online", env.online ? devPill("yes", "ok") : devPill("no", "bad")], ["Service workers", sw.length], ["Notifications", window.Notification ? Notification.permission : "n/a"], ["Viewport", `${env.viewport.w}×${env.viewport.h}`], ["Page data loaded", env.loadedResources ? (env.loadedResources.transferredBytes / 1048576).toFixed(2) + " MB in " + env.loadedResources.requests + " requests" : ""]])
+    );
+  } });
+}, { title: "Developer info" }));

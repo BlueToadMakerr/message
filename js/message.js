@@ -1,15 +1,28 @@
 import { auth, db } from "./firebase.js";
-import { onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.0.1/firebase-auth.js";
+import { onAuthStateChanged } from "./sdk.js";
 import {
-  ref, push, set, get, update, remove, onValue, onDisconnect,
+  ref, push, set, get, update, remove, onValue, onDisconnect, serverTimestamp,
   onChildAdded, onChildChanged, onChildRemoved,
-  query, orderByChild, limitToLast, startAt, endBefore
-} from "https://www.gstatic.com/firebasejs/11.0.1/firebase-database.js";
+  query, orderByChild, orderByKey, limitToLast, limitToFirst, equalTo, startAt, endBefore
+} from "./sdk.js";
 import {
   toast, confirmDialog, promptDialog, avatarEl, icon, hydrateIcons, linkify, safeMediaUrl,
-  copyText, formatMsgTime, wireDialog
+  copyText, formatMsgTime, wireDialog, alertDialog
 } from "./ui.js";
+import { initCallBanner } from "./call-banner.js";
+import { QM, enterShell, trackSplit, toHome, markReady } from "./embed.js";
+import { uploadToLitterbox, isLitterUrl, fmtBytes, kindOf, MAX_BYTES } from "./litter.js";
+import { logEvent } from "./chatlog.js";
 import { getProfile, peekProfile, ensureProfile, profileExists, invalidateProfile } from "./users.js";
+import * as E2E from "./crypto.js";
+import { sealPayload, sealPreview, openMessage } from "./msgcrypto.js";
+import { attachPreviews, urlsIn, inspectUrl, fetchPreviewNow } from "./linkpreview.js";
+import { openImage } from "./viewer.js";
+import { downloadMedia } from "./download.js";
+import { audioPlayer, videoPlayer, waveFromFile } from "./player.js";
+import { devOn, devButton, showDev, envInfo, devCard, devGrid, devPill, devWho } from "./dev.js";
+import { resolveRecipient } from "./recipient.js";
+import { requireVerified, isVerified, watchVerified } from "./verify.js";
 
 hydrateIcons();
 
@@ -19,10 +32,14 @@ if (!chatId || !/^[\w-]{1,64}$/.test(chatId)) {
   location.replace("index.html");
   throw new Error("Missing or invalid chatId");
 }
+if (enterShell(`chat=${encodeURIComponent(chatId)}`)) throw new Error("Redirecting into the app shell");
+trackSplit();
+if (QM) document.querySelector('.topbar > a[aria-label="Back to chats"]')?.addEventListener("click", e => { e.preventDefault(); QM.closeDetail(); });
 
 const PAGE = 30;
 const OLDER_PAGE = 40;
-const MAX_VIDEO_BYTES = 8 * 1024 * 1024; // base64 inflates ~33%; RTDB rejects very large writes
+const MAX_VIDEO_BYTES = 8 * 1024 * 1024;
+const MAX_AUDIO_BYTES = MAX_VIDEO_BYTES;     // same inline limit as video; bigger files go to Litterbox // base64 inflates ~33%; RTDB rejects very large writes
 const TYPING_IDLE_MS = 4000;
 
 const messagesDiv = $("messages"), typingRow = $("typingRow"), typingLabel = $("typingLabel");
@@ -31,6 +48,7 @@ const composer = $("composer"), msgInput = $("msgInput"), sendBtn = $("sendBtn")
 const menuEl = $("msgMenu");
 
 const chatPath = `privateChats/${chatId}`;
+initCallBanner({ chatId, callBtn: document.getElementById("callBtn"), after: document.querySelector(".topbar") });
 const messagesRef = ref(db, `${chatPath}/messages`);
 const lastRef = ref(db, `${chatPath}/lastMessage`);
 
@@ -38,6 +56,7 @@ const lastRef = ref(db, `${chatPath}/lastMessage`);
 let me = null;
 let participants = [];
 let customName = "";
+let customPhoto = "";
 let isGroup = false;
 let baseSub = "";
 let typingUids = [];
@@ -49,13 +68,73 @@ let latestKey = null;            // key of newest rendered message
 let lastMarked = null;
 let ready = false;
 let stick = true;                // was the user at the bottom?
-let oldestTs = null, oldestKey = null, loadingOlder = false, reachedStart = false;
+let oldestKey = null, loadingOlder = false, reachedStart = false;
+let chatEncrypted = false;       // chatData/encrypted: new messages are encrypted (every message also carries its own `enc` flag)
+let keyHolders = [];
+let keysExist = false;            // the chat already has a key in the database (even if this device can't open it)
+let keyState = "unknown";        // "ready" | "waiting" (no key on this device yet)
+const rawOf = new WeakMap();      // decrypted message object -> the message exactly as stored (developer mode)
+const hydrate = m => (m && m.enc ? openMessage(chatId, m).then(o => { if (o && typeof o === "object") rawOf.set(o, m); return o; }) : Promise.resolve(m));
+let addQ = Promise.resolve();
+// Lock-screen protection (Android): while the phone is locked and a call was answered from the lock screen, only messages sent
+// since then are shown (see shell.js "protect"). Older ones appear after the phone is unlocked.
+// Inside an Android chat bubble (BubbleActivity): only this chat, no way to the rest of the app.
+if (new URLSearchParams(location.search).has("bubble")) {
+  document.documentElement.classList.add("in-bubble");
+  // the bubble window changes size as it opens: always fit the chat to the space that is really there
+  const fit = () => document.documentElement.style.setProperty("--bh", (window.visualViewport ? window.visualViewport.height : innerHeight) + "px");
+  fit(); addEventListener("resize", fit); window.visualViewport && window.visualViewport.addEventListener("resize", fit);
+}
+const protect = () => { try { const q = (window.top && window.top.QM) || QM; return q && q.protect && q.protect.active() ? q.protect : null; } catch (_) { return null; } };
+setInterval(() => document.documentElement.classList.toggle("locked-chat", !!protect()), 700);
 
 // ---------- helpers ----------
 const isNearBottom = () => messagesDiv.scrollHeight - messagesDiv.scrollTop - messagesDiv.clientHeight < 80;
+let ignoreScrollUntil = 0, lastOlderAt = 0;
+/** An image/video finished loading. Newly loaded media in the live part follows the bottom; media in OLDER messages (prepended above)
+ *  must never move the reader: the scroll position is compensated for the growth instead, and the bottom is not forced. */
+function swapToAudio(v) {
+  const ap = audioPlayer(v.currentSrc || v.src);
+  (v.closest(".qp-video") || v).replaceWith(ap);
+  return ap;
+}
+/** A picture with a small download button in its corner. */
+function withDl(img, url, name) {
+  const w = document.createElement("span"); w.className = "media-wrap";
+  const b = document.createElement("button"); b.type = "button"; b.className = "media-dl"; b.setAttribute("aria-label", "Download"); b.title = "Download";
+  b.innerHTML = icon("download", 16); b.onclick = e => { e.stopPropagation(); downloadMedia(url, name || ""); };
+  w.append(img, b); return w;
+}
+/** What replaces a picture / video / audio that fails to load (often a format this device can't show): it can still be saved
+ *  and opened in another app that can. */
+function failedMedia(kind, url, name) {
+  const b = document.createElement("div"); b.className = "media-failed";
+  const t = document.createElement("div"); t.className = "mf-text";
+  const h = document.createElement("strong"); h.textContent = `Can't show this ${kind}`;
+  const d = document.createElement("span"); d.textContent = "It may be missing, or in a format this device can't display. You can still download it and open it in another app.";
+  t.append(h, d);
+  const dl = document.createElement("button"); dl.type = "button"; dl.className = "btn small primary"; dl.innerHTML = icon("download", 16) + " Download";
+  dl.onclick = () => downloadMedia(url, name || "");
+  b.append(t, dl);
+  return b;
+}
+function onMedia(el) {
+  if (el instanceof HTMLVideoElement && el.videoWidth === 0 && el.readyState >= 1) el = swapToAudio(el);   // an audio-only "video": just the player
+  const msg = el && el.closest && el.closest(".msg");
+  if (msg && msg.dataset.old) {
+    const h = msg.offsetHeight, d = h - (+msg.dataset.h || h);
+    msg.dataset.h = h;
+    if (d && msg.getBoundingClientRect().top < messagesDiv.getBoundingClientRect().top) { ignoreScrollUntil = Date.now() + 250; messagesDiv.scrollTop += d; }
+    return;
+  }
+  if (stick) scrollToBottom();
+}
 const scrollToBottom = () => { messagesDiv.scrollTop = messagesDiv.scrollHeight; stick = true; jumpBtn.classList.add("hidden"); };
 const isText = m => !m.type || m.type === "text";
-const previewOf = m => m.type === "image" ? "📷 Photo" : m.type === "video" ? "🎥 Video" : (m.text ?? m.content ?? "");
+const previewOf = m => m.type === "audio" ? "🎵 Audio" : m.type === "image" ? "📷 Photo" : m.type === "video" ? "🎥 Video" : m.type === "file" ? "📎 " + (m.name || "File") : (m.text ?? m.content ?? "");
+const fmtDur = ms => { const t = Math.max(0, Math.round(ms / 1000)), h = Math.floor(t / 3600), m = Math.floor(t % 3600 / 60), sec = t % 60; return h ? `${h}h ${m}m` : m ? `${m}m ${sec}s` : `${sec}s`; };
+const fmtExpiry = ts => new Date(ts).toLocaleString([], { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
+if (new URLSearchParams(location.search).has("panel")) document.documentElement.classList.add("panel");
 
 // ---------- header ----------
 function renderSub() {
@@ -76,20 +155,135 @@ async function updateHeader() {
   $("chatTitle").textContent = title;
   document.title = `${title} · QuickMessage`;
   const useOther = !customName.trim() && profiles.length === 1;
-  $("headAvatar").replaceChildren(avatarEl(title, useOther ? profiles[0].pfp : "", "avatar sm"));
+  $("headAvatar").replaceChildren(avatarEl(title, customPhoto || (useOther ? profiles[0].pfp : ""), "avatar sm"));
   isGroup = participants.length > 2;
+  $("groupPhotoBox").hidden = !isGroup;
   messagesDiv.classList.toggle("group", isGroup);
   baseSub = isGroup ? `${participants.length} members` : "";
   renderSub();
 }
 
 // ---------- message rendering ----------
+// Litterbox files: shown inline when possible, greyed out once they've expired (the message itself stays).
+const AUTO_DECRYPT_MAX = 40 * 1024 * 1024;
+async function fetchPlain(msg) {
+  let buf;
+  try { buf = await (await fetch(msg.url, { referrerPolicy: "no-referrer", credentials: "omit" })).arrayBuffer(); }
+  catch (_) {
+    const r = await fetch("fetch-file.php?t=" + encodeURIComponent(await auth.currentUser.getIdToken()) + "&u=" + encodeURIComponent(msg.url));
+    if (!r.ok) throw new Error("download failed");
+    buf = await r.arrayBuffer();
+  }
+  return new Blob([await E2E.decBytes(chatId, buf)], { type: msg.mime || "application/octet-stream" });
+}
+function fillFile(bubble, msg) {
+  const expired = typeof msg.expiresAt === "number" && Date.now() > msg.expiresAt;
+  let url = isLitterUrl(msg.url) ? msg.url : null;
+  if (msg._enc) {
+    // The file on the host is encrypted: decrypt it here, then show/download the plain copy from a local blob.
+    url = msg.blobUrl || null;
+    if (!url && !expired && isLitterUrl(msg.url) && ["image", "video", "audio"].includes(msg.kind) && (msg.size || 0) <= AUTO_DECRYPT_MAX && !msg._decrypting) {
+      msg._decrypting = true;
+      fetchPlain(msg).then(b => { msg.blobUrl = URL.createObjectURL(b); msg._decrypting = false; bubble.replaceChildren(); fillFile(bubble, msg); onMedia(bubble); })
+        .catch(() => { msg._decrypting = false; msg._decryptFailed = true; bubble.replaceChildren(); fillFile(bubble, msg); });
+    }
+  }
+  const wrap = document.createElement("div");
+  wrap.className = "file-wrap" + (expired ? " expired" : "");
+  const kind = msg.kind || "file";
+  const card = () => {
+    const encPending = msg._enc && !url && !expired && isLitterUrl(msg.url);
+    const c = document.createElement(url && !expired ? "a" : "div");
+    c.className = "file-card";
+    if (url && !expired) { c.href = url; c.target = "_blank"; c.rel = "noopener noreferrer"; c.download = msg.name || ""; }
+    if (encPending) {
+      c.style.cursor = "pointer"; c.title = "Decrypt and download";
+      c.addEventListener("click", async () => {
+        try {
+          toast("Decrypting…", "info", 1500);
+          const b = await fetchPlain(msg); msg.blobUrl = URL.createObjectURL(b);
+          const a = document.createElement("a"); a.href = msg.blobUrl; a.download = msg.name || "file"; document.body.append(a); a.click(); a.remove();
+        } catch (_) { toast("Couldn't decrypt that file.", "error"); }
+      });
+    }
+    c.innerHTML = `<span class="file-ic">${icon("file", 22)}</span><span class="file-meta"><span class="file-name"></span><span class="file-size"></span></span>`;
+    c.querySelector(".file-name").textContent = msg.name || "File";
+    c.querySelector(".file-size").textContent = [typeof msg.size === "number" ? fmtBytes(msg.size) : "", msg._enc ? "🔒" : "", msg._decrypting ? "Decrypting…" : "", expired ? "Expired" : ""].filter(Boolean).join(" · ");
+    return c;
+  };
+  if (url && !expired && kind === "image") {
+    const img = new Image();
+    img.className = "media"; img.alt = msg.name || "Image"; img.loading = "lazy"; img.referrerPolicy = "no-referrer";
+    img.addEventListener("load", ev => onMedia(ev.target));
+    img.addEventListener("error", () => { const f = failedMedia("image", url, msg.name); (img.closest(".media-wrap") || img).replaceWith(f); });
+    img.addEventListener("click", () => openImage(url, { alt: msg.name || "" }));
+    img.src = url;
+    wrap.append(withDl(img, url, msg.name));
+  } else if (url && !expired && kind === "video") {
+    const vp = videoPlayer(url, { onLayout: onMedia });
+    vp.video.addEventListener("error", () => vp.replaceWith(failedMedia("video", url, msg.name)));
+    wrap.append(vp);
+  } else if (url && !expired && kind === "audio") {
+    const ap = audioPlayer(url, { wave: msg.wave, duration: msg.duration });
+    ap.audio.addEventListener("error", () => ap.replaceWith(failedMedia("audio", url, msg.name)));
+    wrap.append(ap);
+  } else {
+    wrap.append(card());
+    if (expired && kind === "image") wrap.classList.add("ghost-image");
+  }
+  const note = document.createElement("div");
+  note.className = "file-expiry";
+  note.textContent = typeof msg.expiresAt === "number" ? (expired ? "Expired " : "Expires ") + fmtExpiry(msg.expiresAt) : "";
+  bubble.append(wrap, note);
+  bubble.classList.add("file-bubble");
+}
+
+function eventText(msg) {
+  const name = u => peekProfile(u)?.displayName || "Someone";
+  switch (msg.event) {
+    case "call_start": return `📞 ${name(msg.fromUid)} started a call`;
+    case "call_decline": return `📵 ${name(msg.fromUid)} declined the call`;
+    case "call_end": return `📞 Call ended${typeof msg.duration === "number" ? " · " + fmtDur(msg.duration) : ""}`;
+    case "chat_add": return `➕ ${name(msg.fromUid)} added ${name(msg.target)}`;
+    case "chat_leave": return `👋 ${name(msg.fromUid)} left the chat`;
+    case "enc_on": return `🔒 ${name(msg.fromUid)} turned on encryption for this chat`;
+    case "enc_off": return `🔓 ${name(msg.fromUid)} turned off encryption for this chat`;
+    case "chat_kick": return `🚫 ${name(msg.fromUid)} removed ${name(msg.target)}`;
+    default: return msg.text || "";
+  }
+}
+
+function buildEvent(key, msg) {
+  const el = document.createElement("div");
+  el.className = "msg-event";
+  el.id = "msg-" + key;
+  el.dataset.key = key;
+  el.innerHTML = `<span class="ev-text"></span><span class="ev-time"></span><span class="readBy"></span>`;
+  const paint = () => { el.querySelector(".ev-text").textContent = eventText(msg); };
+  paint();
+  el.querySelector(".ev-time").textContent = formatMsgTime(msg.timestamp);
+  const ids = [msg.fromUid, msg.target].filter(Boolean);
+  Promise.all(ids.map(getProfile)).then(paint);
+  return el;
+}
 function fillMessage(el, key, msg) {
+  el.classList.toggle("enc", !!msg._enc);                   // encrypted messages get their own colour
   const bubble = el.querySelector(".bubble");
   bubble.replaceChildren();
   bubble.classList.remove("media-bubble");
+  if (msg.replyTo && msg.replyTo.key) bubble.append(quoteEl(msg.replyTo));
 
-  if (msg.type === "image" || msg.type === "video") {
+  if (msg.type === "file") {
+    fillFile(bubble, msg);
+  } else if (msg.type === "audio") {
+    const src = safeMediaUrl(msg.content || msg.text, "audio");
+    if (!src) bubble.textContent = "Unsupported audio";
+    else {
+      const ap = audioPlayer(src, { wave: msg.wave, duration: msg.duration });
+      ap.audio.addEventListener("error", () => ap.replaceWith(failedMedia("audio", src, "")));
+      bubble.append(ap); bubble.classList.add("media-bubble");
+    }
+  } else if (msg.type === "image" || msg.type === "video") {
     const kind = msg.type;
     const src = safeMediaUrl(msg.content || msg.text, kind);
     if (!src) {
@@ -100,24 +294,26 @@ function fillMessage(el, key, msg) {
       img.alt = "Image";
       img.loading = "lazy";
       img.referrerPolicy = "no-referrer";
-      img.addEventListener("load", () => { if (stick) scrollToBottom(); });
-      img.addEventListener("click", () => { $("lightboxImg").src = src; $("lightbox").showModal(); });
+      img.addEventListener("load", ev => onMedia(ev.target));
+      img.addEventListener("click", () => openImage(src, { name: "" }));
+      img.addEventListener("error", () => { const w = img.closest(".media-wrap") || img; w.replaceWith(failedMedia("image", src, "")); });
       img.src = src;
-      bubble.append(img);
+      bubble.append(withDl(img, src, ""));
       bubble.classList.add("media-bubble");
     } else {
-      const v = document.createElement("video");
-      v.className = "media";
-      v.controls = true;
-      v.preload = "metadata";
-      v.playsInline = true;
-      v.addEventListener("loadedmetadata", () => { if (stick) scrollToBottom(); });
-      v.src = src;
-      bubble.append(v);
+      const vp = videoPlayer(src, { onLayout: onMedia });
+      vp.video.addEventListener("error", () => vp.replaceWith(failedMedia("video", src, "")));
+      bubble.append(vp);
       bubble.classList.add("media-bubble");
     }
   } else {
     bubble.append(linkify(msg.text ?? msg.content ?? ""));
+    if (msg._locked) {      // can't be read yet: an info button says why and how to get the key
+      const why = document.createElement("button"); why.type = "button"; why.className = "enc-why"; why.setAttribute("aria-label", "What's this?");
+      why.innerHTML = icon("info", 16); why.onclick = e => { e.stopPropagation(); explainEncrypted(msg); };
+      bubble.append(why);
+    }
+    if (!msg._locked) attachPreviews(bubble, msg.text ?? msg.content ?? "", { enc: !!msg._enc, onLayout: ev => onMedia(ev || bubble) });
   }
 
   el.querySelector(".time").textContent = formatMsgTime(msg.timestamp);
@@ -125,6 +321,7 @@ function fillMessage(el, key, msg) {
 }
 
 function buildMessage(key, msg) {
+  if (msg.type === "event") return buildEvent(key, msg);
   const own = msg.fromUid === me;
   const el = document.createElement("div");
   el.className = `msg ${own ? "own" : "other"}`;
@@ -159,6 +356,15 @@ function buildMessage(key, msg) {
     row.append(bubble, btn);
   } else {
     row.append(bubble);
+    {   // others' messages get a "more" button too (Reply, Copy)
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "icon-btn msg-menu";
+      btn.setAttribute("aria-label", "Message actions");
+      btn.innerHTML = icon("more", 16);
+      btn.addEventListener("click", e => { e.stopPropagation(); showMenu(key, btn); });
+      row.append(btn);
+    }
   }
 
   const foot = document.createElement("div");
@@ -181,23 +387,32 @@ function appendLive(key, msg) {
 }
 
 function onAdded(snap) {
-  const msg = snap.val();
-  if (!msg || document.getElementById("msg-" + snap.key)) return;
-  const wasNear = isNearBottom();
-  appendLive(snap.key, msg);
-  renderReceipts();
-  if (!ready) return;
-  if (msg.fromUid === me || wasNear) scrollToBottom();
-  else jumpBtn.classList.remove("hidden");
-  maybeMarkRead();
+  const raw = snap.val();
+  if (!raw || document.getElementById("msg-" + snap.key) || pendingKeys.has(snap.key)) return;   // pending: finishJob swaps it in
+  const pr = protect();
+  if (pr && raw.type !== "event" && !(raw.timestamp >= pr.since())) return;
+  addQ = addQ.then(async () => {
+    if (document.getElementById("msg-" + snap.key) || pendingKeys.has(snap.key)) return;
+    const msg = await hydrate(raw);
+    const wasNear = isNearBottom();
+    appendLive(snap.key, msg);
+    renderReceipts();
+    if (!ready) return;
+    if (msg.fromUid === me || wasNear) scrollToBottom();
+    else jumpBtn.classList.remove("hidden");
+    maybeMarkRead();
+  }).catch(() => {});
 }
 
 function onChanged(snap) {
-  const msg = snap.val();
-  if (!msg) return;
-  msgData.set(snap.key, msg);
-  const el = document.getElementById("msg-" + snap.key);
-  if (el) fillMessage(el, snap.key, msg); else onAdded(snap);
+  const raw = snap.val();
+  if (!raw) return;
+  addQ = addQ.then(async () => {
+    const msg = await hydrate(raw);
+    msgData.set(snap.key, msg);
+    const el = document.getElementById("msg-" + snap.key);
+    if (el && msg.type !== "event") fillMessage(el, snap.key, msg); else if (!el) onAdded(snap);
+  }).catch(() => {});
 }
 
 function onRemoved(snap) {
@@ -209,12 +424,14 @@ function onRemoved(snap) {
   }
 }
 
+let lastPageShort = false;
 async function loadOlder() {
-  if (loadingOlder || reachedStart || oldestTs == null) return;
+  if (loadingOlder || reachedStart || oldestKey == null || protect()) return;
+  if (Date.now() - lastOlderAt < 600) { setTimeout(loadOlder, 650); return; }      // never chain page after page
   loadingOlder = true;
   historyStatus.textContent = "Loading older messages…";
   try {
-    const snap = await get(query(messagesRef, orderByChild("timestamp"), endBefore(oldestTs, oldestKey), limitToLast(OLDER_PAGE)));
+    const snap = await get(query(messagesRef, orderByKey(), endBefore(oldestKey), limitToLast(OLDER_PAGE)));
     const list = [];
     snap.forEach(s => { list.push(s); });
     if (!list.length) {
@@ -223,45 +440,72 @@ async function loadOlder() {
     } else {
       const prevHeight = messagesDiv.scrollHeight;
       const anchor = messagesDiv.querySelector(".msg") || typingRow;
-      for (const s of list) {
+      const added = [];
+      const plains = await Promise.all(list.map(x => hydrate(x.val())));
+      for (const [i, s] of list.entries()) {
         if (document.getElementById("msg-" + s.key)) continue;
-        const m = s.val();
+        const m = plains[i];
         msgData.set(s.key, m);
-        messagesDiv.insertBefore(buildMessage(s.key, m), anchor);
+        const el = buildMessage(s.key, m);
+        el.dataset.old = "1";
+        messagesDiv.insertBefore(el, anchor);
+        added.push(el);
       }
-      oldestTs = list[0].val().timestamp;
       oldestKey = list[0].key;
+      ignoreScrollUntil = Date.now() + 400;
       messagesDiv.scrollTop += messagesDiv.scrollHeight - prevHeight;
-      if (list.length < OLDER_PAGE) { reachedStart = true; historyStatus.textContent = "Beginning of the conversation"; }
-      else historyStatus.textContent = "";
+      added.forEach(el => { el.dataset.h = el.offsetHeight; });
+      // A short page does not prove we reached the start (the SDK can answer from a partial cache): only an empty page does.
+      historyStatus.textContent = "";
+      lastPageShort = list.length < OLDER_PAGE;
     }
   } catch (err) {
     console.error("Failed to load history", err);
     historyStatus.textContent = "Couldn't load older messages";
   }
-  loadingOlder = false;
+  loadingOlder = false; lastOlderAt = Date.now();
+  if (!reachedStart && lastPageShort && messagesDiv.scrollTop < 40) { lastPageShort = false; setTimeout(loadOlder, 0); return; }   // confirm the start with an empty page
+  fillViewport();
+}
+
+// If the loaded messages don't even fill the screen there's nothing to scroll, so keep pulling older ones.
+function fillViewport() {
+  if (!reachedStart && !loadingOlder && ready && messagesDiv.scrollHeight <= messagesDiv.clientHeight + 60) setTimeout(loadOlder, 0);
 }
 
 messagesDiv.addEventListener("scroll", () => {
   stick = isNearBottom();
   if (stick) jumpBtn.classList.add("hidden");
-  if (messagesDiv.scrollTop < 40) loadOlder();
+  if (messagesDiv.scrollTop < 40 && Date.now() > ignoreScrollUntil) loadOlder();
   closeMenu();
 }, { passive: true });
 jumpBtn.addEventListener("click", scrollToBottom);
 
 // ---------- read receipts ----------
+// When this page lives in the call's chat panel it stays loaded while the panel is closed; the call page tells us.
+let panelHidden = false;
+window.addEventListener("message", e => {
+  if (e.origin !== location.origin || !e.data || e.data.qm !== "panel") return;
+  panelHidden = !e.data.visible;
+  if (!panelHidden) { maybeMarkRead(); scrollToBottom(); }
+});
+const IS_PANEL = new URLSearchParams(location.search).has("panel");
 function maybeMarkRead() {
-  if (!ready || !latestKey || document.hidden) return;
+  if (!ready || !latestKey || document.hidden || panelHidden) return;
+  // the full-screen call covers this chat: nothing here counts as read (the call's own chat panel marks its messages itself)
+  if (!IS_PANEL) { try { if (QM && QM.state && QM.state.call && QM.state.call.visible) return; } catch (_) { /* ignore */ } }
   if (String(lastMarked) === String(latestKey)) return;
   lastMarked = latestKey;
   set(ref(db, `${chatPath}/messageRead/${me}`), latestKey).catch(() => {});
 }
 document.addEventListener("visibilitychange", () => { if (!document.hidden) maybeMarkRead(); });
 window.addEventListener("focus", maybeMarkRead);
+setInterval(maybeMarkRead, 1500);   // also catches the call overlay being minimised/closed
 
+// A small avatar under the last message each other member has read — on every message, not just ours,
+// so in groups you can see exactly where everyone left off.
 function renderReceipts() {
-  messagesDiv.querySelectorAll(".readBy").forEach(el => { el.textContent = ""; });
+  messagesDiv.querySelectorAll(".readBy").forEach(el => { el.replaceChildren(); });
   const byKey = {};
   for (const [uid, key] of Object.entries(readReceipts)) {
     if (uid === me || !participants.includes(uid)) continue;
@@ -269,9 +513,14 @@ function renderReceipts() {
   }
   for (const [key, uids] of Object.entries(byKey)) {
     const el = document.getElementById("msg-" + key);
-    if (!el || !el.classList.contains("own")) continue;
-    const names = uids.map(u => peekProfile(u)?.displayName || "Someone");
-    el.querySelector(".readBy").textContent = isGroup ? "Seen by " + names.join(", ") : "Seen";
+    const host = el && el.querySelector(".readBy");
+    if (!host) continue;
+    for (const u of uids) {
+      const p = peekProfile(u);
+      const av = avatarEl(p?.displayName || "?", p?.pfp || "", "avatar read-av");
+      av.title = "Seen by " + (p?.displayName || "someone");
+      host.append(av);
+    }
   }
 }
 
@@ -324,6 +573,125 @@ msgInput.addEventListener("blur", () => { clearTimeout(typingTimer); setTyping(f
 document.addEventListener("visibilitychange", () => { if (document.hidden) { clearTimeout(typingTimer); setTyping(false); } });
 window.addEventListener("pagehide", () => { if (isTyping) remove(myTypingRef()).catch(() => {}); });
 
+/** Messages that were unreadable ("waiting for the key") get decrypted and redrawn where they are — no reload. */
+async function refreshLocked() {
+  for (const [key, m] of [...msgData]) {
+    if (!m || !m._locked) continue;
+    try {
+      const raw = (await get(ref(db, `${chatPath}/messages/${key}`))).val();
+      if (!raw) continue;
+      const msg = await hydrate(raw);
+      if (msg._locked && !!msg._lost === !!m._lost) continue;
+      msgData.set(key, msg);
+      const el = document.getElementById("msg-" + key);
+      if (el) fillMessage(el, key, msg);
+    } catch (_) { /* leave it locked */ }
+  }
+}
+
+// ---------- message info: sent / delivered / read ----------
+const PUSH_CHARS = "-0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ_abcdefghijklmnopqrstuvwxyz";
+/** Firebase push ids start with the server-adjusted time they were made: that is when the database accepted the message. */
+function keyTime(key) {
+  if (!key || key.length < 8) return null;
+  let t = 0;
+  for (let i = 0; i < 8; i++) { const c = PUSH_CHARS.indexOf(key[i]); if (c < 0) return null; t = t * 64 + c; }
+  return t > 1e12 && t < 4e12 ? t : null;
+}
+const fullTime = ts => new Date(ts).toLocaleString([], { weekday: "short", month: "short", day: "numeric", year: "numeric", hour: "numeric", minute: "2-digit", second: "2-digit" });
+async function showInfo(key, msg) {
+  const box = document.createElement("div"); box.className = "msg-info";
+  const row = (label, value, sub) => {
+    const r = document.createElement("div"); r.className = "mi-row";
+    const l = document.createElement("span"); l.className = "mi-l"; l.textContent = label;
+    const v = document.createElement("span"); v.className = "mi-v"; v.textContent = value;
+    r.append(l, v);
+    if (sub) { const s = document.createElement("small"); s.textContent = sub; v.append(document.createElement("br"), s); }
+    box.append(r); return r;
+  };
+  row("✉️ Sent", msg.timestamp ? fullTime(msg.timestamp) : "—", "From the sender's device");
+  // deliveredAt is written by the database itself (a server timestamp) the moment the message arrives; older messages fall back to the time inside their id
+  let dt = msg.deliveredAt;
+  if (!dt) { try { dt = (await get(ref(db, `${chatPath}/messages/${key}/deliveredAt`))).val(); } catch (_) { /* ignore */ } }
+  const realDelivered = dt;
+  dt = dt || keyTime(key);
+  row("☁️ Delivered", dt ? fullTime(dt) : "Not yet", "Received by the server");
+  if (msg.timestamp && realDelivered) {     // how long the message took to reach the server
+    const ms = Math.max(0, Math.round(realDelivered - msg.timestamp));
+    const r = row("⏱ Send delay", ms.toLocaleString() + " ms", "Sent → delivered (depends on both clocks)");
+    r.classList.add("mi-delay", ms < 100 ? "good" : ms < 1000 ? "warn" : "bad");
+  }
+  const head = document.createElement("div"); head.className = "mi-head"; head.textContent = "Read by"; box.append(head);
+  const others = participants.filter(u => u !== me && u !== msg.fromUid);
+  await Promise.all(others.map(getProfile));
+  if (!others.length) { const n = document.createElement("div"); n.className = "muted"; n.textContent = "Nobody else in this chat."; box.append(n); }
+  for (const u of others) {
+    const p = peekProfile(u), rk = readReceipts[u];
+    const read = rk != null && String(rk) >= String(key);
+    const r = row(p?.displayName || "Someone", read ? "Read" : "Not read yet");
+    r.prepend(avatarEl(p?.displayName || "?", p?.pfp || "", "avatar sm"));
+    r.classList.toggle("mi-unread", !read);
+  }
+  confirmDialog({ title: "Message info", node: box, okText: "Close", hideCancel: true });
+}
+
+function explainEncrypted(msg) {
+  if (msg && msg._lost) {
+    confirmDialog({
+      title: "🔒 This message is lost",
+      message: "It was end-to-end encrypted, and the key that could unscramble it no longer exists.\n\nWhy: the chat key is never stored anywhere readable. It only lives wrapped inside each member's own keys, and every member either reset their keys or lost them (no recovery code, no other signed-in device). With nobody holding the key, nothing — not you, not the other members, not the site — can open these messages.\n\nWhat now: the chat's key was cleared, so anyone in the chat can turn encryption on again (with a brand-new key) or leave it off. New messages work normally. The lost ones stay in the history so you can see that they were sent and when.",
+      okText: "Got it", hideCancel: true
+    });
+    return;
+  }
+  if (msg && msg._locked) {
+    confirmDialog({
+      title: "🔒 Waiting for the encryption key…",
+      message: "This message is end-to-end encrypted, and this device doesn't have the chat's key yet, so it can't be unscrambled here.\n\nHow to get it:\n• Usually it arrives by itself: as soon as another member of the chat opens it on a device that has the key, the key is shared with this one. This message then unlocks on its own, no need to refresh.\n• Signed in on a new device? Enter your recovery code when the chat list asks for it (your code is under Account → Encryption on a device that already has it).\n• If you lost your recovery code and have no other device, older encrypted messages can't be recovered — new ones will work once a key is set up.",
+      okText: "Got it", hideCancel: true
+    });
+    return;
+  }
+  confirmDialog({
+    title: "🔒 Encrypted message",
+    message: "A 🔒 next to the time means the message is end-to-end encrypted. They are scrambled on your device before they are sent, and only the people in this chat can unscramble them. Nobody else can read them — not the people who run this site, and not anyone looking at the database. Files and links in them are protected the same way.\n\nThe catch: previews and notifications on other devices can only show the text if that device has your encryption key, and if you lose your recovery code you can't read these messages on a new device. Turn encryption off or on for the whole chat in the chat options.",
+    okText: "Got it", hideCancel: true
+  });
+}
+
+// ---------- replies ----------
+let replyingTo = null;
+const replyBar = $("replyBar");
+async function setReply(key) {
+  const m = msgData.get(key);
+  if (!m || m.type === "event") return;
+  replyingTo = { key, uid: m.fromUid, text: String(m._locked ? "Message" : previewOf(m)).replace(/\s+/g, " ").slice(0, 120) };
+  replyBar.classList.remove("hidden");
+  $("rbName").textContent = m.fromUid === me ? "Replying to yourself" : "Replying to …";
+  $("rbText").textContent = replyingTo.text;
+  if (m.fromUid !== me) getProfile(m.fromUid).then(p => { if (replyingTo && replyingTo.key === key) $("rbName").textContent = "Replying to " + p.displayName; });
+  msgInput.focus();
+}
+function clearReply() { replyingTo = null; replyBar.classList.add("hidden"); }
+$("rbClose").onclick = clearReply;
+function quoteEl(r) {
+  const q = document.createElement("div");
+  q.className = "reply-quote"; q.setAttribute("role", "button");
+  const n = document.createElement("strong"), t = document.createElement("span");
+  n.textContent = r.uid === me ? "You" : (peekProfile(r.uid)?.displayName || "…");
+  if (r.uid !== me && !peekProfile(r.uid)) getProfile(r.uid).then(p => { n.textContent = p.displayName; });
+  t.textContent = r.text || "";
+  q.append(n, t);
+  q.addEventListener("click", () => {
+    const target = document.getElementById("msg-" + r.key);
+    if (!target) { toast("That message is further up — scroll up to load it.", "info", 2500); return; }
+    target.scrollIntoView({ block: "center", behavior: "smooth" });
+    target.classList.add("flash"); setTimeout(() => target.classList.remove("flash"), 1300);
+  });
+  return q;
+}
+document.addEventListener("keydown", e => { if (e.key === "Escape" && replyingTo) clearReply(); });
+
 // ---------- composer ----------
 function autosize() {
   msgInput.style.height = "auto";
@@ -339,7 +707,7 @@ msgInput.addEventListener("keydown", e => {
 });
 sendBtn.addEventListener("mousedown", e => e.preventDefault()); // keep keyboard open on mobile
 
-composer.addEventListener("submit", async e => {
+composer.addEventListener("submit", e => {
   e.preventDefault();
   const text = msgInput.value.trim();
   if (!text) return;
@@ -347,27 +715,218 @@ composer.addEventListener("submit", async e => {
   autosize();
   clearTimeout(typingTimer);
   setTyping(false);
-  try {
-    await sendMessage({ text });
-  } catch (err) {
-    console.error(err);
-    msgInput.value = text;
-    autosize();
-    toast("Message failed to send. Check your connection.", "error");
-  }
+  startJob({ type: "text", text });
   msgInput.focus();
 });
 
-async function sendMessage({ type = "text", text = "", content = "" }) {
-  const msgRef = push(messagesRef);
-  const timestamp = Date.now();
-  const payload = type === "text" ? { fromUid: me, text, timestamp } : { fromUid: me, type, content, timestamp };
-  await update(ref(db), {
-    [`${chatPath}/messages/${msgRef.key}`]: payload,
-    [`${chatPath}/lastMessage`]: { fromUid: me, text: previewOf(payload), timestamp, id: msgRef.key }
-  });
+// ---------- sending: every outgoing message first shows up as a grey "pending" copy of what it will look like ----------
+// A job owns that grey bubble. While it uploads/writes it shows progress; on failure it turns red with an alert button
+// (Retry / Cancel / See error). A retry reuses the same message key, so it can never double-post.
+const SEND_TIMEOUT = 20000;
+const jobs = new Map();                 // id -> job
+const pendingKeys = new Set();          // message keys whose real child_added is held back until the write is acknowledged
+let jobSeq = 0;
+
+const buildPayload = (spec, timestamp) => ({
+  ...(spec.type === "text" ? { fromUid: me, text: spec.text, timestamp }
+  : spec.type === "file" ? { fromUid: me, type: "file", text: spec.extra.name, ...spec.extra, timestamp }
+  : { fromUid: me, type: spec.type, content: spec.content, ...(spec.wave ? { wave: spec.wave, duration: spec.duration } : {}), timestamp }),
+  ...(spec.reply ? { replyTo: spec.reply } : {})
+});
+
+/** @param spec {type:'text'|'image'|'video'|'file', text?, content?, extra?} message to send
+ *  @param opts {file?:File, prepare?:(job)=>Promise<spec>} */
+function startJob(spec, opts = {}) {
+  if (!requireVerified("send messages")) return null;
+  spec = { ...spec };
+  if (replyingTo) { spec.reply = replyingTo; clearReply(); }
+  const job = { id: ++jobSeq, spec, file: opts.file || null, prepare: opts.prepare || null, state: "sending", progress: null, error: null,
+    ref: null, ts: 0, localUrl: opts.file ? URL.createObjectURL(opts.file) : null, ctrl: null, cancelled: false, litter: false };
+  jobs.set(job.id, job);
+  const fake = { fromUid: me, type: spec.type, text: spec.text, content: spec.content, timestamp: Date.now(), replyTo: spec.reply };
+  job.el = buildMessage("job-" + job.id, fake);
+  job.el.classList.add("pending");
+  const old = job.el.querySelector(".msg-menu");
+  const btn = old.cloneNode(true);                   // drop the real-message menu handler
+  old.replaceWith(btn);
+  btn.addEventListener("click", e => { e.stopPropagation(); showJobMenu(job, btn); });
+  job.btn = btn;
+  messagesDiv.insertBefore(job.el, typingRow);
+  paintJob(job);
+  scrollToBottom();
+  runJob(job);
+  return job;
+}
+
+function paintJob(job) {
+  const el = job.el, bubble = el.querySelector(".bubble"), failed = job.state === "error";
+  el.classList.toggle("failed", failed);
+  el.classList.toggle("pending", !failed);
+  job.btn.innerHTML = icon(failed ? "alert" : "more", 16);
+  job.btn.classList.add("job-btn");
+  job.btn.classList.toggle("job-err", failed);
+  job.btn.setAttribute("aria-label", failed ? "Message failed — options" : "Sending — options");
+  const spec = job.spec, lit = job.litter || spec.type === "file";
+  bubble.replaceChildren();
+  bubble.classList.remove("media-bubble", "file-bubble");
+  const src = job.localUrl || (spec.type === "image" || spec.type === "video" ? safeMediaUrl(spec.content, spec.type) : null);
+  const kind = lit ? (spec.extra?.kind || kindOf(job.file?.type)) : spec.type;
+  if (spec.type === "text") {
+    bubble.append(linkify(spec.text));
+  } else if (src && kind === "image") {
+    const img = new Image(); img.className = "media"; img.alt = "Sending image"; img.referrerPolicy = "no-referrer";
+    img.addEventListener("load", ev => onMedia(ev.target));
+    img.src = src; bubble.append(img); bubble.classList.add("media-bubble");
+  } else if (src && kind === "video") {
+    const v = document.createElement("video"); v.className = "media"; v.muted = true; v.preload = "metadata"; v.playsInline = true;
+    v.addEventListener("loadedmetadata", ev => onMedia(ev.target));
+    v.src = src; bubble.append(v); bubble.classList.add("media-bubble");
+  } else {
+    const c = document.createElement("div");
+    c.className = "file-card";
+    c.innerHTML = `<span class="file-ic">${icon("file", 22)}</span><span class="file-meta"><span class="file-name"></span><span class="file-size"></span></span>`;
+    c.querySelector(".file-name").textContent = job.file?.name || spec.extra?.name || "File";
+    c.querySelector(".file-size").textContent = job.file ? fmtBytes(job.file.size) : "";
+    const w = document.createElement("div"); w.className = "file-wrap"; w.append(c);
+    bubble.append(w); bubble.classList.add("file-bubble");
+  }
+  // Litterbox uploads: percent (or "Uploading…") sits where the expiry text will go once it's sent.
+  job.note = null;
+  if (lit) {
+    const bar = document.createElement("div"); bar.className = "up-bar"; bar.innerHTML = "<i></i>";
+    const note = document.createElement("div"); note.className = "file-expiry up-note";
+    bubble.append(bar, note);
+    job.bar = bar; job.note = note;
+  }
+  paintJobProgress(job);
+}
+
+function paintJobProgress(job) {
+  const failed = job.state === "error", uploading = job.progress !== "sending" && (job.litter || job.spec.type === "file") && !job.spec.extra?.url;
+  const foot = job.el.querySelector(".time");
+  const pct = typeof job.progress === "number" ? Math.floor(job.progress * 100) : null;
+  if (foot) foot.textContent = failed ? "Failed to send" : (uploading ? "Uploading…" : "Sending…");
+  if (job.note) job.note.textContent = failed ? (uploading ? "Upload failed" : "Couldn't send") : uploading ? (pct == null ? "Uploading…" : `Uploading… ${pct}%`) : "Sending…";
+  if (job.bar) {
+    job.bar.classList.toggle("indet", !failed && uploading && pct == null);
+    job.bar.hidden = failed || !uploading;
+    job.bar.firstChild.style.width = (pct ?? 0) + "%";
+  }
+}
+
+async function runJob(job) {
+  job.state = "sending"; job.error = null;
+  job.ctrl = new AbortController();
+  paintJob(job);
+  try {
+    if (job.prepare) {
+      const spec = await job.prepare(job);
+      if (job.cancelled) return;
+      job.spec = spec;
+      job.prepare = null;                                // cached: a retry goes straight to the write
+      if (spec.type === "file") job.litter = true;
+    }
+    job.progress = "sending";
+    paintJob(job);
+    await Promise.race([writeJob(job), new Promise((_, rej) => setTimeout(() => rej(new Error("Timed out — check your connection and retry.")), SEND_TIMEOUT))]);
+  } catch (err) {
+    if (job.cancelled || err.aborted || !jobs.has(job.id)) return;
+    failJob(job, err);
+  }
+}
+
+let srvOff = 0;                                         // how far this device's clock is from the database's
+try { onValue(ref(db, ".info/serverTimeOffset"), s => { srvOff = s.val() || 0; }); } catch (_) { /* ignore */ }
+
+async function writeJob(job) {
+  job.ref ||= push(messagesRef);
+  job.ts ||= Date.now() + srvOff;                     // the database's clock, not this device's, so "sent" and "delivered" are measured on the same clock
+  const payload = buildPayload(job.spec, job.ts), key = job.ref.key;
+  const sealIt = canSeal();                                                           // without the chat key this device can't encrypt: the message goes out readable (the banner says so)
+  job.key = key; job.payload = sealIt ? { ...payload, _enc: true } : payload;                         // the plain version: what the UI shows once it's sent
+  let wire = payload, last = { fromUid: me, text: previewOf(payload), timestamp: job.ts, id: key };
+  if (sealIt) {
+    wire = await sealPayload(chatId, payload);
+    last = { fromUid: me, text: await sealPreview(chatId, previewOf(payload)), enc: true, timestamp: job.ts, id: key };
+  }
+  pendingKeys.add(key);
+  const multi = {
+    [`${chatPath}/messages/${key}`]: { ...wire, deliveredAt: serverTimestamp() },        // "delivered": stamped by the database when it arrives
+    [`${chatPath}/lastMessage`]: last
+  };
+  // "Something new" ping for every other member: the app's single live stream (live/{uid}) wakes up and shows the notification.
+  for (const u of participants) if (u !== me) multi[`live/${u}/pings/${chatId}`] = { id: key, ts: job.ts, from: me };
+  const p = update(ref(db), multi);
+  p.then(() => { if (jobs.has(job.id) && !job.cancelled) finishJob(job); }, () => {});
+  return p;
+}
+
+function finishJob(job) {
+  jobs.delete(job.id);
+  pendingKeys.delete(job.key);
+  if (job.localUrl) URL.revokeObjectURL(job.localUrl);
+  job.el.remove();
+  closeMenu();
+  if (!document.getElementById("msg-" + job.key)) {
+    msgData.set(job.key, job.payload);
+    appendLive(job.key, job.payload);
+    renderReceipts();
+  }
+  scrollToBottom();
+  maybeMarkRead();
   notifyServer();
 }
+
+function failJob(job, err) {
+  console.error("Send failed", err);
+  job.state = "error";
+  job.error = (err && err.message) || String(err);
+  paintJob(job);
+  const what = job.spec.type === "text" ? "Message" : "File";
+  toast(`${what} failed to send: ${friendlyError(job.error)}`, "error", 6000);
+}
+
+const friendlyError = m => /permission_denied/i.test(m) ? (isVerified() ? "you don't have permission to post here." : "verify your email first.") : String(m).replace(/^Error:\s*/, "").slice(0, 140);
+
+function cancelJob(job) {
+  job.cancelled = true;
+  job.ctrl?.abort();
+  jobs.delete(job.id);
+  if (job.key) { pendingKeys.delete(job.key); if (job.ref) remove(job.ref).catch(() => {}); }  // in case a timed-out write lands later
+  if (job.localUrl) URL.revokeObjectURL(job.localUrl);
+  job.el.remove();
+}
+
+function showJobMenu(job, btn) {
+  const wasOpen = btn.classList.contains("open");
+  closeMenu();
+  if (wasOpen) return;
+  btn.classList.add("open");
+  menuEl.replaceChildren();
+  const add = (label, ico, fn, danger = false) => {
+    const b = document.createElement("button");
+    b.type = "button";
+    if (danger) b.className = "danger";
+    b.innerHTML = icon(ico, 16);
+    b.append(document.createTextNode(label));
+    b.addEventListener("click", () => { closeMenu(); fn(); });
+    menuEl.append(b);
+  };
+  if (job.state === "error") {
+    add("Retry", "send", () => runJob(job));
+    add("See error", "alert", () => alertDialog({ title: "Why it failed", message: job.error || "Unknown error" }));
+  }
+  add(job.state === "error" ? "Cancel" : "Cancel sending", "close", () => cancelJob(job), true);
+  menuEl.classList.remove("hidden");
+  const r = btn.getBoundingClientRect(), m = menuEl.getBoundingClientRect();
+  menuEl.style.left = Math.min(Math.max(8, r.right - m.width), innerWidth - m.width - 8) + "px";
+  let top = r.bottom + 4;
+  if (top + m.height > innerHeight - 8) top = Math.max(8, r.top - m.height - 4);
+  menuEl.style.top = top + "px";
+}
+
+// Used by anything that just needs "send this now" semantics (e.g. the link dialog).
+function sendMessage(spec) { return startJob(spec); }
 
 async function notifyServer() {
   try {
@@ -402,11 +961,15 @@ function showMenu(key, btn) {
     b.addEventListener("click", () => { closeMenu(); fn(); });
     menuEl.append(b);
   };
+  add("Info", "info", () => showInfo(key, msg));
+  if (!msg._locked) add("Reply", "send", () => setReply(key));
   if (isText(msg)) {
     add("Copy", "copy", () => copyText(msg.text ?? msg.content ?? ""));
-    add("Edit", "more", () => editMessage(key));
+    if (msg.fromUid === me) add("Edit", "more", () => editMessage(key));
   }
-  add("Delete", "close", () => deleteMessage(key), true);
+  if (msg.fromUid === me) add("Delete", "close", () => deleteMessage(key), true);
+  if (msg._enc) add("What's this?", "info", () => explainEncrypted(msg));
+  if (devOn()) add("Developer info", "more", () => showMessageDev(key, msg));
 
   menuEl.classList.remove("hidden");
   const r = btn.getBoundingClientRect();
@@ -442,11 +1005,12 @@ async function editMessage(key) {
   });
   if (val === null) return;
   const text = val.trim();
-  if (!text || text === msg.text) return;
+  if (!text || text === msg.text || msg._locked) return;
   try {
     // Keep the original timestamp so the message doesn't jump in the ordering.
-    await update(ref(db, `${chatPath}/messages/${key}`), { text, editedAt: Date.now() });
-    if (await isLastMessage(key, msg)) await update(lastRef, { text, id: key });
+    const stored = msg._enc ? await sealPreview(chatId, text) : text;
+    await update(ref(db, `${chatPath}/messages/${key}`), { text: msg._enc ? await E2E.encText(chatId, text) : stored, editedAt: Date.now() });
+    if (await isLastMessage(key, msg)) await update(lastRef, msg._enc ? { text: stored, enc: true, id: key } : { text, id: key });
   } catch (err) {
     console.error(err);
     toast("Couldn't edit that message.", "error");
@@ -463,12 +1027,13 @@ async function deleteMessage(key) {
   try {
     const wasLast = msg ? await isLastMessage(key, msg) : null;
     await remove(ref(db, `${chatPath}/messages/${key}`));
+    if (msg && (msg._enc || msg.enc)) dropKeyIfUnused();
     if (wasLast) {
       // Point the chat-list preview at the previous message instead of the deleted one.
       let prev = null;
       (await get(query(messagesRef, orderByChild("timestamp"), limitToLast(1)))).forEach(s => { prev = { key: s.key, ...s.val() }; });
       await set(lastRef, prev
-        ? { fromUid: prev.fromUid, text: previewOf(prev), timestamp: prev.timestamp, id: prev.key, notifSent: true }
+        ? { fromUid: prev.fromUid, text: prev.enc && prev.type !== "file" && prev.type !== "image" && prev.type !== "video" ? prev.text : prev.enc ? await sealPreview(chatId, prev.type === "image" ? "📷 Photo" : prev.type === "video" ? "🎥 Video" : "📎 File") : previewOf(prev), ...(prev.enc ? { enc: true } : {}), timestamp: prev.timestamp, id: prev.key, notifSent: true }
         : { fromUid: "", text: "(No messages yet)", timestamp: wasLast.timestamp || Date.now() });
     }
   } catch (err) {
@@ -486,7 +1051,7 @@ $("lightbox").addEventListener("click", () => $("lightbox").close());
 $("attachBtn").onclick = () => { $("mediaUrl").value = ""; attachDialog.showModal(); };
 $("attachClose").onclick = () => attachDialog.close();
 $("pickFileBtn").onclick = () => $("fileInput").click();
-$("pickCameraBtn").onclick = () => $("cameraInput").click();
+$("pickCameraBtn").onclick = () => { attachDialog.close(); openCamera(); };
 for (const id of ["fileInput", "cameraInput"]) {
   $(id).addEventListener("change", e => {
     const file = e.target.files[0];
@@ -500,10 +1065,9 @@ for (const id of ["fileInput", "cameraInput"]) {
 $("sendLinkBtn").onclick = async () => {
   const url = $("mediaUrl").value.trim();
   if (!/^https?:\/\/\S+$/i.test(url)) return toast("Enter a full http(s) link.", "error");
-  const type = /\.(mp4|webm|mov|m4v|ogv|ogg)(\?|#|$)/i.test(url) ? "video" : "image";
+  const type = /\.(mp3|wav|m4a|aac|flac|opus|oga)(\?|#|$)/i.test(url) ? "audio" : /\.(mp4|webm|mov|m4v|ogv|ogg)(\?|#|$)/i.test(url) ? "video" : "image";
   attachDialog.close();
-  try { await sendMessage({ type, content: url }); }
-  catch { toast("Couldn't send that link.", "error"); }
+  sendMessage({ type, content: url });
 };
 
 const readAsDataURL = file => new Promise((resolve, reject) => {
@@ -542,31 +1106,52 @@ async function prepareImage(file) {
   throw new Error("That image is too large even after resizing.");
 }
 
-async function sendFile(file) {
-  try {
-    if (file.type.startsWith("image/")) {
-      toast("Sending photo…", "info", 1500);
-      await sendMessage({ type: "image", content: await prepareImage(file) });
-    } else if (file.type.startsWith("video/")) {
-      if (file.size > MAX_VIDEO_BYTES) { toast("Videos must be under 8 MB. Send a link for bigger ones.", "error"); return; }
-      toast("Sending video…", "info", 2500);
-      await sendMessage({ type: "video", content: await readAsDataURL(file) });
-    } else {
-      toast("Only photos and videos can be sent.", "error");
-    }
-  } catch (err) {
-    console.error(err);
-    toast(err.message || "Couldn't send that file.", "error");
+const TOO_BIG = "That file is too big to send directly, so it's being uploaded to Litterbox. It will expire after 3 days.";
+const OTHER = "Files are uploaded to Litterbox and expire after 3 days.";
+
+async function litterSpec(job, why) {
+  const file = job.file;
+  if (file.size > MAX_BYTES) throw new Error("That file is over Litterbox's 1 GB limit.");
+  const sealed = canSeal();
+  job.litter = true;
+  if (!job.noticed) { job.noticed = true; toast(why, "info", 7000); }
+  paintJob(job);
+  let up = file;
+  if (sealed) {
+    if (file.size > 200 * 1024 * 1024) throw new Error("Encrypted files can be up to 200 MB.");
+    up = new File([await E2E.encBytes(chatId, await file.arrayBuffer())], "x.bin", { type: "application/octet-stream" });
   }
+  const wv = (file.type || "").startsWith("audio/") ? await waveFromFile(file) : null;      // the waveform travels with the message
+  const info = await uploadToLitterbox(up, f => { job.progress = f; paintJobProgress(job); }, job.ctrl.signal);
+  if (wv) Object.assign(info, wv);
+  if (sealed) Object.assign(info, { name: file.name || "File", size: file.size, mime: file.type || "application/octet-stream", kind: kindOf(file.type) });
+  return { type: "file", extra: info };
 }
 
-// Paste an image straight from the clipboard (with a confirmation preview).
-msgInput.addEventListener("paste", async e => {
-  const item = [...(e.clipboardData?.items || [])].find(i => i.type.startsWith("image/"));
-  if (!item) return;
-  e.preventDefault();
-  const file = item.getAsFile();
-  if (!file) return;
+// Every file becomes a job: it shows a grey preview straight away, and the work of resizing/uploading happens inside it.
+function sendFile(file) {
+  const t = file.type || "";
+  const prepare = async job => {
+    if (t.startsWith("image/")) {
+      let dataUrl = null;
+      try { dataUrl = await prepareImage(file); } catch (_) { /* too large for inline → Litterbox */ }
+      return dataUrl ? { type: "image", content: dataUrl } : litterSpec(job, TOO_BIG);
+    }
+    if (t.startsWith("video/")) {
+      return file.size > MAX_VIDEO_BYTES ? litterSpec(job, TOO_BIG) : { type: "video", content: await readAsDataURL(file) };
+    }
+    if (t.startsWith("audio/") && file.size <= MAX_AUDIO_BYTES) return { type: "audio", content: await readAsDataURL(file), ...(await waveFromFile(file) || {}) };
+    return litterSpec(job, OTHER);
+  };
+  // Until prepare() decides, give the placeholder the right look: images/videos preview, anything else is a file card.
+  const guess = t.startsWith("image/") ? "image" : t.startsWith("video/") ? "video" : t.startsWith("audio/") && file.size <= MAX_AUDIO_BYTES ? "audio" : "file";
+  startJob({ type: guess, extra: guess === "file" ? { name: file.name || "File", kind: kindOf(t) } : undefined }, { file, prepare });
+}
+
+// Paste an image straight from the clipboard (with a confirmation preview). Works from the browser's paste, and from the
+// Android keyboard's image / clipboard / GIF suggestions (the app hands those over through window.__qmPasteImage).
+async function pasteFile(file) {
+  if (!file || !/^image\//.test(file.type || "")) return;
   const objUrl = URL.createObjectURL(file);
   const preview = new Image();
   preview.src = objUrl;
@@ -575,18 +1160,122 @@ msgInput.addEventListener("paste", async e => {
   const ok = await confirmDialog({ title: "Send this image?", node: preview, okText: "Send" });
   URL.revokeObjectURL(objUrl);
   if (ok) sendFile(file);
+}
+msgInput.addEventListener("paste", e => {
+  const cd = e.clipboardData;
+  const item = [...(cd?.items || [])].find(i => i.type.startsWith("image/"));
+  const file = item?.getAsFile() || [...(cd?.files || [])].find(f => f.type.startsWith("image/"));
+  if (!file) return;
+  e.preventDefault();
+  pasteFile(file);
 });
+window.__qmPasteImage = (mime, b64, name) => {
+  try {
+    const bin = atob(b64), bytes = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+    const ext = (/\/(\w+)/.exec(mime) || [])[1] || "png";
+    pasteFile(new File([bytes], name || "pasted." + ext, { type: mime }));
+  } catch (_) { toast("Couldn't paste that image.", "error"); }
+};
 
 // ---------- chat options ----------
 const optionsDialog = $("optionsDialog");
 let participantsRenderToken = 0;
 
+/** Everything known about one link in a message, plus a button that fetches its preview right now. */
+async function urlCard(url, enc) {
+  const i = await inspectUrl(url, { enc }), pt = i.parts || {};
+  const sc = i.sharedCache && typeof i.sharedCache === "object" ? i.sharedCache : null;
+  const d = sc && sc.data;
+  const card = devCard("Link", [
+    ["URL", url], ["Kind", i.kind], ["Host", pt.host], ["Scheme", pt.protocol ? devPill(pt.protocol.replace(":", ""), i.insecure ? "warn" : "ok") : ""],
+    ["Path", pt.path], ["Query parameters", pt.query && pt.query.length ? pt.query.join(", ") : ""], ["Fragment", pt.hash],
+    ["Link previews setting", i.previewsOn ? devPill("on", "ok") : devPill("off", "warn")],
+    ["Shared preview cache", sc ? devPill(sc.fresh ? `fresh (${sc.ageHours} h old)` : `stale (${sc.ageHours} h old)`, sc.fresh ? "ok" : "warn") : String(i.sharedCache)],
+    ["Preview title", d && d.title], ["Preview text", d && d.description && d.description.slice(0, 120)], ["Preview image", d && d.image], ["Preview price", d && d.price]
+  ]);
+  const b = document.createElement("button"); b.type = "button"; b.className = "btn small"; b.textContent = "Fetch preview now";
+  b.onclick = async () => {
+    b.disabled = true; b.textContent = "Fetching…";
+    try {
+      const r = await fetchPreviewNow(url, enc), x = r.data || {};
+      for (const [k, v] of [["Fetched in", r.ms + " ms"], ["Result", r.data ? devPill("preview found", "ok") : devPill(r.retryLater ? "server unreachable" : "no preview", "warn")], ["Fetched title", x.title], ["Fetched text", x.description && x.description.slice(0, 120)], ["Fetched image", x.image], ["Site name", x.site || x.siteName], ["Type", x.type], ["Price", x.price]]) {
+        if (v == null || v === "") continue;
+        const row = document.createElement("div"); row.className = "dev-row"; const kk = document.createElement("span"); kk.className = "dev-k"; kk.textContent = k; const vv = document.createElement("span"); vv.className = "dev-v"; v instanceof Node ? vv.append(v) : (vv.textContent = String(v)); row.append(kk, vv); card.insertBefore(row, b);
+      }
+      b.remove();
+    } catch (e) { b.textContent = "Failed: " + (e && e.message || e); b.disabled = false; }
+  };
+  card.append(b);
+  return card;
+}
+
+async function showMessageDev(key, msg) {
+  const stored = rawOf.get(msg) || msg;
+  const raw = () => ({ key, path: `${chatPath}/messages/${key}`, stored, shown: msg, fromMe: msg.fromUid === me, pending: pendingKeys.has(key) });
+  await showDev("Message " + key.slice(-6), { raw, visual: async () => {
+    const p = await getProfile(msg.fromUid).catch(() => null);
+    const t = fmtDate, srv = keyTime(key), sent = msg.timestamp;
+    const readers = await Promise.all(Object.entries(readReceipts || {}).filter(([u, k]) => u !== msg.fromUid && String(k) >= key).map(async ([u]) => [u, await getProfile(u).catch(() => null)]));
+    const size = (() => { try { return JSON.stringify(stored).length; } catch (_) { return 0; } })();
+    const state = msg._lost ? devPill("lost", "bad") : msg._locked ? devPill("locked", "warn") : stored.enc ? devPill("decrypted", "ok") : devPill("plain");
+    const urlCards = [];
+    for (const u of urlsIn([msg.text, msg.content, msg.url].filter(x => typeof x === "string" && !msg._locked).join(" ")).slice(0, 4)) urlCards.push(await urlCard(u, !!msg._enc));
+    return devGrid(
+      devCard("", [["Type", msg.type || "text"], ["Message id", key], ["Stored size", fmtBytes(size)], ["Pending upload", pendingKeys.has(key) ? devPill("yes", "warn") : ""]], { head: devWho((p && p.displayName) || "Someone", p && p.pfp, msg.fromUid === me ? "You" : msg.fromUid) }),
+      devCard("Timing", [["Sent (client clock)", sent ? fullTime(sent) : ""], ["Accepted by database", srv ? fullTime(srv) : ""], ["Client → server", sent && srv ? (srv - sent) + " ms" : "", sent && srv && Math.abs(srv - sent) > 3000 ? "warn" : ""], ["Delivered", msg.deliveredAt ? fullTime(msg.deliveredAt) : ""], ["Edited", msg.editedAt ? fullTime(msg.editedAt) : ""], ["Clock offset", srvOff + " ms"]]),
+      devCard("Encryption", [["Encrypted", stored.enc ? devPill("yes", "info") : devPill("no")], ["State", state], ["Cipher length", stored.enc ? String((stored.text || stored.content || "").length) + " chars" : ""]]),
+      devCard("Content", [["URL / file", msg.content || msg.url || ""], ["File name", msg.name], ["Size", msg.size != null ? fmtBytes(msg.size) : ""], ["Mime", msg.mime], ["Duration", msg.duration ? msg.duration + " s" : ""], ["Waveform", msg.wave ? devPill("sent with message", "ok") : msg.type === "audio" ? devPill("missing", "warn") : ""], ["Expires", msg.expiresAt ? fullTime(msg.expiresAt) : ""], ["Reply to", msg.replyTo ? msg.replyTo.key : ""]]),
+      devCard("Read by", readers.length ? readers.map(([u, p]) => [(p && p.displayName) || u, devPill("read", "ok")]) : [["Nobody yet", ""]]),
+      ...urlCards
+    );
+  } });
+}
+const fmtDate = ts => new Date(ts).toLocaleString();
+
+// developer mode: a small button with everything raw about this chat
+$("chatOptionsBtn").before(devButton("{ }", async () => {
+  const g = async p => { try { return (await get(ref(db, `${chatPath}/${p}`))).val(); } catch (e) { return { error: String(e) }; } };
+  const rawData = async () => {
+    const els = [...messagesDiv.querySelectorAll(".msg")];
+    const keysNode = await g("keys");
+    return {
+      chatId, path: chatPath, me, participants, chatEncrypted, keyState, keysExist, keyHolders: keysNode && typeof keysNode === "object" ? Object.fromEntries(Object.entries(keysNode).map(([u, k]) => [u, k && { by: k.by, iv: (k.iv || "").length, ct: (k.ct || "").length }])) : keysNode,
+      e2e: { ready: E2E.ready(), fingerprint: E2E.myFingerprint() },
+      loaded: { rendered: els.length, first: els[0]?.dataset.key, last: els[els.length - 1]?.dataset.key, withMedia: messagesDiv.querySelectorAll("img.media,video,.qp-audio").length, pendingJobs: jobs.size, latestKey },
+      chatData: await g("chatData"), lastMessage: await g("lastMessage"), messageRead: await g("messageRead"), typing: typingUids,
+      serverClockOffsetMs: srvOff, env: envInfo()
+    };
+  };
+  await showDev("Chat " + chatId.slice(0, 8), { raw: rawData, every: 0, visual: async () => {
+    const els = [...messagesDiv.querySelectorAll(".msg")];
+    const locked = [...msgData.values()].filter(m => m && m._locked), lost = locked.filter(m => m._lost).length;
+    const people = await Promise.all(participants.map(async u => ({ u, p: await getProfile(u).catch(() => null) })));
+    const env = envInfo();
+    const who = devCard("People", people.map(({ u, p }) => [(p && p.displayName) || u, (() => { const w = document.createElement("span"); w.append(devPill(keyHolders.includes(u) ? "has key" : "no key", keyHolders.includes(u) ? "ok" : "warn"), " ", devPill(typingUids.includes(u) ? "typing" : readReceipts[u] ? "read" : "", "")); return w; })()]));
+    return devGrid(
+      devCard("Chat", [["Id", chatId], ["Members", participants.length], ["Name", customName || "(none)"], ["Connection", navigator.onLine ? devPill("online", "ok") : devPill("offline", "bad")], ["Server clock offset", srvOff + " ms"]]),
+      devCard("Encryption", [["Chat flag", chatEncrypted ? devPill("on", "info") : devPill("off")], ["This device", keyState === "ready" ? devPill("has key", "ok") : devPill(keysExist ? "waiting for key" : "no key exists", "warn")], ["Key copies", keysExist ? `${keyHolders.length} / ${participants.length}` : "none"], ["Identity", E2E.ready() ? devPill("unlocked", "ok") : devPill("locked", "warn")], ["Fingerprint", E2E.myFingerprint()], ["Locked messages", locked.length ? `${locked.length} (${lost} lost)` : "0"]]),
+      who,
+      devCard("Loaded", [["Messages rendered", els.length], ["Media items", messagesDiv.querySelectorAll("img.media,video,.qp-audio").length], ["Uploads in progress", jobs.size], ["Reached start", reachedStart ? "yes" : "no"], ["Page data loaded", env.loadedResources ? fmtBytes(env.loadedResources.transferredBytes) : ""], ["Requests", env.loadedResources && env.loadedResources.requests], ["DOM elements", document.getElementsByTagName("*").length], ["Images / videos / audio", `${messagesDiv.querySelectorAll("img.media").length} / ${messagesDiv.querySelectorAll("video").length} / ${messagesDiv.querySelectorAll(".qp-audio").length}`], ["Oldest loaded id", oldestKey], ["Newest loaded id", latestKey], ["Typing now", typingUids.length], ["Read receipts", Object.keys(readReceipts || {}).length], ["Failed media", messagesDiv.querySelectorAll(".media-failed").length], ["Download queue", ""]]),
+      devCard("Device", [["App", env.app ? "Android app" : "browser"], ["Viewport", `${env.viewport.w}×${env.viewport.h} @${env.viewport.dpr}x`], ["Network", [env.network.type, env.network.downlink && env.network.downlink + " Mbps", env.network.rtt && env.network.rtt + " ms"].filter(Boolean).join(" · ")], ["JS heap", env.memoryMB && env.memoryMB + " MB"]])
+    );
+  } });
+}, { title: "Developer info about this chat" }));
 $("chatOptionsBtn").onclick = () => {
   $("chatNameInput").value = customName;
+  $("chatPhotoInput").value = customPhoto;
   renderParticipants();
   optionsDialog.showModal();
 };
 $("optionsClose").onclick = () => optionsDialog.close();
+
+$("savePhotoBtn").onclick = async () => {
+  const v = $("chatPhotoInput").value.trim();
+  if (v && !/^https?:\/\/\S+$/i.test(v)) { toast("Enter a full image URL starting with http:// or https://", "error"); return; }
+  try { await set(ref(db, `${chatPath}/chatData/photo`), v); toast(v ? "Group photo saved." : "Group photo removed.", "success"); }
+  catch (err) { console.error(err); toast("Couldn't save the photo.", "error"); }
+};
 
 $("saveChatNameBtn").onclick = async () => {
   try {
@@ -617,12 +1306,25 @@ async function renderParticipants() {
       tag.textContent = "You";
       name.append(tag);
     }
+    if (chatEncrypted || keysExist) {                                           // who can read the encrypted messages
+      const has = keyHolders.includes(p.uid);
+      const k = document.createElement("span"); k.className = "key-tag " + (has ? "ok" : "warn");
+      k.textContent = has ? "🔑 Has key" : "🔑 No key"; k.title = has ? "Has a copy of this chat's encryption key." : "Doesn't have this chat's encryption key yet. It is shared automatically when someone who has it opens the chat.";
+      name.append(k);
+    }
+    const copy = document.createElement("button");
+    copy.type = "button";
+    copy.className = "icon-btn";
+    copy.setAttribute("aria-label", `Copy ${p.displayName}'s UID`);
+    copy.title = "Copy UID";
+    copy.innerHTML = icon("copy", 18);
+    copy.onclick = async () => { await copyText(p.uid); toast("UID copied.", "success", 1800); };
     const btn = document.createElement("button");
     btn.type = "button";
     btn.className = "btn small" + (p.uid === me ? " danger" : "");
     btn.textContent = p.uid === me ? "Leave" : "Remove";
     btn.onclick = () => removeParticipant(p.uid);
-    row.append(name, btn);
+    row.append(name, copy, btn);
     list.append(row);
   });
 }
@@ -644,9 +1346,10 @@ async function removeParticipant(uid) {
       await remove(ref(db, chatPath));
       remove(ref(db, `chatList/${me}/${chatId}`)).catch(() => {});
       toast("Chat deleted because you were the only member.");
-      setTimeout(() => location.replace("index.html"), 600);
+      setTimeout(() => toHome(), 600);
       return;
     }
+    await logEvent(chatId, me, { event: self ? "chat_leave" : "chat_kick", target: self ? null : uid });
     await update(ref(db), {
       [`${chatPath}/participants/${uid}`]: null,
       [`${chatPath}/messageRead/${uid}`]: null,
@@ -655,7 +1358,7 @@ async function removeParticipant(uid) {
     if (self) {
       remove(ref(db, `chatList/${me}/${chatId}`)).catch(() => {});
       toast("You left the chat.");
-      setTimeout(() => location.replace("index.html"), 600);
+      setTimeout(() => toHome(), 600);
     } else {
       toast(`${name} was removed.`);
     }
@@ -667,13 +1370,13 @@ async function removeParticipant(uid) {
 
 $("addUserBtn").onclick = async () => {
   const input = $("addUserUid");
-  const newUid = input.value.trim();
-  if (!newUid) return toast("Enter a UID.", "error");
-  if (!/^[\w-]{6,128}$/.test(newUid)) return toast("That doesn't look like a valid UID.", "error");
+  if (!requireVerified("add people")) return;
+  let newUid;
+  try { newUid = await resolveRecipient(input.value); } catch (e) { return toast(e.message, "error"); }
   if (participants.includes(newUid)) return toast("They're already in this chat.", "error");
 
   try {
-    if (!(await profileExists(newUid))) return toast("No user found with that UID.", "error");
+    if (!(await profileExists(newUid))) return toast("No user found.", "error");
     const p = await getProfile(newUid);
     const node = document.createElement("div");
     node.className = "profile-preview";
@@ -685,6 +1388,8 @@ $("addUserBtn").onclick = async () => {
     if (!ok) return;
     await update(ref(db, `${chatPath}/participants`), { [newUid]: true });
     await set(ref(db, `chatList/${newUid}/${chatId}`), true);
+    logEvent(chatId, me, { event: "chat_add", target: newUid });
+    if (chatEncrypted) E2E.ensureMemberKeys(chatId, [...participants, newUid]).catch(() => {});
     input.value = "";
     toast(`${p.displayName} was added.`, "success");
   } catch (err) {
@@ -693,14 +1398,116 @@ $("addUserBtn").onclick = async () => {
   }
 };
 
+// ---------- encryption setup ----------
+let keyPoll = null;
+/** Encryption is off and no encrypted message is left (all deleted): the chat key is no longer needed. Delete it so that anyone
+ *  in the chat can turn encryption on again with a fresh key (otherwise a member who lost the old key could never do it). */
+async function dropKeyIfUnused() {
+  try {
+    if ((await get(ref(db, `${chatPath}/chatData/encrypted`))).val() === true) return;
+    if (!(await get(ref(db, `${chatPath}/keys`))).exists()) return;
+    const left = await get(query(messagesRef, orderByChild("enc"), equalTo(true), limitToFirst(1)));
+    if (left.exists()) return;
+    await remove(ref(db, `${chatPath}/keys`));
+    E2E.forgetChatKey(chatId);
+  } catch (e) { console.warn("key cleanup", e); }
+}
+async function setupKeys() {
+  try {
+    chatEncrypted = (await get(ref(db, `${chatPath}/chatData/encrypted`))).val() === true;
+    if (!E2E.ready()) { keyState = "waiting"; paintEnc(); return; }
+    let key = await E2E.getChatKey(chatId);
+    const members = Object.keys((await get(ref(db, `${chatPath}/participants`))).val() || {});
+    if (!key && chatEncrypted && !(await get(ref(db, `${chatPath}/keys`))).exists()) {
+      // flagged encrypted but nobody has made a key yet (e.g. created by an older client): make it now
+      const { wrapped } = await E2E.createChatKey(chatId, members);
+      await set(ref(db, `${chatPath}/keys`), wrapped);
+      key = await E2E.getChatKey(chatId);
+    }
+    keyState = key ? "ready" : "waiting";
+    if (key) E2E.ensureMemberKeys(chatId, members).catch(() => {});
+    else if (!keyPoll) keyPoll = setInterval(async () => { if (await E2E.getChatKey(chatId)) { clearInterval(keyPoll); keyPoll = null; keyState = "ready"; paintEnc(); refreshLocked(); } }, 6000);
+  } catch (e) { console.warn("encryption setup", e); keyState = "waiting"; }
+  paintEnc();
+}
+/** "Encryption key" row in the chat options: does this device have the key, and does anybody? */
+function paintKeyRow() {
+  const row = $("encKeyRow"); if (!row) return;
+  const mine = keyHolders.includes(me);
+  let txt = "", cls = "";
+  if (!keysExist) { if (!chatEncrypted) { row.hidden = true; return; } txt = "No key yet: nobody in this chat has one, a fresh key is made as soon as someone with unlocked keys opens it."; cls = "warn"; }
+  else if (keyState === "ready") { txt = `This device has the chat key. ${keyHolders.length} of ${participants.length} member${participants.length === 1 ? "" : "s"} hold a copy.`; cls = "ok"; }
+  else if (!mine) { txt = "You don't have a key for this chat (for example you reset your keys). It is handed to you automatically when another member opens the chat; older messages stay locked until then."; cls = "warn"; }
+  else if (!E2E.ready()) { txt = "Your key is stored, but this device is locked. Enter your recovery code under Account → Encryption."; cls = "warn"; }
+  else { txt = "Your copy of the key can't be opened on this device (it was made for an older identity). It is refreshed when another member opens the chat."; cls = "warn"; }
+  row.hidden = false; row.className = "enc-key " + cls; row.textContent = "🔑 " + txt;
+}
+function paintEnc() {
+  const t = $("encToggle"), st = $("encStatus");
+  if (!t) return;
+  paintKeyRow(); paintVerify();
+  t.checked = chatEncrypted;
+  // without the chat's key this device can neither turn encryption on nor off for the chat
+  t.disabled = keysExist && keyState !== "ready";
+  t.closest("label")?.classList.toggle("disabled", t.disabled);
+  if (t.disabled) {
+    st.textContent = "Locked: this device doesn't have the chat's encryption key, so it can't change this setting. The key arrives when another member opens the chat, or restore your recovery code when the chat list asks.";
+    document.documentElement.classList.toggle("enc-on", chatEncrypted);
+    return;
+  }
+  st.textContent = !chatEncrypted ? "Off: new messages are stored readable. Turn on to encrypt new messages (older ones stay as they were)."
+    : keyState === "ready" ? "On: messages, links and files are encrypted so only people in this chat can read them."
+    : "On, but this device doesn't have the chat key yet. It arrives when another member opens the chat, or restore your recovery code (Account → Encryption).";
+  document.documentElement.classList.toggle("enc-on", chatEncrypted);
+}
+$("encToggle")?.addEventListener("change", async e => {
+  const on = e.target.checked;
+  try {
+    if (!requireVerified("change chat settings")) { e.target.checked = !on; return; }
+    if (on) {
+      if (!E2E.ready()) throw new Error("This device is locked: enter your recovery code under Account → Encryption first.");
+      let key = await E2E.getChatKey(chatId);
+      if (!key) {
+        if ((await get(ref(db, `${chatPath}/keys`))).exists()) throw new Error("This chat already has a key you can't open yet.");   // (the toggle is disabled in that case)
+        const { wrapped } = await E2E.createChatKey(chatId, participants);
+        await set(ref(db, `${chatPath}/keys`), wrapped);
+        key = await E2E.getChatKey(chatId);
+      }
+      keyState = key ? "ready" : "waiting";
+    }
+    await set(ref(db, `${chatPath}/chatData/encrypted`), on);
+    chatEncrypted = on; paintEnc();
+    if (!on) dropKeyIfUnused();
+    logEvent(chatId, me, { event: on ? "enc_on" : "enc_off" });         // everyone sees that it changed
+    toast(on ? "Encryption on for new messages." : "Encryption off for new messages.", "success");
+    if (on && await E2E.takeNewCode(me).catch(() => null)) toast("Save your recovery code now: Account → Encryption → Show recovery code. Without it you can't read encrypted chats on a new device.", "info", 9000);
+  } catch (err) { console.error(err); e.target.checked = !on; toast(err.message || "Couldn't change encryption.", "error"); }
+});
+
+/** An encrypted chat whose key this device doesn't have: messages can still be sent, but they go out unencrypted (see the banner). */
+const keyLocked = () => chatEncrypted && keyState === "waiting";
+/** Encrypt outgoing messages only when this device really has the chat key. */
+function canSeal() { return chatEncrypted && keyState === "ready"; }
+function paintVerify() {
+  const ok = isVerified();
+  msgInput.disabled = !ok; sendBtn.disabled = !ok; $("attachBtn").disabled = !ok;
+  msgInput.placeholder = !ok ? "Verify your email to send messages" : "Message";
+  const kb = $("keyBanner"); if (kb) kb.hidden = !(ok && keyLocked());
+}
+$("whyKeyBtn")?.addEventListener("click", () => confirmDialog({
+  title: "Why are my messages unencrypted?",
+  message: "This chat is end-to-end encrypted, but this device doesn't have the chat's key right now (for example because you reset your keys, or you are on a new device that hasn't been unlocked).\n\nWithout the key your device can't scramble messages, so the messages you send now are stored readable, like in a chat without encryption. Other people's encrypted messages stay locked for you too.\n\nHow it gets fixed: as soon as another member who has the key opens this chat, their device hands the key to yours automatically. From then on your new messages are encrypted again, and the older locked ones open. Messages you sent while you had no key stay unencrypted: that can't be undone afterwards.\n\nIf you'd rather not send anything until then, simply wait a bit. If you have your recovery code, restoring it under Account → Encryption also brings the key back.",
+  okText: "Got it", hideCancel: true
+}));
+
 // ---------- boot ----------
 function leaveChat(message) {
   toast(message, "error");
-  setTimeout(() => location.replace("index.html"), 900);
+  setTimeout(() => toHome(), 900);
 }
 
 onAuthStateChanged(auth, async user => {
-  if (!user) { location.replace("index.html"); return; }
+  if (!user) { toHome(); return; }
   if (me) return; // already initialised
   me = user.uid;
   ensureProfile(user).catch(() => {});
@@ -715,6 +1522,7 @@ onAuthStateChanged(auth, async user => {
     if (optionsDialog.open) renderParticipants();
   }, () => leaveChat("You don't have access to this chat."));
 
+  onValue(ref(db, `${chatPath}/chatData/photo`), snap => { customPhoto = snap.val() || ""; updateHeader(); }, () => {});
   onValue(ref(db, `${chatPath}/chatData/name`), snap => {
     customName = snap.val() || "";
     updateHeader();
@@ -732,39 +1540,131 @@ onAuthStateChanged(auth, async user => {
     renderTyping();
   }, () => {});
 
+  // ---- encryption: this device's identity, whether the chat is encrypted, and the chat key
+  const idState = await E2E.init(me).catch(() => "error");
+  E2E.onRemoteIdentity(async () => {                                        // identity restored in another frame → unlock this chat in place
+    if (E2E.ready()) return;
+    await E2E.init(me).catch(() => {});
+    await setupKeys();
+    refreshLocked();
+  });
+  await setupKeys();
+  {   // the chat's key changed or was removed (re-enabled with a fresh one, or deleted): forget the old one and look again
+    let first = true, last = null;
+    onValue(ref(db, `${chatPath}/keys`), async snap => {
+      const wasLost = E2E.isChatLost(chatId);
+      keysExist = snap.exists();
+      keyHolders = Object.keys(snap.val() || {});
+      E2E.setChatLost(chatId, !keysExist);                                   // nobody holds a key any more → old encrypted messages are lost
+      const sig = JSON.stringify((snap.val() || {})[me] || null);
+      if (!first && sig !== last) { E2E.forgetChatKey(chatId); await setupKeys(); refreshLocked(); }
+      else if (wasLost !== !keysExist) refreshLocked();
+      if (optionsDialog.open) renderParticipants();
+      first = false; last = sig; paintEnc();
+    }, () => {});
+  }
+  onValue(ref(db, `${chatPath}/chatData/encrypted`), snap => { chatEncrypted = snap.val() === true; paintEnc(); }, () => {});
+  paintVerify(); watchVerified(paintVerify);
+
   // Initial page of history, then a live window starting at its oldest message.
+  historyStatus.textContent = "Loading messages…";
+  const slowT = setTimeout(() => { if (!ready) historyStatus.textContent = "Still loading… your connection looks slow"; }, 5000);
   try {
-    const initSnap = await get(query(messagesRef, orderByChild("timestamp"), limitToLast(PAGE)));
+    const initSnap = await Promise.race([get(query(messagesRef, orderByKey(), limitToLast(PAGE))), new Promise((_, rej) => setTimeout(() => rej(new Error("timeout")), 25000))]);
+    clearTimeout(slowT);
+    if (historyStatus.textContent.startsWith("Loading") || historyStatus.textContent.startsWith("Still loading")) historyStatus.textContent = "";
     const initial = [];
     initSnap.forEach(s => { initial.push(s); });
 
-    if (initial.length < PAGE) {
+    if (!initial.length) {
       reachedStart = true;
-      historyStatus.textContent = initial.length ? "Beginning of the conversation" : "No messages yet — say hi 👋";
+      historyStatus.textContent = "No messages yet — say hi 👋";
     }
-    if (initial.length) {
-      oldestTs = initial[0].val().timestamp;
-      oldestKey = initial[0].key;
+    if (initial.length) oldestKey = initial[0].key;
+    const pr0 = protect();
+    const keep = initial.filter(s => { const v = s.val(); return !pr0 || v.type === "event" || v.timestamp >= pr0.since(); });
+    if (pr0) {
+      reachedStart = true; historyStatus.textContent = "";
+      const b = document.createElement("div");
+      document.documentElement.classList.add("locked-chat");
+      b.className = "protect-banner";
+      b.innerHTML = '<span>🔒 Older messages are locked. Only messages sent since you joined this call are shown.</span><button type="button" class="btn small primary">Unlock to see all messages</button>';
+      b.querySelector("button").onclick = () => pr0.unlock();
+      messagesDiv.prepend(b);
+      const t = setInterval(() => { if (!protect()) { clearInterval(t); location.reload(); } }, 1000);
     }
-    initial.forEach(s => appendLive(s.key, s.val()));
+    const plains = await Promise.all(keep.map(s => hydrate(s.val())));
+    keep.forEach((s, i) => appendLive(s.key, plains[i]));
     renderReceipts();
     scrollToBottom();
     ready = true;
     maybeMarkRead();
+    fillViewport();
 
-    const live = query(messagesRef, orderByChild("timestamp"), startAt(oldestTs ?? 0));
+    const live = query(messagesRef, orderByKey(), startAt(oldestKey ?? ""));
     onChildAdded(live, onAdded);
     onChildChanged(live, onChanged);
     onChildRemoved(live, onRemoved);
   } catch (err) {
     console.error("Failed to load messages", err);
-    historyStatus.textContent = "Couldn't load messages. Check your connection and reload.";
+    clearTimeout(slowT);
+    const off = navigator.onLine === false || /offline/i.test(String(err && err.message));
+    historyStatus.innerHTML = "";
+    historyStatus.append(off ? "You're offline — messages couldn't load. " : "There was a problem loading this chat. ");
+    const retry = document.createElement("button"); retry.type = "button"; retry.className = "btn small"; retry.textContent = "Try again";
+    retry.onclick = () => location.reload();
+    historyStatus.append(retry);
   }
 });
 
 
-/* ---------- calling ---------- */
-callBtn.onclick = event => {
-  event.preventDefault();
-  location.href = `call.html?chatId=${encodeURIComponent(chatId)}`;
+// ---------- take a photo with the camera ----------
+const camDlg = $("cameraDialog"), camVideo = $("camVideo"), camShot = $("camShot");
+let camStream = null, camFacing = "environment", camBlob = null;
+const stopCam = () => { camStream?.getTracks().forEach(t => t.stop()); camStream = null; camVideo.srcObject = null; };
+async function startCam() {
+  stopCam();
+  camVideo.hidden = false; camShot.hidden = true; camBlob = null;
+  $("camSnap").hidden = false; $("camSend").hidden = true; $("camRetake").hidden = true;
+  camStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: camFacing }, width: { ideal: 1920 } }, audio: false });
+  camVideo.srcObject = camStream;
+  await camVideo.play().catch(() => {});
+  const n = (await navigator.mediaDevices.enumerateDevices()).filter(d => d.kind === "videoinput").length;
+  $("camFlip").hidden = n < 2;
+}
+async function openCamera() {
+  if (!navigator.mediaDevices?.getUserMedia) { $("cameraInput").click(); return; }   // old browsers: system camera picker
+  camDlg.showModal();
+  try { await startCam(); }
+  catch (err) {
+    camDlg.close();
+    toast(err && err.name === "NotAllowedError" ? "Camera access was blocked. Allow it in your browser's site settings." : "Couldn't open the camera.", "error");
+  }
+}
+wireDialog(camDlg);
+camDlg.addEventListener("close", stopCam);
+$("camClose").onclick = () => camDlg.close();
+$("camFlip").onclick = async () => { camFacing = camFacing === "user" ? "environment" : "user"; try { await startCam(); } catch (_) { /* keep dialog */ } };
+$("camSnap").onclick = () => {
+  const w = camVideo.videoWidth, h = camVideo.videoHeight;
+  if (!w) return;
+  const c = document.createElement("canvas"); c.width = w; c.height = h;
+  c.getContext("2d").drawImage(camVideo, 0, 0, w, h);
+  c.toBlob(b => {
+    if (!b) return;
+    camBlob = b;
+    camShot.src = URL.createObjectURL(b);
+    camShot.hidden = false; camVideo.hidden = true;
+    $("camSnap").hidden = true; $("camSend").hidden = false; $("camRetake").hidden = false;
+    stopCam();
+  }, "image/jpeg", 0.9);
 };
+$("camRetake").onclick = () => { URL.revokeObjectURL(camShot.src); startCam().catch(() => camDlg.close()); };
+$("camSend").onclick = () => {
+  if (!camBlob) return;
+  const file = new File([camBlob], "photo.jpg", { type: "image/jpeg" });
+  camDlg.close();
+  sendFile(file);
+};
+
+markReady();   // tells the app shell this frame booted (see frame watchdog in shell.js)

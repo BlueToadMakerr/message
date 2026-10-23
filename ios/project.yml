@@ -1,0 +1,45 @@
+# Generated into QuickMessage.xcodeproj by XcodeGen (the GitHub workflow does this): no .xcodeproj is kept in the repo.
+name: QuickMessage
+options:
+  bundleIdPrefix: app.quickmessage
+  deploymentTarget:
+    iOS: "15.0"
+settings:
+  base:
+    SWIFT_VERSION: "5.0"
+    MARKETING_VERSION: "1.0"
+    CURRENT_PROJECT_VERSION: "1"
+targets:
+  QuickMessage:
+    type: application
+    platform: iOS
+    sources:
+      - QuickMessage
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: app.quickmessage.chat
+        TARGETED_DEVICE_FAMILY: "1,2"
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME: AccentColor
+    info:
+      path: QuickMessage/Info.plist
+      properties:
+        CFBundleDisplayName: QuickMessage
+        UILaunchScreen: {}
+        UIApplicationSceneManifest:
+          UIApplicationSupportsMultipleScenes: false
+        UISupportedInterfaceOrientations:
+          - UIInterfaceOrientationPortrait
+          - UIInterfaceOrientationLandscapeLeft
+          - UIInterfaceOrientationLandscapeRight
+        UISupportedInterfaceOrientations~ipad:
+          - UIInterfaceOrientationPortrait
+          - UIInterfaceOrientationPortraitUpsideDown
+          - UIInterfaceOrientationLandscapeLeft
+          - UIInterfaceOrientationLandscapeRight
+        UIBackgroundModes:
+          - audio
+        NSCameraUsageDescription: QuickMessage uses the camera for video calls and to send photos.
+        NSMicrophoneUsageDescription: QuickMessage uses the microphone for calls and voice messages.
+        NSPhotoLibraryUsageDescription: QuickMessage lets you pick photos and videos to send.
+        ITSAppUsesNonExemptEncryption: false

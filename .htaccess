@@ -1,0 +1,23 @@
+# Belt and braces: these files only ever need to be read by PHP, never fetched by a browser.
+<FilesMatch "^(secrets\.php|config\.php|README\.md|\.htaccess)$">
+  <IfModule mod_authz_core.c>
+    Require all denied
+  </IfModule>
+  <IfModule !mod_authz_core.c>
+    Order allow,deny
+    Deny from all
+  </IfModule>
+</FilesMatch>
+
+# Service worker must never be cached for long, or updates won't roll out.
+<FilesMatch "^firebase-messaging-sw\.js$">
+  <IfModule mod_headers.c>
+    Header set Cache-Control "no-cache"
+  </IfModule>
+</FilesMatch>
+
+# Google sign-in uses a popup. A strict "Cross-Origin-Opener-Policy: same-origin" (sent by some hosts/CDNs) stops the page
+# from seeing when the popup closes ("COOP policy would block the window.closed call"). This value keeps popups working.
+<IfModule mod_headers.c>
+  Header always set Cross-Origin-Opener-Policy "same-origin-allow-popups"
+</IfModule>

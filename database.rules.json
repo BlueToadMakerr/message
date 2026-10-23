@@ -1,0 +1,239 @@
+{
+  "rules": {
+    // Root-level admin override
+    ".read": "auth != null && auth.uid === 'X2rvYMQKiJcYYJ2IHzd0gWBCXCw1'",
+    ".write": "auth != null && auth.uid === 'X2rvYMQKiJcYYJ2IHzd0gWBCXCw1'",
+
+    // ---------------------------------------------------------------- profiles
+    "accsettings": {
+      "$uid": {
+        // Only signed-in users can look profiles up (was: anyone on the internet)
+        ".read": "auth != null",
+        ".write": "$uid === auth.uid",
+        "settings": {
+          ".validate": "newData.hasChildren(['displayName'])",
+          "displayName": { ".validate": "newData.isString() && newData.val().length > 0 && newData.val().length <= 100" },
+          "pfp":         { ".validate": "newData.isString() && newData.val().length <= 2000" },
+          "emailAdd":    { ".validate": "newData.isBoolean()" },
+          "theme":       { ".validate": "newData.val() === 'system' || newData.val() === 'light' || newData.val() === 'dark'" },
+          "$other":      { ".validate": false }
+        }
+      }
+    },
+
+    // ---------------------------------------------------------------- end-to-end encryption keys (see js/crypto.js)
+    // pub: the public key others wrap chat keys with. backup: the private key, encrypted with the user's recovery code (unreadable here).
+    "userKeys": {
+      "$uid": {
+        ".read": "auth != null",
+        ".write": "$uid === auth.uid",
+        "pub":    { ".validate": "newData.isString() && newData.val().length <= 160" },
+        "fp":     { ".validate": "newData.isString() && newData.val().length <= 32" },
+        "backup": { ".validate": "newData.hasChildren(['salt', 'iv', 'ct']) && newData.child('ct').val().length <= 3000" },
+        "$other": { ".validate": false }
+      }
+    },
+
+    // ---------------------------------------------------------------- each user's list of chats
+    "chatList": {
+      "$uid": {
+        ".read": "$uid === auth.uid",
+        // Owner can add/remove anything, including wiping the whole node (account deletion)
+        ".write": "$uid === auth.uid",
+        "$chatId": {
+          // Someone else may add a chat to your list only if both of you are members of it
+          // (used when starting a chat / adding a user). Stops arbitrary users spamming your list.
+          ".write": "auth != null && auth.token.email_verified === true && !data.exists() && root.child('privateChats').child($chatId).child('participants').child(auth.uid).exists() && root.child('privateChats').child($chatId).child('participants').child($uid).exists()",
+          ".validate": "newData.val() === true && root.child('privateChats').child($chatId).exists()"
+        }
+      }
+    },
+
+    // ---------------------------------------------------------------- chats
+    "privateChats": {
+      "$chatId": {
+        ".read": "auth != null && data.child('participants').child(auth.uid).exists()",
+
+        // Create a chat (you must include yourself) or delete it (members only; the app only does this when you're the last one).
+        // Everything else is granted per-child below.
+        ".write": "auth != null && ((!data.exists() && auth.token.email_verified === true && newData.child('participants').child(auth.uid).exists()) || (!newData.exists() && data.child('participants').child(auth.uid).exists()))",
+
+        "participants": {
+          // Members can add/remove members (add user, remove user, leave chat). Unverified accounts may only leave.
+          ".write": "auth != null && root.child('privateChats').child($chatId).child('participants').child(auth.uid).exists() && (auth.token.email_verified === true || !newData.child(auth.uid).exists())",
+          "$uid": { ".validate": "newData.val() === true" }
+        },
+
+        "chatData": {
+          ".write": "auth != null && root.child('privateChats').child($chatId).child('participants').child(auth.uid).exists()",
+          "name": { ".validate": "newData.isString() && newData.val().length <= 100" },
+          "encrypted": { ".validate": "newData.isBoolean()" },
+          "photo": { ".validate": "newData.isString() && newData.val().length <= 600 && (newData.val() === '' || newData.val().matches(/^https?:\\/\\/.*/))" }
+        },
+
+        "lastMessage": {
+          ".write": "auth != null && root.child('privateChats').child($chatId).child('participants').child(auth.uid).exists()",
+          "fromUid":   { ".validate": "newData.isString()" },
+          "text":      { ".validate": "newData.isString() && newData.val().length <= 8200" },
+          "enc":       { ".validate": "newData.isBoolean()" },
+          "timestamp": { ".validate": "newData.isNumber()" },
+          "id":        { ".validate": "newData.isString()" },
+          "notifSent": { ".validate": "newData.isBoolean()" }
+        },
+
+        "messages": {
+          ".indexOn": ["timestamp", "enc"],
+          "$msgId": {
+            // Members can post as themselves, and edit/delete only their own messages
+            ".write": "auth != null && auth.token.email_verified === true && root.child('privateChats').child($chatId).child('participants').child(auth.uid).exists() && ((!data.exists() && newData.child('fromUid').val() === auth.uid) || (data.exists() && data.child('fromUid').val() === auth.uid))",
+            ".validate": "newData.child('fromUid').isString() && newData.child('timestamp').isNumber() && (newData.child('text').isString() || newData.child('content').isString())",
+            "text":      { ".validate": "newData.isString() && newData.val().length <= 8200" },
+            "enc":       { ".validate": "newData.isBoolean()" },
+            "replyTo":   { ".validate": "newData.hasChildren(['key', 'uid']) && (!newData.child('text').exists() || (newData.child('text').isString() && newData.child('text').val().length <= 700))" },
+            "content":   { ".validate": "newData.isString() && newData.val().length <= 15000000" },
+            "type":      { ".validate": "newData.val() === 'text' || newData.val() === 'image' || newData.val() === 'video' || newData.val() === 'audio' || newData.val() === 'file' || newData.val() === 'event'" },
+            "url":       { ".validate": "newData.isString() && newData.val().length <= 300" },
+            "name":      { ".validate": "newData.isString() && newData.val().length <= 300" },
+            "size":      { ".validate": "newData.isNumber()" },
+            "mime":      { ".validate": "newData.isString() && newData.val().length <= 120" },
+            "kind":      { ".validate": "newData.val() === 'image' || newData.val() === 'video' || newData.val() === 'audio' || newData.val() === 'file'" },
+            "expiresAt": { ".validate": "newData.isNumber()" },
+            "event":     { ".validate": "newData.isString() && newData.val().length <= 20" },
+            "target":    { ".validate": "newData.isString() && newData.val().length <= 128" },
+            "duration":  { ".validate": "newData.isNumber()" },
+            "wave":      { ".validate": "newData.isString() && newData.val().length <= 700" },
+            "editedAt":  { ".validate": "newData.isNumber()" },
+            "deliveredAt": { ".validate": "newData.isNumber() && (data.exists() ? newData.val() === data.val() : newData.val() === now)" },
+            "notifSent": { ".validate": "newData.isBoolean()" }
+          }
+        },
+
+        // Chat keys, one wrapped copy per member (see js/crypto.js). Any member may add/refresh copies; only the recipient can unwrap theirs.
+        "keys": {
+          ".write": "auth != null && root.child('privateChats').child($chatId).child('participants').child(auth.uid).exists()",
+          "$uid": { ".validate": "newData.hasChildren(['by', 'iv', 'ct', 'fp']) && newData.child('ct').val().length <= 600" }
+        },
+
+        // Read receipts: you can write your own; any member can clear someone's when removing them
+        "messageRead": {
+          "$uid": {
+            ".write": "auth != null && root.child('privateChats').child($chatId).child('participants').child(auth.uid).exists() && ($uid === auth.uid || !newData.exists())",
+            ".validate": "newData.isString() || newData.isNumber()"
+          }
+        },
+
+        // Typing indicators: you can set/clear your own; any member can clear someone's when removing them
+        "typing": {
+          "$uid": {
+            ".write": "auth != null && root.child('privateChats').child($chatId).child('participants').child(auth.uid).exists() && ($uid === auth.uid || !newData.exists())",
+            ".validate": "newData.isBoolean()"
+          }
+        }
+      }
+    },
+
+
+
+    // ---------------------------------------------------------------- calls (call.html)
+    // One call per chat, for every member. A "session" is one device/tab, never one account, so the same
+    // uid may own several sessions. Keep STALE_MS in js/call/signal.js in sync with the 120000 below.
+    "calls": {
+      "$chatId": {
+        ".read": "auth != null && root.child('privateChats').child($chatId).child('participants').child(auth.uid).exists()",
+
+        // When the call began. Kept separately from sessions so the call length survives the starter leaving.
+        "startedAt": {
+          ".write": "auth != null && auth.token.email_verified === true && root.child('privateChats').child($chatId).child('participants').child(auth.uid).exists()",
+          ".validate": "!newData.exists() || (newData.isNumber() && newData.val() <= now + 60000)"
+        },
+
+        "sessions": {
+          "$sid": {
+            // Own session: write freely (deleting a not-yet-existing node is allowed too: onDisconnect is permission-checked when armed, before the session exists). Anyone in the chat may delete a session whose heartbeat is stale.
+            ".write": "auth != null && auth.token.email_verified === true && root.child('privateChats').child($chatId).child('participants').child(auth.uid).exists() && ((!data.exists() && (newData.child('uid').val() === auth.uid || !newData.exists())) || (data.exists() && (data.child('uid').val() === auth.uid)) || (!newData.exists() && data.child('lastSeen').isNumber() && data.child('lastSeen').val() < now - 120000))",
+            ".validate": "!newData.exists() || (newData.child('uid').isString() && (newData.child('uid').val() === auth.uid))",
+            "uid":          { ".validate": "newData.isString()" },
+            "joinedAt":     { ".validate": "newData.isNumber()" },
+            "lastSeen":     { ".validate": "newData.isNumber()" },
+            "device":       { ".validate": "newData.isString() && newData.val().length <= 80" },
+            "audio":        { ".validate": "newData.isBoolean()" },
+            "video":        { ".validate": "newData.isBoolean()" },
+            "deaf":         { ".validate": "newData.isBoolean()" },
+            "screen":       { ".validate": "newData.isBoolean()" },
+            "camStream":    { ".validate": "newData.isString() && newData.val().length <= 100" },
+            "screenStream": { ".validate": "newData.isString() && newData.val().length <= 100" },
+            "links": { "$peer": { ".validate": "newData.isString() && newData.val().length <= 20" } },
+            "$other":       { ".validate": true }
+          }
+        },
+
+        // Signalling inbox: any member may drop a message for a session; only that account can read/delete it.
+        "inbox": {
+          "$targetUid": {
+            "$targetSid": {
+              ".read": "auth != null && ($targetUid === auth.uid)",
+              ".write": "auth != null && ($targetUid === auth.uid) && !newData.exists()",
+              "$msgId": {
+                ".write": "auth != null && root.child('privateChats').child($chatId).child('participants').child(auth.uid).exists() && ((!data.exists() && newData.child('from').isString() && (root.child('calls').child($chatId).child('sessions').child(newData.child('from').val()).child('uid').val() === auth.uid)) || (data.exists() && ($targetUid === auth.uid) && !newData.exists()))",
+                ".validate": "newData.hasChildren(['from', 't', 'epoch']) && (newData.child('t').val() === 'desc' || newData.child('t').val() === 'cand') && newData.child('epoch').isNumber()"
+              }
+            }
+          }
+        },
+
+        // Rings, one per target account. Any member may ring another (or themselves, for their other devices).
+        "ringing": {
+          "$uid": {
+            ".write": "auth != null && auth.token.email_verified === true && root.child('privateChats').child($chatId).child('participants').child(auth.uid).exists() && root.child('privateChats').child($chatId).child('participants').child($uid).exists() && (!newData.exists() || $uid === auth.uid || newData.child('fromUid').val() === auth.uid || data.child('fromUid').val() === auth.uid)",
+            ".validate": "!newData.exists() || newData.hasChildren(['ringId', 'fromUid', 'createdAt'])",
+            "fromUid":      { ".validate": "newData.val() === auth.uid || data.child('fromUid').val() === newData.val()" },
+            "notifyStatus": { ".validate": "newData.isString() && newData.val().length <= 20" }
+          }
+        }
+      }
+    },
+
+    // One node per user that the app's single live connection listens to: incoming-call rings and "new message" pings.
+    "linkPreviews": {
+      // Shared link-preview cache. Written only by link-preview.php (the service account); any signed-in user can read it.
+      ".read": "false",
+      "$id": { ".read": "auth != null", ".write": "false" }
+    },
+    "live": {
+      "$uid": {
+        ".read": "auth != null && $uid === auth.uid",
+        "rings": {
+          // Per-user ring index so the app can show "incoming call" on any page. Written together with calls/{chatId}/ringing/{uid}.
+          "$chatId": {
+            ".write": "auth != null && auth.token.email_verified === true && root.child('privateChats').child($chatId).child('participants').child(auth.uid).exists() && root.child('privateChats').child($chatId).child('participants').child($uid).exists() && ($uid === auth.uid || newData.child('fromUid').val() === auth.uid || data.child('fromUid').val() === auth.uid)",
+            ".validate": "!newData.exists() || (newData.hasChildren(['ringId', 'fromUid', 'chatId', 'createdAt']) && newData.child('chatId').val() === $chatId && newData.child('createdAt').isNumber())"
+          }
+        },
+        "declines": {
+          // "X declined your call": written by the person who declined, read (and cleared) by the caller.
+          "$chatId": {
+            ".write": "auth != null && auth.token.email_verified === true && root.child('privateChats').child($chatId).child('participants').child(auth.uid).exists() && root.child('privateChats').child($chatId).child('participants').child($uid).exists() || ($uid === auth.uid && !newData.exists())",
+            ".validate": "!newData.exists() || (newData.hasChildren(['by', 'chatId', 'ts']) && newData.child('by').val() === auth.uid && newData.child('chatId').val() === $chatId && newData.child('ts').isNumber())"
+          }
+        },
+        "pings": {
+          // Written by the sender together with the message; carries no content (just which message id is newest).
+          "$chatId": {
+            ".write": "auth != null && auth.token.email_verified === true && root.child('privateChats').child($chatId).child('participants').child(auth.uid).exists() && root.child('privateChats').child($chatId).child('participants').child($uid).exists() || ($uid === auth.uid && !newData.exists())",
+            ".validate": "!newData.exists() || (newData.hasChildren(['id', 'ts', 'from']) && newData.child('from').val() === auth.uid && newData.child('ts').isNumber() && newData.child('id').isString() && newData.child('id').val().length <= 64)"
+          }
+        }
+      }
+    },
+
+        // ---------------------------------------------------------------- push tokens
+    "FCM": {
+      "$uid": {
+        // Only the user can read/write their tokens (write at this level lets them clear all on account deletion)
+        ".read": "$uid === auth.uid",
+        ".write": "$uid === auth.uid",
+        "$token": { ".validate": "newData.val() === true" }
+      }
+    }
+  }
+}

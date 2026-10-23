@@ -1,0 +1,10 @@
+# The Firebase service-account key must never be committed.
+secrets.php
+*.zip
+!incoming/*.zip
+!incoming/.keep
+android/build/
+android/app/build/
+android/.gradle/
+ios/*.xcodeproj/
+ios/build/

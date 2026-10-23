@@ -1,29 +1,56 @@
-// Firebase Messaging service worker for QuickMessage.
-self.addEventListener('install', () => self.skipWaiting());
+// firebase-messaging-sw.js — shows chat notifications and focuses/opens the chat when clicked.
+
+const OFFLINE_CACHE = 'qm-offline-v1';
+const OFFLINE_URL = 'offline.html';
+self.addEventListener('install', event => {
+  event.waitUntil(caches.open(OFFLINE_CACHE).then(c => c.add(new Request(OFFLINE_URL, { cache: 'reload' }))).catch(() => {}).then(() => self.skipWaiting()));
+});
+// A page that can't load (no connection) gets the offline page instead of the browser's error.
+self.addEventListener('fetch', event => {
+  const req = event.request;
+  if (req.mode !== 'navigate') return;
+  event.respondWith(fetch(req).catch(async () => {
+    const hit = await caches.match(OFFLINE_URL);
+    if (!hit) return Response.error();
+    const body = await hit.text();
+    return new Response(body, { status: 200, headers: { 'Content-Type': 'text/html; charset=utf-8' } });
+  }));
+});
 self.addEventListener('activate', event => event.waitUntil(self.clients.claim()));
 
 self.addEventListener('push', event => {
   let data = {};
-  try { data = event.data ? event.data.json() : {}; } catch (_) {}
+  try { data = event.data ? event.data.json() : {}; } catch (e) { /* non-JSON payload */ }
+
   const notif = data.notification || {};
   const extra = data.data || {};
-  const isCall = extra.call === '1';
-  const title = notif.title || (isCall ? 'Incoming call' : 'New message');
+  const title = notif.title || 'New message';
   const body = notif.body || '';
   const chatId = extra.chatId || '';
   const link = extra.link || (data.fcm_options && data.fcm_options.link) || './index.html';
-  const tag = notif.tag || (isCall && chatId ? 'call_' + chatId : chatId ? 'chat_' + chatId : 'qm_notification');
+  const tag = notif.tag || (extra.call === '1' ? 'call_' + chatId : chatId ? 'chat_' + chatId : 'chat_notification');
 
   event.waitUntil((async () => {
+    // Don't buzz the user if they're already looking at this very chat.
     const wins = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
-    const viewingCall = wins.some(c => c.visibilityState === 'visible' && c.focused && isCall && chatId && c.url.includes('call.html?chatId=' + chatId));
-    if (viewingCall) return;
+    const isCall = extra.call === '1' || (notif.tag || '').startsWith('call_');
+    // The app shell shows incoming calls full-screen itself, so a call push is only needed when no app window is
+    // on screen. Chat pushes are muted while that very chat is open (shell URL: ?chat=<id>).
+    const viewing = wins.some(c => c.visibilityState === 'visible' && c.focused &&
+      (isCall ? c.url.startsWith(self.registration.scope) : (chatId && (c.url.includes('chat=' + chatId) || c.url.includes('chatId=' + chatId)))));
+    if (viewing) return;
+
     const existing = await self.registration.getNotifications({ tag });
     existing.forEach(n => n.close());
     await self.registration.showNotification(title, {
-      body, data: { link, chatId, sessionId: extra.sessionId || '' },
-      icon: 'icons/icon-192.png', badge: 'icons/icon-192.png',
-      vibrate: [150, 75, 150], tag, renotify: true, requireInteraction: isCall
+      body,
+      data: { link },
+      icon: 'icons/icon-192.png',
+      badge: 'icons/icon-192.png',
+      vibrate: extra.call === '1' ? [300, 150, 300, 150, 300] : [100, 50, 100],
+      tag,
+      renotify: true,
+      requireInteraction: extra.call === '1'
     });
   })());
 });
@@ -31,14 +58,17 @@ self.addEventListener('push', event => {
 self.addEventListener('notificationclick', event => {
   event.notification.close();
   const targetUrl = new URL((event.notification.data && event.notification.data.link) || './index.html', self.location.href).href;
+
   event.waitUntil((async () => {
     const wins = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
     for (const client of wins) {
       if (client.url === targetUrl && 'focus' in client) return client.focus();
     }
+    // Reuse an open app tab if there is one, otherwise open a new window.
     for (const client of wins) {
-      if ('navigate' in client && 'focus' in client && client.url.startsWith(self.registration.scope)) {
-        await client.navigate(targetUrl);
+      if ('focus' in client && client.url.startsWith(self.registration.scope)) {
+        // Don't reload the app (that would drop a running call) — let it switch chats itself.
+        client.postMessage({ qm: 'open', link: targetUrl });
         return client.focus();
       }
     }

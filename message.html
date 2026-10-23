@@ -2,14 +2,14 @@
 <html lang="en" data-theme="system">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover, interactive-widget=resizes-content">
   <title>Chat · QuickMessage</title>
   <meta name="theme-color" content="#4f46e5">
   <link rel="manifest" href="manifest.json">
   <link rel="icon" href="icons/icon.svg" type="image/svg+xml">
   <link rel="apple-touch-icon" href="icons/icon-192.png">
   <link rel="stylesheet" href="style.css">
-  <script>try { document.documentElement.dataset.theme = localStorage.getItem('theme') || 'system'; } catch (e) {}</script>
+  <script src="js/themeboot.js"></script>
 </head>
 <body class="chat-body">
 <div class="chat-shell">
@@ -22,7 +22,7 @@
         <div id="chatSub" class="sub"></div>
       </div>
     </div>
-    <a id="callBtn" class="icon-btn" href="#" aria-label="Start a call" data-icon="phone"></a>
+    <a id="callBtn" class="icon-btn" href="#" aria-label="Start a call" title="Start a call" data-icon="phone"></a>
     <button id="chatOptionsBtn" class="icon-btn" type="button" aria-label="Chat options" data-icon="users"></button>
   </header>
 
@@ -36,6 +36,14 @@
 
   <button id="jumpBtn" class="jump hidden" type="button" aria-label="Jump to latest" data-icon="down"></button>
 
+  <div id="replyBar" class="reply-bar hidden">
+    <div class="rb-text"><strong id="rbName"></strong><span id="rbText"></span></div>
+    <button id="rbClose" class="icon-btn" type="button" aria-label="Cancel reply" data-icon="close" data-size="16"></button>
+  </div>
+  <div id="keyBanner" class="key-banner" hidden>
+    <span>⚠️ Your messages will stay unencrypted until someone else gives you this chat's key.</span>
+    <button id="whyKeyBtn" type="button" class="btn small">Why?</button>
+  </div>
   <form id="composer" class="composer" autocomplete="off">
     <button id="attachBtn" class="icon-btn" type="button" aria-label="Send a photo or video" data-icon="image"></button>
     <textarea id="msgInput" rows="1" placeholder="Message" maxlength="4000" aria-label="Message"></textarea>
@@ -53,6 +61,14 @@
       <button type="button" class="icon-btn" id="optionsClose" aria-label="Close" data-icon="close"></button>
     </div>
 
+    <div id="groupPhotoBox" hidden>
+      <label class="lbl" for="chatPhotoInput">Group photo (image URL)</label>
+      <div class="row">
+        <input id="chatPhotoInput" class="field" type="url" inputmode="url" placeholder="https://… (leave empty to remove)" maxlength="600">
+        <button id="savePhotoBtn" class="btn primary" type="button">Save</button>
+      </div>
+    </div>
+
     <div>
       <label class="lbl" for="chatNameInput">Chat name</label>
       <div class="row">
@@ -61,13 +77,18 @@
       </div>
     </div>
 
+    <div class="enc-box">
+      <label class="switch-row"><input type="checkbox" id="encToggle"> <span><strong>End-to-end encryption</strong><br><small id="encStatus">Messages, links and files are encrypted so only people in this chat can read them.</small></span></label>
+      <div id="encKeyRow" class="enc-key" hidden></div>
+    </div>
+
     <div class="section-title">Participants</div>
     <div id="participantsList"></div>
 
     <div>
-      <label class="lbl" for="addUserUid">Add someone by UID</label>
+      <label class="lbl" for="addUserUid">Add someone by UID or email</label>
       <div class="row">
-        <input id="addUserUid" class="field" placeholder="Paste a UID" autocomplete="off" spellcheck="false">
+        <input id="addUserUid" class="field" placeholder="Paste a UID or an email address" autocomplete="off" spellcheck="false">
         <button id="addUserBtn" class="btn" type="button">Add</button>
       </div>
     </div>
@@ -78,26 +99,40 @@
 <dialog id="attachDialog" class="modal">
   <div class="modal-body">
     <div class="modal-head">
-      <h2>Send media</h2>
+      <h2>Send a photo or file</h2>
       <button type="button" class="icon-btn" id="attachClose" aria-label="Close" data-icon="close"></button>
     </div>
     <div class="row">
       <button id="pickFileBtn" class="btn grow" type="button">Choose file</button>
       <button id="pickCameraBtn" class="btn grow" type="button">Camera</button>
     </div>
-    <input id="fileInput" type="file" accept="image/*,video/*" class="hidden">
+    <input id="fileInput" type="file" class="hidden">
     <input id="cameraInput" type="file" accept="image/*,video/*" capture="environment" class="hidden">
     <div class="divider">or paste a link</div>
     <div class="row">
       <input id="mediaUrl" class="field" type="url" placeholder="https://… image or video" autocomplete="off">
       <button id="sendLinkBtn" class="btn primary" type="button">Send</button>
     </div>
-    <p class="hint">Images are resized automatically. Uploaded videos are limited to 8&nbsp;MB — for bigger ones, send a link.</p>
+    <p class="hint">Small photos and videos are sent directly. Anything bigger — and any other kind of file — is uploaded to Litterbox and expires after 3&nbsp;days.</p>
+  </div>
+</dialog>
+
+<dialog id="cameraDialog" class="modal cam-dialog">
+  <div class="modal-body">
+    <div class="modal-head"><h2>Take a photo</h2><button type="button" class="icon-btn" id="camClose" aria-label="Close" data-icon="close"></button></div>
+    <div class="cam-stage"><video id="camVideo" playsinline muted autoplay></video><img id="camShot" alt="Your photo" hidden></div>
+    <div class="row">
+      <button id="camFlip" class="btn" type="button" hidden>Flip</button>
+      <button id="camRetake" class="btn grow" type="button" hidden>Retake</button>
+      <button id="camSnap" class="btn primary grow" type="button">Take photo</button>
+      <button id="camSend" class="btn primary grow" type="button" hidden>Send</button>
+    </div>
   </div>
 </dialog>
 
 <dialog id="lightbox"><div class="lb"><img id="lightboxImg" alt=""></div></dialog>
 
+<script type="module" src="js/bars.js"></script>
 <script type="module" src="js/message.js"></script>
 </body>
 </html>

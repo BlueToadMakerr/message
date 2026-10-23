@@ -1,0 +1,71 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Can't connect · QuickMessage</title>
+<meta name="theme-color" content="#4f46e5">
+<style>
+  :root { color-scheme: light dark; --bg: light-dark(#f4f5f9,#0e1014); --card: light-dark(#fff,#171a21); --text: light-dark(#161a23,#e8eaf0); --muted: light-dark(#6b7385,#8d95a8); --accent: light-dark(#4f46e5,#6d68f2); --border: light-dark(#e1e4ee,#2a2f3a); }
+  :root[data-theme=light] { color-scheme: light; } :root[data-theme=dark] { color-scheme: dark; }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; background: var(--bg); color: var(--text); font: 16px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; -webkit-user-select: none; user-select: none; -webkit-tap-highlight-color: transparent; }
+  main { min-height: 100%; display: grid; place-items: center; padding: max(20px, env(safe-area-inset-top)) max(20px, env(safe-area-inset-right)) max(20px, env(safe-area-inset-bottom)) max(20px, env(safe-area-inset-left)); }
+  .card { width: min(440px, 100%); background: var(--card); border: 1px solid var(--border); border-radius: 20px; padding: 28px 24px; text-align: center; box-shadow: 0 8px 30px rgb(0 0 0 / .08); }
+  .ic { width: 64px; height: 64px; margin: 0 auto 12px; border-radius: 50%; display: grid; place-items: center; background: color-mix(in srgb, var(--accent) 14%, transparent); color: var(--accent); }
+  h1 { font-size: 1.3rem; margin: .2rem 0 .4rem; } p { margin: .3rem 0; color: var(--muted); }
+  .code { margin-top: 14px; font: 600 12px ui-monospace, Menlo, Consolas, monospace; color: var(--muted); word-break: break-all; }
+  button { margin-top: 18px; height: 44px; padding: 0 22px; border: 0; border-radius: 12px; background: var(--accent); color: #fff; font: 600 1rem system-ui, sans-serif; cursor: pointer; }
+  .status { margin-top: 10px; min-height: 1.2em; font-size: .85rem; color: var(--muted); }
+</style>
+</head>
+<body>
+<main><div class="card">
+  <div class="ic"><svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2 8.8a15 15 0 0 1 20 0"/><path d="M5.5 12.5a10 10 0 0 1 13 0"/><path d="M9 16a5 5 0 0 1 6 0"/><circle cx="12" cy="19.5" r=".8" fill="currentColor"/><path d="M3 3l18 18"/></svg></div>
+  <h1 id="title">Can't connect</h1>
+  <p id="msg">The page couldn't be loaded.</p>
+  <div class="code" id="code"></div>
+  <button id="retry" type="button">Try again</button>
+  <div class="status" id="status"></div>
+</div></main>
+<script>
+(function () {
+  var q = new URLSearchParams(location.search);
+  var code = (q.get("code") || "").replace(/^net::/, "");
+  var target = q.get("url") || "";
+  // Specific messages for the errors people actually hit. Anything not listed shows the raw net:: code instead.
+  var M = {
+    ERR_INTERNET_DISCONNECTED: ["You're offline", "Your device isn't connected to the internet. Turn on Wi-Fi or mobile data and try again."],
+    ERR_NETWORK_CHANGED: ["Your network changed", "The connection was interrupted while the page loaded. Try again."],
+    ERR_CONNECTION_TIMED_OUT: ["Connection timed out", "The server took too long to answer. Your connection may be slow or the server may be busy."],
+    ERR_TIMED_OUT: ["Connection timed out", "The server took too long to answer. Your connection may be slow or the server may be busy."],
+    ERR_CONNECTION_REFUSED: ["Server unavailable", "The server refused the connection. It may be down for maintenance."],
+    ERR_CONNECTION_RESET: ["Connection interrupted", "The connection was reset while loading. Try again."],
+    ERR_CONNECTION_CLOSED: ["Connection interrupted", "The server closed the connection. Try again."],
+    ERR_NAME_NOT_RESOLVED: ["Can't find the server", "The address couldn't be looked up. Check your connection or DNS settings."],
+    ERR_ADDRESS_UNREACHABLE: ["Can't reach the server", "There's no route to the server from your current network."],
+    ERR_SSL_PROTOCOL_ERROR: ["Secure connection failed", "A secure connection to the server couldn't be made."],
+    ERR_CERT_DATE_INVALID: ["Secure connection failed", "The server's certificate is expired or your device's date is wrong."]
+  };
+  var offline = navigator.onLine === false;
+  if (!code && offline) code = "ERR_INTERNET_DISCONNECTED";
+  var hit = M[code];
+  if (hit) { document.getElementById("title").textContent = hit[0]; document.getElementById("msg").textContent = hit[1]; }
+  else if (code) { document.getElementById("title").textContent = "Can't load the page"; document.getElementById("msg").textContent = "Something went wrong while loading."; }
+  else { document.getElementById("title").textContent = "You're offline"; document.getElementById("msg").textContent = "This page isn't available without a connection."; }
+  document.getElementById("code").textContent = code ? "net::" + code : "";
+  // follow the app's theme when running inside the Android app
+  try { if (window.QMApp && QMApp.isDark) { var t = localStorage.getItem("theme") || "system"; document.documentElement.dataset.theme = t === "system" ? (QMApp.isDark() ? "dark" : "light") : t; } } catch (e) {}
+  function retry() {
+    var s = document.getElementById("status"); s.textContent = "Trying…";
+    var here = /offline\.html$/.test(location.pathname) ? "" : location.href;
+    var go = target || here || document.referrer || new URL("./index.html", location.href).href;
+    // only come back if the site is reachable, otherwise stay here
+    fetch(go, { method: "HEAD", cache: "no-store" }).then(function () { location.replace(go); }, function () { s.textContent = "Still can't connect."; });
+  }
+  document.getElementById("retry").onclick = retry;
+  addEventListener("online", retry);
+})();
+</script>
+</body>
+</html>

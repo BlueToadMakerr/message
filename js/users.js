@@ -1,6 +1,6 @@
 // Profile helpers with a small in-memory cache.
 import { db } from "./firebase.js";
-import { ref, get, update } from "https://www.gstatic.com/firebasejs/11.0.1/firebase-database.js";
+import { ref, get, update } from "./sdk.js";
 
 const pending = new Map();   // uid -> Promise<profile>
 const resolved = new Map();  // uid -> profile (for synchronous peeks)
@@ -11,7 +11,8 @@ function normalize(uid, raw) {
     exists: !!raw,
     displayName: (raw && typeof raw.displayName === "string" && raw.displayName.trim()) || "Unknown user",
     pfp: (raw && raw.pfp) || "",
-    theme: (raw && raw.theme) || null
+    theme: (raw && raw.theme) || null,
+    emailAdd: raw ? raw.emailAdd : undefined
   };
 }
 

@@ -90,7 +90,7 @@ $participants = dbGet($db, $auth, 'privateChats/' . rawurlencode($chatId) . '/pa
 if (!is_array($participants) || !isset($participants[$uid]) || !isset($participants[$targetUid])) {
     out(403, ['error' => 'Both users must be members of this chat']);
 }
-if ($uid === $targetUid) out(400, ['error' => 'You cannot call yourself']);
+$selfRing = ($uid === $targetUid); // ringing your own other devices is allowed (same account, several devices)
 
 $senderName = dbGet($db, $auth, 'accsettings/' . rawurlencode($uid) . '/settings/displayName')['json'];
 if (!is_string($senderName) || trim($senderName) === '') $senderName = 'QuickMessage';
@@ -102,13 +102,15 @@ $link = rtrim($config['app_url'], '/') . '/call.html?chatId=' . rawurlencode($ch
 $fcmUrl = 'https://fcm.googleapis.com/v1/projects/' . $config['project_id'] . '/messages:send';
 $accepted = 0; $failed = 0; $removed = 0;
 
+$title = $selfRing ? 'Call in progress' : 'Incoming call';
+$text  = $selfRing ? 'Join the call on this device' : $senderName . ' is calling you';
 foreach (array_keys($tokens) as $deviceToken) {
     $payload = ['message' => [
         'token' => (string)$deviceToken,
-        'notification' => ['title' => 'Incoming call', 'body' => $senderName . ' is calling you'],
+        'notification' => ['title' => $title, 'body' => $text],
         'webpush' => [
             'headers' => ['TTL' => '60'],
-            'notification' => ['title' => 'Incoming call', 'body' => $senderName . ' is calling you', 'tag' => 'call_' . $chatId, 'renotify' => true, 'requireInteraction' => true],
+            'notification' => ['title' => $title, 'body' => $text, 'tag' => 'call_' . $chatId, 'renotify' => true, 'requireInteraction' => true],
             'fcm_options' => ['link' => $link]
         ],
         'data' => ['call' => '1', 'chatId' => $chatId, 'sessionId' => $sessionId, 'link' => $link]

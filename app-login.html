@@ -1,0 +1,21 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="system">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<title>Sign in · QuickMessage</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<main class="shell" style="justify-content:center;align-items:center;padding:1.5rem;text-align:center">
+  <div class="card" style="width:min(420px,100%);padding:1.5rem">
+    <h1 style="margin-top:0">Sign in to QuickMessage</h1>
+    <p class="muted">Sign in with Google here, then you'll be sent straight back to the app.</p>
+    <button id="go" class="btn primary" type="button" style="width:100%">Continue with Google</button>
+    <p id="msg" class="muted" aria-live="polite"></p>
+    <a id="back" class="btn hidden" href="quickmessage://auth">Return to the app</a>
+  </div>
+</main>
+<script type="module" src="js/app-login.js"></script>
+</body>
+</html>

@@ -2,20 +2,27 @@
 <html lang="en" data-theme="system">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
   <title>QuickMessage</title>
   <meta name="theme-color" content="#4f46e5">
   <link rel="manifest" href="manifest.json">
   <link rel="icon" href="icons/icon.svg" type="image/svg+xml">
   <link rel="apple-touch-icon" href="icons/icon-192.png">
   <link rel="stylesheet" href="style.css">
-  <script>try { document.documentElement.dataset.theme = localStorage.getItem('theme') || 'system'; } catch (e) {}</script>
+  <script src="js/themeboot.js"></script>
 </head>
 <body>
+<div id="verifyBanner" class="verify-banner" role="status" hidden>
+  <span class="vb-text">Verify your email to start chats, send messages and join calls. <small id="vbEmail"></small></span>
+  <button type="button" class="btn small" id="vbResend">Resend email</button>
+  <button type="button" class="btn small primary" id="vbDone">I've verified</button>
+</div>
+<div class="workspace" id="workspace">
 <div class="shell">
   <header class="topbar">
     <h1 class="brand"><span class="logo" data-icon="chat" data-size="18"></span> QuickMessage</h1>
     <div class="topbar-actions hidden" id="topActions">
+      <a class="btn small hidden apk-link" href="app.apk" download="QuickMessage.apk"><span data-icon="download" data-size="16"></span> Android app</a>
       <button id="installBtn" class="btn small hidden" type="button"><span data-icon="download" data-size="16"></span> Install</button>
       <button id="toggleNotifBtn" class="icon-btn hidden" type="button" aria-label="Notifications" title="Notifications"></button>
       <a href="account.html" id="accountLink" class="icon-btn" aria-label="Account" title="Account"></a>
@@ -33,6 +40,7 @@
           <p class="muted" style="margin:.25rem 0 0">A simple, lightweight private chat. Log in or create an account to start.</p>
         </div>
         <button id="googleBtn" class="btn block" type="button">Continue with Google</button>
+        <a class="btn block hidden apk-link" href="app.apk" download="QuickMessage.apk">Get the Android app</a>
         <div class="divider">or</div>
         <form id="authForm" class="stack" novalidate>
           <div>
@@ -49,6 +57,19 @@
           </div>
           <button id="forgotBtn" class="link-btn" type="button" style="align-self:center">Forgot password?</button>
         </form>
+        <details id="dbOpt" class="db-opt">
+          <summary>Advanced</summary>
+          <div class="stack" style="margin-top:.5rem">
+            <label class="lbl" for="dbUrl">Firebase database URL</label>
+            <input id="dbUrl" class="field" type="url" inputmode="url" autocapitalize="off" autocomplete="off" spellcheck="false" placeholder="https://your-project-default-rtdb.firebaseio.com">
+            <p class="muted" style="margin:0;font-size:.8rem">Leave it as it is to use the normal QuickMessage database. A different database must belong to the same Firebase project and use the same rules.</p>
+            <div class="row">
+              <button id="dbSave" class="btn primary grow" type="button">Use this database</button>
+              <button id="dbReset" class="btn grow" type="button">Use default</button>
+            </div>
+            <div id="dbMsg" class="muted" style="font-size:.8rem"></div>
+          </div>
+        </details>
       </div>
     </section>
 
@@ -61,6 +82,19 @@
   <button id="newChatBtn" class="btn primary fab hidden" type="button"><span data-icon="plus" data-size="18"></span> New chat</button>
 </div>
 
+<!-- Right-hand pane (desktop) / full-screen page (mobile): the open chat or the account page -->
+<section id="detailPane" class="detail-pane" aria-label="Conversation">
+  <div class="detail-empty"><span data-icon="chat" data-size="40"></span><p>Select a chat to start messaging</p></div>
+  <iframe id="detailFrame" title="Conversation" allow="clipboard-write; fullscreen; camera; picture-in-picture; autoplay"></iframe>
+</section>
+</div>
+
+<!-- The call lives here so it keeps running while you browse other chats -->
+<div id="callLayer" class="call-layer" hidden>
+  <iframe id="callFrame" title="Call" allow="camera; microphone; display-capture; picture-in-picture; autoplay; fullscreen; screen-wake-lock; clipboard-write"></iframe>
+</div>
+<div id="callBar" class="call-bar" hidden></div>
+
 <dialog id="newChatDialog" class="modal">
   <form id="newChatForm" method="dialog">
     <div class="modal-head">
@@ -68,8 +102,8 @@
       <button type="button" class="icon-btn" id="ncClose" aria-label="Close" data-icon="close"></button>
     </div>
     <div>
-      <label class="lbl" for="toUid">Recipient UID</label>
-      <input id="toUid" class="field" placeholder="Paste their UID" autocomplete="off" spellcheck="false">
+      <label class="lbl" for="toUid">Recipient UID or email</label>
+      <input id="toUid" class="field" placeholder="Paste their UID or email address" autocomplete="off" spellcheck="false">
       <p class="hint" style="margin-top:.4rem">Ask them to copy it from their Account page.</p>
     </div>
     <div id="ncPreview" class="profile-preview hidden"></div>
@@ -81,6 +115,30 @@
   </form>
 </dialog>
 
+<script type="module" src="js/bars.js"></script>
+<script type="module" src="js/app-bridge.js"></script>
 <script type="module" src="js/index.js"></script>
+
+<!-- encryption: recovery code / restore -->
+<dialog id="recoveryDialog" class="modal">
+  <div class="modal-body">
+    <div class="modal-head"><h2>Save your recovery code</h2></div>
+    <p>Your chats are end-to-end encrypted. This code is the only way to read them on a new device or after clearing this one. Nobody else — including the site owner — can recover it for you.</p>
+    <div class="code-box"><code id="recoveryCode"></code></div>
+    <div class="row"><button type="button" class="btn" id="recoveryCopy">Copy</button><button type="button" class="btn primary grow" id="recoveryDone">I've saved it</button></div>
+  </div>
+</dialog>
+<dialog id="restoreDialog" class="modal">
+  <div class="modal-body">
+    <div class="modal-head"><h2>Unlock your encrypted chats</h2></div>
+    <p id="restoreText">This device doesn't have your encryption key yet. Enter the recovery code you saved when you first signed in.</p>
+    <input id="restoreInput" class="field" placeholder="XXXX-XXXX-XXXX-XXXX-XXXX" autocomplete="off" spellcheck="false">
+    <div id="restoreError" class="error hidden"></div>
+    <div class="row"><button type="button" class="btn" id="restoreSkip">Not now</button><button type="button" class="btn primary grow" id="restoreGo">Unlock</button></div>
+    <small class="muted"><strong>Not now</strong> signs you in without it: you can use and read unencrypted chats, and enter the code later under Account → Encryption.</small>
+    <div class="row"><button type="button" class="btn danger" id="restoreFresh">I lost it — reset keys…</button></div>
+    <small class="muted">Resetting makes new keys and is a last resort: your old keys on other devices stop working. You'll be asked to confirm.</small>
+  </div>
+</dialog>
 </body>
 </html>

@@ -1,80 +1,91 @@
 <!DOCTYPE html>
-<html lang="en" data-theme="system">
+<html lang="en" data-theme="dark" data-fixed-theme>
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover, interactive-widget=resizes-content">
   <title>Call · QuickMessage</title>
-  <meta name="theme-color" content="#4f46e5">
+  <meta name="theme-color" content="#0b0d12">
   <link rel="manifest" href="manifest.json">
   <link rel="icon" href="icons/icon.svg" type="image/svg+xml">
   <link rel="apple-touch-icon" href="icons/icon-192.png">
+  <script src="js/themeboot.js"></script>
   <link rel="stylesheet" href="style.css">
-  <script>try { document.documentElement.dataset.theme = localStorage.getItem('theme') || 'system'; } catch (e) {}</script>
+  <link rel="stylesheet" href="call.css">
 </head>
 <body class="call-body">
-<div class="call-shell">
-  <header class="topbar call-topbar">
-    <a href="javascript:history.back()" class="icon-btn" aria-label="Back" data-icon="back"></a>
-    <div class="chat-title-wrap">
-      <span id="headAvatar"></span>
-      <div class="titles">
-        <h1 id="callTitle">Call</h1>
-        <div id="callStatus" class="sub">Loading…</div>
+
+<!-- Before joining / after leaving -->
+<main id="lobby" class="lobby">
+  <div class="lobby-card">
+    <span id="lobbyAvatar"></span>
+    <h1 id="lobbyTitle">Call</h1>
+    <p id="lobbyText" class="muted">Loading…</p>
+    <div class="lobby-actions">
+      <button id="joinBtn" class="btn primary" type="button" hidden>Join call</button>
+      <a id="lobbyBack" class="btn" href="index.html" data-chat-link>Back to chat</a>
+    </div>
+  </div>
+</main>
+
+<!-- The call. Layers, bottom to top:
+     safe (grid + floating self-view) < top (header + notices) / dock (controls) < people panel < dialogs/toasts -->
+<div id="callRoot" class="call-root" hidden>
+
+  <div id="safe" class="safe">
+    <div id="grid" class="grid"></div>
+    <div id="floatLayer" class="float-layer"></div>
+  </div>
+
+  <div id="top" class="top">
+    <header class="top-bar">
+      <a id="backLink" class="icon-btn" href="index.html" data-chat-link aria-label="Back to chat" data-icon="back"></a>
+      <div class="top-title">
+        <span id="headAvatar"></span>
+        <div class="titles">
+          <h1 id="callTitle">Call</h1>
+          <div id="callStatus" class="sub">Connecting…</div>
+        </div>
       </div>
+      <button id="peopleBtn" class="icon-btn" type="button" aria-label="People" aria-expanded="false">
+        <span data-icon="users"></span><span id="peopleBadge" class="badge" hidden></span>
+      </button>
+    </header>
+    <div id="notices" class="notices" aria-live="polite"></div>
+  </div>
+
+  <nav id="dock" class="dock" aria-label="Call controls">
+    <div class="dock-pill">
+      <button id="muteBtn" class="ctl" type="button" aria-label="Mute microphone"></button>
+      <button id="deafenBtn" class="ctl" type="button" aria-label="Deafen"></button>
+      <button id="cameraBtn" class="ctl" type="button" aria-label="Turn camera off"></button>
+      <button id="screenBtn" class="ctl" type="button" aria-label="Share screen"></button>
+      <button id="chatBtn" class="ctl" type="button" aria-label="Chat" aria-expanded="false"><span id="chatBadge" class="badge" hidden></span></button>
+      <button id="switchBtn" class="ctl" type="button" aria-label="Switch camera" hidden></button>
+      <button id="audioBtn" class="ctl" type="button" aria-label="Audio settings" title="Audio settings" data-icon="volume"></button>
+      <button id="devCallBtn" class="dev-btn" type="button" title="Developer: call stats" aria-label="Developer: call stats">{ }</button>
+      <button id="pipAllBtn" class="ctl" type="button" aria-label="Pop out the whole call" title="Pop out the whole call"></button>
+      <button id="moreBtn" class="ctl" type="button" aria-label="More controls" title="More controls" aria-expanded="false" aria-haspopup="true" hidden data-icon="more"></button>
+      <button id="endBtn" class="ctl end" type="button" aria-label="Leave call"></button>
     </div>
-  </header>
+    <div id="dockMenu" class="dock-menu" role="menu" hidden></div>
+  </nav>
 
-  <main id="callLobby" class="call-lobby">
-    <div class="call-lobby-head">
-      <div>
-        <h2>Group call</h2>
-        <p class="muted">You automatically join this chat’s call. Ring anyone who is not already connected.</p>
-      </div>
+  <aside id="chat" class="people chat-panel" hidden aria-label="Chat">
+    <div class="people-head">
+      <strong id="chatHeadTitle">Chat</strong>
+      <button id="chatClose" class="icon-btn" type="button" aria-label="Close chat" data-icon="close"></button>
     </div>
-  </main>
+    <iframe id="chatFrame" class="chat-frame" title="Chat" allow="clipboard-write; camera; fullscreen; picture-in-picture; autoplay"></iframe>
+  </aside>
 
-  <main id="callStage" class="call-stage hidden">
-    <button id="ringBtn" class="call-ring-btn" type="button" aria-label="Ring people">
-      <span data-icon="phone"></span>
-      <span>Ring people</span>
-    </button>
-
-    <div id="remoteGrid" class="remote-grid"></div>
-
-    <div id="ringMenu" class="call-ring-menu hidden">
-      <div class="call-ring-menu-head">
-        <strong>Ring people</strong>
-        <button id="closeRingBtn" class="icon-btn" type="button" aria-label="Close" data-icon="close"></button>
-      </div>
-      <div id="callParticipants" class="call-participants"></div>
+  <aside id="people" class="people" hidden aria-label="People in this call">
+    <div class="people-head">
+      <strong>People</strong>
+      <button id="ringAllBtn" class="btn" type="button">Ring all</button>
+      <button id="peopleClose" class="icon-btn" type="button" aria-label="Close" data-icon="close"></button>
     </div>
-
-    <div id="localStage" class="local-stage">
-      <video id="localVideo" class="local-video" autoplay muted playsinline></video>
-      <div id="localPlaceholder" class="local-placeholder hidden">
-        <span id="localAvatar"></span>
-      </div>
-      <div class="local-label">You</div>
-    </div>
-
-    <div id="screenShareBadge" class="call-badge hidden">
-      <span data-icon="monitor"></span>
-      <span>You're sharing your screen</span>
-    </div>
-
-    <div id="connectionStatus" class="connection-status">
-      <span class="status-dot"></span>
-      <span id="connectionStatusText">Joining…</span>
-    </div>
-  </main>
-
-  <footer id="callControls" class="call-controls hidden">
-    <button id="muteBtn" class="call-control" type="button" aria-label="Mute microphone" data-icon="mic"></button>
-    <button id="cameraBtn" class="call-control" type="button" aria-label="Turn camera off" data-icon="camera"></button>
-    <button id="screenBtn" class="call-control" type="button" aria-label="Share screen" data-icon="monitor"></button>
-    <button id="switchCameraBtn" class="call-control" type="button" aria-label="Switch camera" data-icon="refresh"></button>
-    <button id="endCallBtn" class="call-control danger" type="button" aria-label="End call" data-icon="phone"></button>
-  </footer>
+    <div id="peopleList" class="people-list"></div>
+  </aside>
 </div>
 
 <dialog id="incomingDialog" class="modal">
@@ -89,6 +100,7 @@
   </div>
 </dialog>
 
+<script type="module" src="js/bars.js"></script>
 <script type="module" src="js/call.js"></script>
 </body>
 </html>

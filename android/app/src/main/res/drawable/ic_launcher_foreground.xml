@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp" android:height="108dp" android:viewportWidth="108" android:viewportHeight="108">
+    <!-- front layers: a soft shadow, the white chat bubble, three dots -->
+    <group android:translateX="12.4" android:translateY="13.6" android:scaleX="0.169" android:scaleY="0.169">
+        <path android:pathData="M368,152H144a24,24 0,0 0,-24 24v132a24,24 0,0 0,24 24h24v48l60,-48h140a24,24 0,0 0,24 -24V176a24,24 0,0 0,-24 -24z" android:fillColor="#1E1B4B" android:fillAlpha="0.28" />
+    </group>
+    <group android:translateX="10.74" android:translateY="11.75" android:scaleX="0.169" android:scaleY="0.169">
+        <path android:pathData="M368,152H144a24,24 0,0 0,-24 24v132a24,24 0,0 0,24 24h24v48l60,-48h140a24,24 0,0 0,24 -24V176a24,24 0,0 0,-24 -24z" android:fillColor="#FFFFFF" />
+        <path android:pathData="M196,242m-16,0a16,16 0,1 1,32 0a16,16 0,1 1,-32 0" android:fillColor="#4F46E5" />
+        <path android:pathData="M256,242m-16,0a16,16 0,1 1,32 0a16,16 0,1 1,-32 0" android:fillColor="#6D68F2" />
+        <path android:pathData="M316,242m-16,0a16,16 0,1 1,32 0a16,16 0,1 1,-32 0" android:fillColor="#8B86FF" />
+    </group>
+</vector>
