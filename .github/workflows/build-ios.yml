@@ -1,0 +1,34 @@
+name: Build iOS app
+# Builds an UNSIGNED .ipa (no Apple developer account needed). Sign it yourself to install it: Sideloadly, AltStore, or Xcode with your Apple ID.
+on:
+  push:
+    paths: ["ios/**", ".github/workflows/build-ios.yml"]
+  workflow_dispatch:
+jobs:
+  ipa:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install XcodeGen
+        run: brew install xcodegen
+      - name: Generate the Xcode project
+        working-directory: ios
+        run: xcodegen generate
+      - name: Build (unsigned)
+        working-directory: ios
+        run: |
+          xcodebuild -project QuickMessage.xcodeproj -scheme QuickMessage \
+            -configuration Release -sdk iphoneos -destination 'generic/platform=iOS' \
+            -derivedDataPath build \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" \
+            build
+      - name: Package the .ipa
+        working-directory: ios
+        run: |
+          rm -rf Payload && mkdir Payload
+          cp -R build/Build/Products/Release-iphoneos/QuickMessage.app Payload/
+          zip -qr QuickMessage-unsigned.ipa Payload
+      - uses: actions/upload-artifact@v4
+        with:
+          name: quickmessage-ios-unsigned
+          path: ios/QuickMessage-unsigned.ipa
