@@ -1,4 +1,5 @@
 import { nativeGoogleSignIn } from "./native.js";
+import "./update.js";                      // apps: "update available" bar
 import { iosApp, iosState, onIosState, iosSetEnabled, iosStatus, iosShow } from "./ios-notify.js";
 import { app, auth, db, VAPID_KEY } from "./firebase.js";
 import {

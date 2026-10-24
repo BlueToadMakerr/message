@@ -582,6 +582,19 @@ class MainActivity : Activity() {
             } catch (_: Exception) { "" }
         }
 
+        // ---- in-app updates (js/update.js)
+        /** {"code":123,"name":"1.0.23"} of the installed app. */
+        @JavascriptInterface fun appVersion(): String = try {
+            val p = packageManager.getPackageInfo(packageName, 0)
+            JSONObject().put("code", if (Build.VERSION.SDK_INT >= 28) p.longVersionCode else @Suppress("DEPRECATION") p.versionCode.toLong()).put("name", p.versionName ?: "").toString()
+        } catch (_: Exception) { "{}" }
+        /** Android only lets an app install packages after "Install unknown apps" was allowed for it. */
+        @JavascriptInterface fun canInstallUpdates(): Boolean = Build.VERSION.SDK_INT < 26 || packageManager.canRequestPackageInstalls()
+        @JavascriptInterface fun openInstallSettings() = runOnUiThread {
+            try { startActivity(Intent(android.provider.Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES, Uri.parse("package:$packageName"))) } catch (_: Exception) {}
+        }
+        @JavascriptInterface fun downloadUpdate(url: String) { Updater.download(this@MainActivity, url) }
+
         @JavascriptInterface fun isDark(): Boolean = (resources.configuration.uiMode and android.content.res.Configuration.UI_MODE_NIGHT_MASK) == android.content.res.Configuration.UI_MODE_NIGHT_YES
 
         /** Google sign-in can't run inside a WebView, so it happens in the browser and comes back via quickmessage://auth. */

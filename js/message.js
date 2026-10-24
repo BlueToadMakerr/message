@@ -12,7 +12,7 @@ import {
 import { initCallBanner } from "./call-banner.js";
 import { QM, enterShell, trackSplit, toHome, markReady } from "./embed.js";
 import { uploadToLitterbox, isLitterUrl, fmtBytes, kindOf, MAX_BYTES } from "./litter.js";
-import { logEvent } from "./chatlog.js";
+import { logEvent } from "./catlog.js";
 import { getProfile, peekProfile, ensureProfile, profileExists, invalidateProfile } from "./users.js";
 import * as E2E from "./crypto.js";
 import { sealPayload, sealPreview, openMessage } from "./msgcrypto.js";

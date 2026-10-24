@@ -17,6 +17,11 @@ struct WebContainer: UIViewRepresentable {
         cfg.allowsPictureInPictureMediaPlayback = true
         cfg.applicationNameForUserAgent = "QuickMessageiOS/1"
         cfg.userContentController.add(context.coordinator, name: "qmGoogle")   // "Sign in with Google" (see js/native.js)
+        // the page learns which build this is (js/update.js compares it with downloads/ios.json on the site)
+        let info = Bundle.main.infoDictionary
+        let ver = (info?["CFBundleShortVersionString"] as? String) ?? "", build = (info?["CFBundleVersion"] as? String) ?? ""
+        cfg.userContentController.addUserScript(WKUserScript(source: "window.__qmIosApp = { version: '\(ver)', build: '\(build)' };", injectionTime: .atDocumentStart, forMainFrameOnly: false))
+        cfg.userContentController.add(context.coordinator, name: "qmUpdate")   // "Download update" opens the .ipa link in Safari
         cfg.userContentController.add(context.coordinator, name: "qmScreen")   // screen sharing (see ScreenReceiver.swift, js/native.js)
         cfg.userContentController.add(context.coordinator, name: "qmNotify")   // local notifications (see js/ios-notify.js, Notifier.swift)
 
@@ -95,6 +100,10 @@ struct WebContainer: UIViewRepresentable {
         // ---- Google sign-in: done in the system browser sheet (Google refuses web views), the token comes back as quickmessage://auth?idToken=…
         func userContentController(_ controller: WKUserContentController, didReceive message: WKScriptMessage) {
             if message.name == "qmNotify" { Notifier.shared.handle(message.body); return }
+            if message.name == "qmUpdate" {
+                if let m = message.body as? [String: Any], let u = m["url"] as? String, let url = URL(string: u), url.host == Config.siteURL.host { UIApplication.shared.open(url) }
+                return
+            }
             if message.name == "qmScreen" { ScreenReceiver.shared.handle(message.body); return }
             guard message.name == "qmGoogle" else { return }
             let session = ASWebAuthenticationSession(url: Config.siteURL.appendingPathComponent("app-login.html"), callbackURLScheme: "quickmessage") { [weak self] url, error in

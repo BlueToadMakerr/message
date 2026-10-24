@@ -14,6 +14,7 @@ import {
 import { ensureProfile, invalidateProfile } from "./users.js";
 import { applyTheme, getTheme, getAppearance, setAppearance, materialAvailable, ACCENT_PRESETS, COLOR_ROLES, getColors, setColor, resetColors, activeScheme } from "./theme.js";
 import { refreshSite } from "./refresh.js";
+import { updatesSupported, installedVersion, checkForUpdate } from "./update.js";
 import { pickColor } from "./customui.js";
 import { hasNativeGoogle, nativeGoogleSignIn, nativeScreen } from "./native.js";
 import { screenHelpNode } from "./screenhelp.js";
@@ -279,6 +280,13 @@ $("resetKeysBtn").onclick = async () => {
     if (c) await confirmDialog({ title: "Your new recovery code", node: codeNode(c), message: "Save it now. Your old keys and the old code no longer work.", okText: "I've saved it", hideCancel: true });
   } catch (e) { toast("Couldn't reset the keys: " + (e.message || e), "error"); }
 };
+
+// ---------- app updates (Android / iPhone app) ----------
+if (updatesSupported()) {
+  $("updateRow").classList.remove("hidden");
+  const v = installedVersion(); $("updateVer").textContent = v ? `Installed version ${v.name || v.code}` : "";
+  $("updateBtn").onclick = async () => { $("updateBtn").disabled = true; try { await checkForUpdate({ manual: true }); } finally { $("updateBtn").disabled = false; } };
+}
 
 // ---------- refresh the app / site ----------
 $("refreshCacheBtn")?.addEventListener("click", async () => {

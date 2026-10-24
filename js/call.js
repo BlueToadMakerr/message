@@ -15,7 +15,7 @@ import { avatarEl, icon, hydrateIcons, toast, confirmDialog } from "./ui.js";
 import { requireVerified, isVerified } from "./verify.js";
 import { fmtDuration } from "./call-banner.js";
 import { QM, enterShell, toTop, markReady } from "./embed.js";
-import { logEvent } from "./chatlog.js";
+import { logEvent } from "./catlog.js";
 import { getProfile } from "./users.js";
 import { CallRoom } from "./call/signal.js";
 import { PeerLink, LINK, worstState } from "./call/mesh.js";

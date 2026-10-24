@@ -52,4 +52,5 @@ jobs:
           if [ "$HAS_PAT" != "true" ]; then       # pushes made with the built-in token don't start other workflows, so start the builds by hand
             if grep -q '^android/' "$RUNNER_TEMP/changed.txt"; then gh workflow run build-android.yml --ref "${GITHUB_REF_NAME}"; fi
             if grep -q '^ios/' "$RUNNER_TEMP/changed.txt"; then gh workflow run build-ios.yml --ref "${GITHUB_REF_NAME}"; fi
+            if grep -qv -e '^android/' -e '^ios/' -e '^\.github/' -e '^README' "$RUNNER_TEMP/changed.txt"; then gh workflow run deploy-ftp.yml --ref "${GITHUB_REF_NAME}" -f what=site; fi
           fi

@@ -1,0 +1,33 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Download QuickMessage</title>
+  <style>
+    :root { color-scheme: light dark; font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+    body { max-width: 560px; margin: 2rem auto; padding: 0 1rem; line-height: 1.5; }
+    .card { border: 1px solid #8884; border-radius: 14px; padding: 1rem 1.2rem; margin: 1rem 0; }
+    a.btn { display: inline-block; margin: .3rem .4rem .3rem 0; padding: .5rem 1rem; border-radius: 999px; background: #4f46e5; color: #fff; text-decoration: none; }
+    small { opacity: .7; }
+  </style>
+</head>
+<body>
+  <h1>QuickMessage apps</h1>
+  <div class="card" id="android"><h2>Android</h2><p>Loading…</p></div>
+  <div class="card" id="ios"><h2>iPhone / iPad</h2><p>Loading…</p></div>
+  <p><small>The apps tell you when a newer version is here. On Android the app can download and install it by itself.</small></p>
+<script>
+  const show = async (id, file, build) => {
+    const box = document.getElementById(id), p = box.querySelector("p");
+    try {
+      const j = await (await fetch(file + "?t=" + Date.now(), { cache: "no-store" })).json();
+      p.replaceChildren(...build(j));
+    } catch (e) { p.textContent = "Not published yet."; }
+  };
+  const link = (href, text) => { const a = document.createElement("a"); a.className = "btn"; a.href = href; a.textContent = text; return a; };
+  const note = t => { const s = document.createElement("small"); s.textContent = t; const d = document.createElement("div"); d.append(s); return d; };
+  show("android", "android.json", j => [link(j.url.replace(/^downloads\//, ""), "Download the APK (" + j.versionName + ")"), note("Allow “install unknown apps” when Android asks. Built " + (j.built || ""))]);
+  show("ios", "ios.json", j => [link(j.url.replace(/^downloads\//, ""), "Download the .ipa (" + j.versionName + ")"), link(j.simulator.replace(/^downloads\//, ""), "iOS Simulator build"), note("The .ipa is unsigned: install it with Sideloadly, AltStore or Xcode. The simulator zip is for a Mac: xcrun simctl install booted QuickMessage.app")]);
+</script>
+</body>
+</html>

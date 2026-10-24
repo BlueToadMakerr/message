@@ -758,3 +758,7 @@ html.dev-on .dev-btn { display: inline-flex; align-items: center; }
 .seg { display: inline-flex; padding: 3px; border-radius: 999px; background: var(--surface-2); border: 1px solid var(--border); }
 .seg button { border: 0; background: transparent; color: var(--muted); padding: .3rem .9rem; border-radius: 999px; font: inherit; cursor: pointer; }
 .seg button.on { background: var(--btn); color: var(--on-btn); }
+
+/* ---------- "update available" bar (js/update.js) ---------- */
+.update-bar { position: fixed; left: 10px; right: 10px; bottom: calc(10px + var(--sab, 0px)); z-index: 9000; display: flex; align-items: center; gap: .6rem; padding: .7rem .8rem; border-radius: 16px; background: var(--surface); color: var(--text); border: 1px solid var(--border); box-shadow: 0 10px 40px rgb(0 0 0 / .35); }
+.update-bar .ub-text { flex: 1; min-width: 0; display: grid; font-size: .9rem; } .update-bar .ub-text span { color: var(--muted); font-size: .8rem; }
