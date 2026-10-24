@@ -22,8 +22,7 @@
   <header class="topbar">
     <h1 class="brand"><span class="logo" data-icon="chat" data-size="18"></span> QuickMessage</h1>
     <div class="topbar-actions hidden" id="topActions">
-      <a class="btn small hidden apk-link" href="app.apk" download="QuickMessage.apk"><span data-icon="download" data-size="16"></span> Android app</a>
-      <button id="installBtn" class="btn small hidden" type="button"><span data-icon="download" data-size="16"></span> Install</button>
+      <button id="downloadBtn" class="btn small hidden" type="button" aria-haspopup="menu" aria-expanded="false"><span data-icon="download" data-size="16"></span> Download</button>
       <button id="toggleNotifBtn" class="icon-btn hidden" type="button" aria-label="Notifications" title="Notifications"></button>
       <a href="account.html" id="accountLink" class="icon-btn" aria-label="Account" title="Account"></a>
     </div>
@@ -40,7 +39,6 @@
           <p class="muted" style="margin:.25rem 0 0">A simple, lightweight private chat. Log in or create an account to start.</p>
         </div>
         <button id="googleBtn" class="btn block" type="button">Continue with Google</button>
-        <a class="btn block hidden apk-link" href="app.apk" download="QuickMessage.apk">Get the Android app</a>
         <div class="divider">or</div>
         <form id="authForm" class="stack" novalidate>
           <div>

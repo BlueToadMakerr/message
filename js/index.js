@@ -32,7 +32,7 @@ hydrateIcons();
 const $ = id => document.getElementById(id);
 const loadingEl = $("loading"), authEl = $("auth"), appEl = $("app");
 const chatListEl = $("chatList"), topActions = $("topActions"), accountLink = $("accountLink");
-const newChatBtn = $("newChatBtn"), installBtn = $("installBtn"), toggleNotifBtn = $("toggleNotifBtn");
+const newChatBtn = $("newChatBtn"), toggleNotifBtn = $("toggleNotifBtn");
 const emailInput = $("email"), passwordInput = $("password");
 
 // ---------- service worker ----------
@@ -45,23 +45,8 @@ if ("serviceWorker" in navigator) {
 }
 
 // ---------- Android app download (Android browsers only, never inside the app itself) ----------
-if (/Android/i.test(navigator.userAgent) && !window.QMApp) document.querySelectorAll(".apk-link").forEach(a => a.classList.remove("hidden"));
-
-// ---------- PWA install ----------
-let deferredPrompt = null;
-window.addEventListener("beforeinstallprompt", e => {
-  e.preventDefault();
-  deferredPrompt = e;
-  installBtn.classList.remove("hidden");
-});
-installBtn.addEventListener("click", async () => {
-  if (!deferredPrompt) return;
-  deferredPrompt.prompt();
-  await deferredPrompt.userChoice;
-  deferredPrompt = null;
-  installBtn.classList.add("hidden");
-});
-window.addEventListener("appinstalled", () => installBtn.classList.add("hidden"));
+// ---------- Download menu (web app / Android app / iPhone app / download page) ----------
+import("./download.js").catch(() => {});
 
 // ---------- auth ----------
 // App: Google sign-in happens in the browser and comes back as an ID token (see app-login.html / js/app-login.js).
