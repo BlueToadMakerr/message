@@ -46,7 +46,7 @@ if ("serviceWorker" in navigator) {
 
 // ---------- Android app download (Android browsers only, never inside the app itself) ----------
 // ---------- Download menu (web app / Android app / iPhone app / download page) ----------
-import("./download.js").catch(() => {});
+import("./dl-menu.js").catch(() => {});
 
 // ---------- auth ----------
 // App: Google sign-in happens in the browser and comes back as an ID token (see app-login.html / js/app-login.js).

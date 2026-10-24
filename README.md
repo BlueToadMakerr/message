@@ -343,5 +343,5 @@ The `companion*`/`pairings` database rules and `js/companion.js`, `js/phone-call
 
 ## Round 30 – Download menu
 - New **Download** button in the top bar (hidden inside the Android/iPhone apps). It opens a menu with: **Install as a web app** (browser install prompt, or Add to Home Screen steps on iPhone), **Android app** (only on Android; version read from `downloads/android.json`), **iPhone app** (only on iPhone/iPad; unsigned .ipa, needs sideloading), and **More…**, which shows `downloads/index.html` inside the app.
-- Replaces the old separate "Android app" link and "Install" button. Code: `js/download.js`.
+- Replaces the old separate "Android app" link and "Install" button. Code: `js/dl-menu.js`.
 - Not tested on real devices; web side covered by `t45`.
