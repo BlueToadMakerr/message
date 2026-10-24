@@ -15,7 +15,7 @@ import { ensureProfile, invalidateProfile } from "./users.js";
 import { applyTheme, getTheme, getAppearance, setAppearance, materialAvailable, ACCENT_PRESETS, COLOR_ROLES, getColors, setColor, resetColors, activeScheme } from "./theme.js";
 import { refreshSite } from "./refresh.js";
 import { pickColor } from "./customui.js";
-import { hasNativeGoogle, nativeGoogleSignIn } from "./native.js";
+import { hasNativeGoogle, nativeGoogleSignIn, nativeScreen } from "./native.js";
 import { screenHelpNode } from "./screenhelp.js";
 import * as E2E from "./crypto.js";
 import { devOn, setDev, devButton, showRaw, envInfo } from "./dev.js";
@@ -212,13 +212,14 @@ $("devAccountBtn").onclick = () => showRaw("Developer: account", async () => {
   const o = id => $(id);
   const fill = (sel, map) => { sel.replaceChildren(); for (const [k, v] of Object.entries(map)) { const op = document.createElement("option"); op.value = k; op.textContent = typeof v === "string" ? v : v.label; sel.append(op); } };
   fill(o("scPreset"), { ...PRESETS, custom: "Custom" }); fill(o("scRes"), RES);
-  if (window.QMApp) { o("scApp").classList.remove("hidden"); o("scWeb").classList.add("hidden"); }
+  const nativeShare = !!nativeScreen();
+  if (nativeShare) { o("scApp").classList.remove("hidden"); o("scWeb").classList.add("hidden"); }
   o("scHelpHost").append(screenHelpNode());
   const paint = p => {
     o("scPreset").value = p.preset; o("scRes").value = p.res; o("scFps").value = p.fps; o("scBitrate").value = p.bitrate; o("scHint").value = p.hint; o("scDegrade").value = p.degrade;
     o("scCodec").value = p.codec; o("scAudio").checked = !!p.audio; o("scJpeg").value = p.jpeg; o("scAfps").value = p.afps;
     o("scFpsOut").textContent = p.fps; o("scJpegOut").textContent = p.jpeg; o("scAfpsOut").textContent = p.afps;
-    o("scSummary").textContent = window.QMApp
+    o("scSummary").textContent = nativeShare
       ? `Now: ${RES[p.res]}, ${p.afps} fps, picture quality ${p.jpeg}%${p.bitrate ? ", up to " + p.bitrate + " kbps" : ""}.`
       : `Now: ${RES[p.res]}, ${p.fps} fps${p.bitrate ? ", up to " + p.bitrate + " kbps" : ""}, ${o("scHint").selectedOptions[0].textContent.toLowerCase()}.`;
   };

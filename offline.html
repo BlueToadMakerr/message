@@ -6,7 +6,9 @@
 <title>Can't connect · QuickMessage</title>
 <meta name="theme-color" content="#4f46e5">
 <style>
-  :root { color-scheme: light dark; --bg: light-dark(#f4f5f9,#0e1014); --card: light-dark(#fff,#171a21); --text: light-dark(#161a23,#e8eaf0); --muted: light-dark(#6b7385,#8d95a8); --accent: light-dark(#4f46e5,#6d68f2); --border: light-dark(#e1e4ee,#2a2f3a); }
+  :root { color-scheme: light dark; --bg: #f4f5f9; --card: #fff; --text: #161a23; --muted: #6b7385; --accent: #4f46e5; --border: #e1e4ee; }
+  @media (prefers-color-scheme: dark) { :root:not([data-theme=light]) { --bg: #0e1014; --card: #171a21; --text: #e8eaf0; --muted: #8d95a8; --accent: #6d68f2; --border: #2a2f3a; } }
+  :root[data-theme=dark] { --bg: #0e1014; --card: #171a21; --text: #e8eaf0; --muted: #8d95a8; --accent: #6d68f2; --border: #2a2f3a; }
   :root[data-theme=light] { color-scheme: light; } :root[data-theme=dark] { color-scheme: dark; }
   * { box-sizing: border-box; }
   html, body { height: 100%; margin: 0; background: var(--bg); color: var(--text); font: 16px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; -webkit-user-select: none; user-select: none; -webkit-tap-highlight-color: transparent; }

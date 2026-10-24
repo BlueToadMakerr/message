@@ -1,6 +1,7 @@
 // "Start sharing" dialog: shows the sending settings for THIS share (prefilled from Account → Screen sharing) and a Start button.
 import { PRESETS, RES, getScreenPrefs, setScreenPrefs, storedScreenPrefs, setScreenOverride, DEFAULTS } from "../screenprefs.js";
 import { confirmDialog } from "../ui.js";
+import { nativeScreen } from "../native.js";
 import { screenHelpNode } from "../screenhelp.js";
 
 const opt = (v, t) => `<option value="${v}">${t}</option>`;
@@ -9,7 +10,7 @@ const opt = (v, t) => `<option value="${v}">${t}</option>`;
 export async function askScreenSettings() {
   const stored = { ...DEFAULTS, ...storedScreenPrefs() };
   const p = { ...getScreenPrefs() };
-  const isApp = !!(window.QMApp && window.QMApp.startScreen);
+  const isApp = !!nativeScreen();
   const box = document.createElement("div"); box.className = "stack share-settings";
   box.innerHTML = `
     <small class="muted">Quality for this share. Higher settings use more bandwidth, CPU and battery.</small>

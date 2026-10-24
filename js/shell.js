@@ -8,6 +8,7 @@ import { icon, avatarEl, localToast, confirmDialog } from "./ui.js";
 window.__qmToast = localToast;       // embedded pages route their toasts here (see ui.js toast)
 import { getProfile } from "./users.js";
 import { watchDeclines } from "./declines.js";
+import "./ios-notify.js";     // iPhone app: defines window.__qmIosCall (pauses the background-keepalive during calls)
 import "./viewer.js";                 // registers window.__qmOpenImage: images from every frame open full-screen here
 
 const $ = id => document.getElementById(id);
@@ -254,6 +255,7 @@ function setCallState(patch) {
 function renderBar() {
   const { bar } = els();
   tellApp();
+  try { window.__qmIosCall && window.__qmIosCall(!!st.call.joined); } catch (_) { /* not the iPhone app */ }
   const show = st.call.joined && !st.call.visible;
   bar.hidden = !show;
   document.documentElement.classList.toggle("has-bar", show);

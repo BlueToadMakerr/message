@@ -8,6 +8,7 @@
 import { getScreenPrefs, webVideoConstraints, androidParams, clearScreenOverride } from "../screenprefs.js";
 import { audioPrefs, nativeAudio } from "./devices.js";
 import { audioCtx } from "./audio.js";
+import { nativeScreen } from "../native.js";
 const AUDIO = { echoCancellation: true, noiseSuppression: true, autoGainControl: true };
 const VIDEO = { width: { ideal: 1280 }, height: { ideal: 720 }, frameRate: { ideal: 30, max: 30 } };
 
@@ -38,7 +39,7 @@ export class LocalMedia {
     this.camDeviceId = null;
     this.micError = null;                   // "denied" | "missing" | null
     this.camError = null;
-    this.canScreen = !!(navigator.mediaDevices && navigator.mediaDevices.getDisplayMedia) || !!(window.QMApp && window.QMApp.startScreen);
+    this.canScreen = !!(navigator.mediaDevices && navigator.mediaDevices.getDisplayMedia) || !!nativeScreen();
     this._busy = false;
     this.micSource = "local";              // "local" | "phone": which device the mic / camera tracks come from
     this.camSource = "local";
@@ -287,6 +288,7 @@ export class LocalMedia {
   // Inside the Android app the WebView can't capture the screen itself, so the app captures it natively and streams frames
   // into a canvas (window.__qmScreenFrame); the canvas stream is the screen track.
   async _startNativeScreen() {
+    const nat = nativeScreen();
     const canvas = document.createElement("canvas");
     canvas.width = 640; canvas.height = 360;
     const ctx = canvas.getContext("2d");
@@ -325,10 +327,10 @@ export class LocalMedia {
     const result = await new Promise(res => {
       window.__qmScreenState = st => { if (st === "started" || st === "denied") res(st); else if (st === "stopped") this.stopScreen(); };
       setTimeout(() => res("denied"), 60000);
-      try { try { const [edge, q, f] = androidParams(); window.QMApp.setScreenQuality && window.QMApp.setScreenQuality(edge, q, f); } catch (_) { /* older app */ } window.QMApp.startScreen(); } catch (_) { res("denied"); }
+      try { try { const [edge, q, f] = androidParams(); nat.setQuality(edge, q, f); } catch (_) { /* older app */ } nat.start(); } catch (_) { res("denied"); }
     });
     if (result !== "started") { clearInterval(keep); window.__qmScreenFrame = null; return null; }
-    video.stop = (orig => function () { clearInterval(keep); window.__qmScreenFrame = null; window.__qmScreenAudio = null; try { actx && actx.close(); } catch (_) { /* ignore */ } try { window.QMApp.stopScreen(); } catch (_) { /* ignore */ } orig.call(this); })(video.stop);
+    video.stop = (orig => function () { clearInterval(keep); window.__qmScreenFrame = null; window.__qmScreenAudio = null; try { actx && actx.close(); } catch (_) { /* ignore */ } try { nat.stop(); } catch (_) { /* ignore */ } orig.call(this); })(video.stop);
     // The audio track exists once the first chunk arrives; wait briefly so it can be published together with the video.
     let aTrack = null;
     await new Promise(res => { this._screenAudioReady = t => { aTrack = t; res(); }; setTimeout(res, 800); });
@@ -342,6 +344,7 @@ export class LocalMedia {
 
   async startScreen() {
     if (!this.canScreen || this.screen) return null;
+    if (nativeScreen() && !(navigator.mediaDevices && navigator.mediaDevices.getDisplayMedia)) return this._startNativeScreen();
     if (window.QMApp && window.QMApp.startScreen) return this._startNativeScreen();
     let stream;
     const prefs = getScreenPrefs();

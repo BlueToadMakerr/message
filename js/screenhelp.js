@@ -14,7 +14,8 @@ const APP = [
   ["Frames per second", "How many pictures per second the app sends. It means the same as \"frame rate\" in a browser: higher is smoother and uses more battery and data."],
   ["Share sound too", "Also sends the sound playing on the phone, when Android allows it."]
 ];
-export function screenHelpNode(isApp = !!window.QMApp) {
+import { nativeScreen } from "./native.js";
+export function screenHelpNode(isApp = !!nativeScreen()) {
   const d = document.createElement("details"); d.className = "adv";
   const sm = document.createElement("summary"); sm.textContent = "What do these settings mean?"; d.append(sm);
   const dl = document.createElement("dl"); dl.className = "help-list";

@@ -11,7 +11,7 @@ if (window.top === window && window.QMApp && window.QMApp.setSession) {
 }
 
 // The app evaluates these in the top window; the call lives in an iframe, so pass screen-share frames/state down to it.
-if (window.top === window && window.QMApp) {
+if (window.top === window && (window.QMApp || (window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.qmScreen))) {
   const callWin = () => { try { return document.getElementById("callFrame").contentWindow; } catch (_) { return null; } };
   window.__qmScreenAudio = b64 => { const w = callWin(); if (w && w.__qmScreenAudio) w.__qmScreenAudio(b64); };
   window.__qmScreenFrame = b64 => { const w = callWin(); if (w && w.__qmScreenFrame) w.__qmScreenFrame(b64); };

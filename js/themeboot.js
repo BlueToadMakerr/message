@@ -117,9 +117,11 @@
 
     lastTokens = t;
     var css = "";
-    if (custom) {
-      for (k in VAR) css += VAR[k] + ":light-dark(" + t[k][0] + "," + t[k][1] + ");";
-      if (callBg) css += "--call-bg:" + callBg + ";--tile-bg:#0c0c0f;";
+    if (custom) {                                            // plain rules (no light-dark(): Safari before 17.5 ignores it)
+      var L = "", D = "";
+      for (k in VAR) { L += VAR[k] + ":" + t[k][0] + ";"; D += VAR[k] + ":" + t[k][1] + ";"; }
+      if (callBg) L += "--call-bg:" + callBg + ";--tile-bg:#0c0c0f;";
+      css = ":root:root:root{" + L + "}@media (prefers-color-scheme:dark){:root:root:not([data-theme=\"light\"]){" + D + "}}:root:root[data-theme=\"dark\"]{" + D + "}";
     }
     return { css: css, midnight: midnight };
   }
@@ -131,8 +133,7 @@
     if (b.midnight) R.setAttribute("data-midnight", "1"); else R.removeAttribute("data-midnight");
     if (!b.css) { if (tag) tag.remove(); return; }
     if (!tag) { tag = document.createElement("style"); tag.id = "qm-theme-vars"; (document.head || R).appendChild(tag); }
-    var css = ":root:root{" + b.css + "}";                    // :root:root beats the stylesheet's :root even though this runs first
-    if (tag.textContent !== css) tag.textContent = css;
+    if (tag.textContent !== b.css) tag.textContent = b.css;     // more specific than the stylesheet's own :root blocks, so it wins even though it comes first
   }
 
   window.__qmThemeApply = apply;

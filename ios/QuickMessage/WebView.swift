@@ -17,6 +17,8 @@ struct WebContainer: UIViewRepresentable {
         cfg.allowsPictureInPictureMediaPlayback = true
         cfg.applicationNameForUserAgent = "QuickMessageiOS/1"
         cfg.userContentController.add(context.coordinator, name: "qmGoogle")   // "Sign in with Google" (see js/native.js)
+        cfg.userContentController.add(context.coordinator, name: "qmScreen")   // screen sharing (see ScreenReceiver.swift, js/native.js)
+        cfg.userContentController.add(context.coordinator, name: "qmNotify")   // local notifications (see js/ios-notify.js, Notifier.swift)
 
         let web = WKWebView(frame: .zero, configuration: cfg)
         web.navigationDelegate = context.coordinator
@@ -28,6 +30,8 @@ struct WebContainer: UIViewRepresentable {
         web.backgroundColor = UIColor.systemBackground
         web.scrollView.backgroundColor = UIColor.systemBackground
         context.coordinator.web = web
+        Notifier.shared.start(web: web)
+        ScreenReceiver.shared.start(web: web)
         web.load(URLRequest(url: Config.siteURL.appendingPathComponent("index.html")))
         return web
     }
@@ -90,6 +94,8 @@ struct WebContainer: UIViewRepresentable {
 
         // ---- Google sign-in: done in the system browser sheet (Google refuses web views), the token comes back as quickmessage://auth?idToken=…
         func userContentController(_ controller: WKUserContentController, didReceive message: WKScriptMessage) {
+            if message.name == "qmNotify" { Notifier.shared.handle(message.body); return }
+            if message.name == "qmScreen" { ScreenReceiver.shared.handle(message.body); return }
             guard message.name == "qmGoogle" else { return }
             let session = ASWebAuthenticationSession(url: Config.siteURL.appendingPathComponent("app-login.html"), callbackURLScheme: "quickmessage") { [weak self] url, error in
                 var token = ""

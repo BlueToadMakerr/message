@@ -1,4 +1,5 @@
 import { nativeGoogleSignIn } from "./native.js";
+import { iosApp, iosState, onIosState, iosSetEnabled, iosStatus, iosShow } from "./ios-notify.js";
 import { app, auth, db, VAPID_KEY } from "./firebase.js";
 import {
   onAuthStateChanged, createUserWithEmailAndPassword, signInWithEmailAndPassword,
@@ -205,7 +206,9 @@ async function attachChat(uid, chatId) {
       remove(ref(db, `chatList/${uid}/${chatId}`)).catch(() => {});
       return;
     }
+    const prev = s.last;
     s.last = snap.val();
+    if (prev && prev.id !== s.last.id && s.last.fromUid && s.last.fromUid !== uid && document.visibilityState !== "visible") notifyIos(s, s.last);   // iPhone app, in the background
     if (s.last.enc) { s.lastText = "🔒 Encrypted message"; openPreview(chatId, s.last).then(t => { s.lastText = t; schedule(); }); }
     else s.lastText = s.last.text || "";
     if (s.last.fromUid) {
@@ -220,6 +223,14 @@ async function attachChat(uid, chatId) {
     s.typing = Object.keys(v).filter(k => k !== uid && v[k]);
     schedule();
   });
+}
+
+/** iPhone app: a message arrived while the app is in the background → local notification (see js/ios-notify.js). */
+async function notifyIos(s, last) {
+  if (!iosApp() || !iosState().enabled) return;
+  const text = last.enc ? await openPreview(s.id, last).catch(() => "🔒 Encrypted message") : (last.text || "");
+  const p = await getProfile(last.fromUid).catch(() => null);
+  iosShow({ id: s.id + ":" + (last.id || last.timestamp), chatId: s.id, title: (p && p.displayName) || "New message", body: text || "New message" });
 }
 
 /** Does this device hold the key of an encrypted chat? Chats without one get a small "No key" tag in the list. */
@@ -477,6 +488,25 @@ async function setupNotifications(uid) {
     };
     return;
   }
+  // iPhone / iPad app: local notifications while the app runs in the background (the page can't get web push inside an app).
+  if (iosApp()) {
+    btn.classList.remove("hidden");
+    const paint = () => {
+      const st = iosState(), on = st.enabled && st.allowed, blocked = st.enabled && !st.allowed;
+      btn.innerHTML = icon(on ? "bell" : "bellOff", 20);
+      btn.title = blocked ? "Notifications are off in iPhone Settings" : on ? "Disable notifications" : "Enable notifications";
+      btn.setAttribute("aria-label", btn.title);
+      btn.classList.toggle("active", on); btn.classList.toggle("notif-blocked", blocked); btn.disabled = false;
+    };
+    onIosState(paint); paint(); iosStatus();
+    btn.onclick = () => {
+      const st = iosState();
+      if (st.enabled && !st.allowed) { toast("Turn notifications on in iPhone Settings → QuickMessage → Notifications.", "error", 6000); return; }
+      iosSetEnabled(!st.enabled);
+      if (!st.enabled) toast("Notifications on. They work while QuickMessage is open in the background (it keeps itself awake, which uses some battery). If you close the app they stop.", "success", 9000);
+    };
+    return;
+  }
   const messaging = await getMsg();
   btn.classList.remove("hidden");
 
@@ -489,7 +519,8 @@ async function setupNotifications(uid) {
   };
 
   if (!messaging || !("Notification" in window) || !("serviceWorker" in navigator)) {
-    setState("Notifications aren't supported in this browser", "bellOff", false, true);
+    const iphone = /iP(hone|ad|od)/.test(navigator.userAgent) && !navigator.standalone;
+    setState(iphone ? "On iPhone: Share → Add to Home Screen, then open QuickMessage from the Home Screen to enable notifications" : "Notifications aren't supported in this browser", "bellOff", false, true);
     return;
   }
   if (Notification.permission === "denied") {
