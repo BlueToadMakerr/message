@@ -35,3 +35,33 @@ export function setAppearance(p) {
   try { window.__qmThemeApply && window.__qmThemeApply(false); } catch (_) { /* ignore */ }
   try { const bc = new BroadcastChannel("qm-theme"); bc.postMessage("appearance"); bc.close(); } catch (_) { /* old browser */ }
 }
+
+// ---- your own colours (separately for light and dark mode): { light: {bg, surface, own, other, text}, dark: {…} }
+export const COLOR_ROLES = [
+  ["bg", "Background", "The page behind everything"],
+  ["surface", "Panels", "Cards, lists, the message box"],
+  ["own", "Your messages", "The bubbles you send (kept dark enough for white text)"],
+  ["other", "Other people's messages", "The bubbles you receive"],
+  ["text", "Text", "Normal text (ignored if it would be hard to read)"]
+];
+export function getColors() { try { const o = JSON.parse(lsGet("qm-colors") || "null"); return o && typeof o === "object" ? o : {}; } catch { return {}; } }
+/** setColor("dark", "bg", "#101820"); pass "" to go back to the default for that colour. */
+export function setColor(scheme, role, hexValue) {
+  const all = getColors(); const cur = { ...(all[scheme] || {}) };
+  if (/^#[0-9a-f]{6}$/i.test(hexValue || "")) cur[role] = hexValue.toLowerCase(); else delete cur[role];
+  if (Object.keys(cur).length) all[scheme] = cur; else delete all[scheme];
+  lsSet("qm-colors", Object.keys(all).length ? JSON.stringify(all) : "");
+  try { window.__qmThemeApply && window.__qmThemeApply(false); } catch (_) { /* ignore */ }
+  try { const bc = new BroadcastChannel("qm-theme"); bc.postMessage("colors"); bc.close(); } catch (_) { /* old browser */ }
+}
+export function resetColors() {
+  lsSet("qm-colors", "");
+  try { window.__qmThemeApply && window.__qmThemeApply(false); } catch (_) { /* ignore */ }
+  try { const bc = new BroadcastChannel("qm-theme"); bc.postMessage("colors"); bc.close(); } catch (_) { /* old browser */ }
+}
+/** Which scheme is on screen right now: "light" or "dark". */
+export function activeScheme() {
+  const t = document.documentElement.dataset.theme;
+  if (t === "dark" || t === "light") return t;
+  return matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+}

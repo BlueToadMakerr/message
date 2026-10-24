@@ -3,7 +3,7 @@
 // Discord-style "in call" bar while the call is minimised. Embedded pages reach this through `parent.QM` (see embed.js).
 import { watchIncomingCalls, hideIncoming } from "./incoming.js";
 import { fmtDuration } from "./call-banner.js";
-import { icon, avatarEl, localToast } from "./ui.js";
+import { icon, avatarEl, localToast, confirmDialog } from "./ui.js";
 
 window.__qmToast = localToast;       // embedded pages route their toasts here (see ui.js toast)
 import { getProfile } from "./users.js";
@@ -188,7 +188,7 @@ async function openCall(chatId) {
   if (!chatId) return;
   const { callFrame } = els();
   if (st.call.joined && st.call.chatId !== chatId) {
-    if (!confirm("You're already in a call. Leave it and join this one?")) return;
+    if (!(await confirmDialog({ title: "Already in a call", message: "You're already in a call. Leave it and join this one?", okText: "Leave and join" }))) return;
     await leaveCall(true);
   }
   // Only a different call (or none yet) loads the frame: opening the call you're already in never reloads it.

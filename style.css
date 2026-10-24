@@ -13,6 +13,10 @@
   --accent: light-dark(#4f46e5, #6d68f2);
   --accent-hover: light-dark(#4338ca, #7f7af5);
   --accent-soft: light-dark(#e9e8ff, #25244a);
+  /* Buttons: dark fill + white content in light mode, bright fill + dark content in dark mode (like Google Messages) */
+  --btn: light-dark(#4f46e5, #c4c1ff);
+  --btn-hover: light-dark(#4338ca, #d6d4ff);
+  --on-btn: light-dark(#ffffff, #1d1a66);
   --danger: light-dark(#d92d3f, #f0616d);
   --success: light-dark(#15803d, #4ade80);
   --own-bubble: light-dark(#4f46e5, #5b56e0);
@@ -72,8 +76,8 @@ main { flex: 1; padding: 1rem; padding-bottom: 6rem; }
 .btn:hover { background: var(--surface-2); }
 .btn:active { transform: translateY(1px); }
 .btn:disabled { opacity: .55; cursor: not-allowed; }
-.btn.primary { background: var(--accent); border-color: transparent; color: #fff; }
-.btn.primary:hover { background: var(--accent-hover); }
+.btn.primary { background: var(--btn); border-color: transparent; color: var(--on-btn); }
+.btn.primary:hover { background: var(--btn-hover); }
 .btn.danger { background: var(--danger); border-color: transparent; color: #fff; }
 .btn.danger:hover { filter: brightness(1.08); }
 .btn.ghost { background: transparent; border-color: transparent; }
@@ -233,8 +237,8 @@ label.lbl { display: block; font-size: .85rem; font-weight: 600; color: var(--mu
   border: 1px solid transparent; border-radius: 20px; padding: .6rem .95rem; line-height: 1.35;
 }
 .composer textarea:focus { outline: none; border-color: var(--accent); background: var(--surface); }
-.send-btn { width: 42px; height: 42px; border-radius: 50%; border: 0; background: var(--accent); color: #fff; display: grid; place-items: center; cursor: pointer; flex: none; }
-.send-btn:hover { background: var(--accent-hover); }
+.send-btn { width: 42px; height: 42px; border-radius: 50%; border: 0; background: var(--btn); color: var(--on-btn); display: grid; place-items: center; cursor: pointer; flex: none; }
+.send-btn:hover { background: var(--btn-hover); }
 .send-btn:disabled { opacity: .5; cursor: default; }
 
 /* ---------- dialogs ---------- */
@@ -682,3 +686,35 @@ html.dev-on .dev-btn { display: inline-flex; align-items: center; }
 #accentBox.dim { opacity: .5; }
 #accentPick { width: 44px; height: 34px; padding: 0; border: 1px solid var(--border); border-radius: 8px; background: none; cursor: pointer; }
 .help-list { margin: .5rem 0 0; font-size: .85rem; } .help-list dt { font-weight: 600; margin-top: .55rem; } .help-list dd { margin: .1rem 0 0; color: var(--muted); }
+
+/* ---------- own drop-down + colour picker (js/customui.js) ---------- */
+.qm-native-hidden { position: absolute !important; opacity: 0 !important; pointer-events: none !important; width: 1px !important; height: 1px !important; margin: 0 !important; padding: 0 !important; border: 0 !important; overflow: hidden; }
+.qm-select { display: flex; align-items: center; justify-content: space-between; gap: .5rem; text-align: left; width: 100%; cursor: pointer; font: inherit; color: var(--text); }
+.qm-select[hidden] { display: none; }
+.qm-select:disabled { opacity: .55; cursor: not-allowed; }
+.qm-select-text { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.qm-caret { width: .55rem; height: .55rem; border-right: 2px solid var(--muted); border-bottom: 2px solid var(--muted); transform: translateY(-2px) rotate(45deg); flex: none; }
+.qm-menu { position: fixed; z-index: 100000; overflow-y: auto; padding: 6px; border-radius: 14px; background: var(--surface); color: var(--text); border: 1px solid var(--border); box-shadow: 0 10px 40px rgb(0 0 0 / .35); overscroll-behavior: contain; }
+.qm-menu-item { display: flex; align-items: center; gap: .5rem; width: 100%; min-height: 44px; padding: .5rem .7rem; border: 0; border-radius: 10px; background: transparent; color: inherit; font: inherit; text-align: left; cursor: pointer; }
+.qm-menu-item:hover, .qm-menu-item:focus-visible { background: var(--surface-2); outline: none; }
+.qm-menu-item.on { background: var(--accent-soft); color: var(--accent); font-weight: 600; }
+.qm-menu-item:disabled { opacity: .45; cursor: not-allowed; }
+.qm-tick { width: 1.1rem; flex: none; text-align: center; }
+.qm-menu-text { flex: 1; }
+.qm-menu-group { padding: .5rem .7rem .2rem; font-size: .75rem; color: var(--muted); font-weight: 600; text-transform: uppercase; letter-spacing: .04em; }
+.cp-top { display: flex; gap: .6rem; align-items: center; }
+.cp-preview { width: 52px; height: 52px; border-radius: 14px; border: 1px solid var(--border); flex: none; }
+.cp-hex { font-family: ui-monospace, Menlo, monospace; }
+.cp-range { -webkit-appearance: none; appearance: none; width: 100%; height: 26px; border-radius: 13px; border: 1px solid var(--border); background: var(--surface-2); }
+.cp-range::-webkit-slider-thumb { -webkit-appearance: none; width: 26px; height: 26px; border-radius: 50%; background: #fff; border: 3px solid #fff; box-shadow: 0 0 0 1px rgb(0 0 0 / .45), 0 1px 4px rgb(0 0 0 / .4); }
+.cp-range::-moz-range-thumb { width: 22px; height: 22px; border-radius: 50%; background: #fff; border: 2px solid #fff; box-shadow: 0 0 0 1px rgb(0 0 0 / .45); }
+.cp-h { background: linear-gradient(90deg, #f00, #ff0, #0f0, #0ff, #00f, #f0f, #f00); }
+.cp-swatches { display: flex; flex-wrap: wrap; gap: 8px; }
+.color-rows { display: grid; gap: .5rem; }
+.color-row { display: flex; align-items: center; gap: .6rem; }
+.color-row .cr-label { flex: 1; min-width: 0; } .color-row .cr-label small { display: block; color: var(--muted); font-size: .75rem; }
+.color-btn { display: inline-flex; align-items: center; gap: .45rem; padding: .3rem .6rem .3rem .3rem; border: 1px solid var(--border); border-radius: 999px; background: var(--surface-2); color: var(--text); font: inherit; font-size: .8rem; cursor: pointer; }
+.color-btn i { width: 22px; height: 22px; border-radius: 50%; border: 1px solid rgb(127 127 127 / .5); }
+.seg { display: inline-flex; padding: 3px; border-radius: 999px; background: var(--surface-2); border: 1px solid var(--border); }
+.seg button { border: 0; background: transparent; color: var(--muted); padding: .3rem .9rem; border-radius: 999px; font: inherit; cursor: pointer; }
+.seg button.on { background: var(--btn); color: var(--on-btn); }

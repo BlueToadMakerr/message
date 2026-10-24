@@ -6,6 +6,8 @@ on:
 jobs:
   apk:
     runs-on: ubuntu-latest
+    env:
+      HAS_KS: ${{ secrets.ANDROID_KEYSTORE_B64 != '' }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-java@v4
@@ -15,6 +17,16 @@ jobs:
         run: yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses > /dev/null || true
       - uses: gradle/actions/setup-gradle@v4
         with: { gradle-version: 8.14.3 }
+      - name: Use your own signing key (optional secrets)
+        if: env.HAS_KS == 'true'
+        env:
+          KS_B64: ${{ secrets.ANDROID_KEYSTORE_B64 }}
+        run: |
+          echo "$KS_B64" | base64 -d > "$RUNNER_TEMP/qm.jks"
+          echo "QM_KEYSTORE=$RUNNER_TEMP/qm.jks" >> "$GITHUB_ENV"
+          echo "QM_STORE_PASS=${{ secrets.ANDROID_STORE_PASS }}" >> "$GITHUB_ENV"
+          echo "QM_KEY_ALIAS=${{ secrets.ANDROID_KEY_ALIAS }}" >> "$GITHUB_ENV"
+          echo "QM_KEY_PASS=${{ secrets.ANDROID_KEY_PASS }}" >> "$GITHUB_ENV"
       - name: Build debug APK
         working-directory: android
         run: set -o pipefail; gradle assembleDebug --no-daemon --stacktrace 2>&1 | tee build.log

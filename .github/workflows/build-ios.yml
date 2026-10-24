@@ -32,3 +32,20 @@ jobs:
         with:
           name: quickmessage-ios-unsigned
           path: ios/QuickMessage-unsigned.ipa
+      # Simulator build: runs in the iOS Simulator on a Mac (no signing, no Apple account). Boot a simulator, then:
+      #   xcrun simctl install booted QuickMessage.app && xcrun simctl launch booted app.quickmessage.chat
+      # Installing again over an existing copy simply updates it.
+      - name: Build for the iOS Simulator
+        working-directory: ios
+        run: |
+          xcodebuild -project QuickMessage.xcodeproj -scheme QuickMessage \
+            -configuration Debug -sdk iphonesimulator -destination 'generic/platform=iOS Simulator' \
+            -derivedDataPath build-sim ARCHS="arm64 x86_64" ONLY_ACTIVE_ARCH=NO \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" \
+            build
+          mkdir -p sim && cp -R build-sim/Build/Products/Debug-iphonesimulator/QuickMessage.app sim/
+          ditto -c -k --keepParent sim/QuickMessage.app QuickMessage-simulator.zip
+      - uses: actions/upload-artifact@v4
+        with:
+          name: quickmessage-ios-simulator
+          path: ios/QuickMessage-simulator.zip

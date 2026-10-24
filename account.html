@@ -66,14 +66,20 @@
           <label class="switch-row"><input type="checkbox" id="midnight"> <span><strong>Midnight</strong><br><small class="muted">Dark mode only: backgrounds and panels become pure black (nice on OLED screens). Light mode is unchanged.</small></span></label>
           <label id="materialRow" class="switch-row hidden"><input type="checkbox" id="material"> <span><strong>Material You</strong><br><small class="muted">Android 12 or newer: use the colours of your wallpaper. It replaces the accent colour below while it is on.</small></span></label>
           <div id="accentBox" class="stack">
-            <label class="lbl" for="accentPick">Accent colour</label>
+            <label class="lbl">Accent colour</label>
             <div id="accentSwatches" class="swatches"></div>
             <div class="row wrap" style="align-items:center;gap:.6rem">
-              <input id="accentPick" type="color" value="#4f46e5" aria-label="Pick any colour">
-              <span id="accentHex" class="muted"></span>
+              <button id="accentPick" class="color-btn" type="button" aria-label="Pick any accent colour"><i></i><span id="accentHex">default</span></button>
               <button id="accentReset" class="btn small" type="button">Use the default</button>
             </div>
-            <small class="muted">Buttons, links and your own messages use this colour. Very light colours are darkened a little so text stays readable.</small>
+            <small class="muted">Buttons, links and highlights. Buttons are dark with white text in light mode and bright with dark text in dark mode, so they stay easy to see.</small>
+          </div>
+          <div class="stack">
+            <label class="lbl">Your own colours</label>
+            <div class="seg" id="schemeSeg" role="tablist"><button type="button" data-s="light">Light mode</button><button type="button" data-s="dark">Dark mode</button></div>
+            <div id="colorRows" class="color-rows"></div>
+            <div class="row wrap"><button id="colorsReset" class="btn small" type="button">Reset these colours</button></div>
+            <small class="muted">Each mode keeps its own colours. Pick colours that contrast well; text that would be hard to read is ignored.</small>
           </div>
         </div>
       </section>

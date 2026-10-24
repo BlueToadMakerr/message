@@ -121,3 +121,6 @@ if (window.top === window) {
   setInterval(apply, 700);
   apply();
 }
+
+// ---- own drop-downs / colour picker instead of the phone's white native ones (touch devices and the apps)
+import("./customui.js").catch(() => {});

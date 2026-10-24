@@ -12,8 +12,9 @@ import {
   toast, confirmDialog, promptDialog, avatarEl, hydrateIcons, copyText, authErrorMessage
 } from "./ui.js";
 import { ensureProfile, invalidateProfile } from "./users.js";
-import { applyTheme, getTheme, getAppearance, setAppearance, materialAvailable, ACCENT_PRESETS } from "./theme.js";
+import { applyTheme, getTheme, getAppearance, setAppearance, materialAvailable, ACCENT_PRESETS, COLOR_ROLES, getColors, setColor, resetColors, activeScheme } from "./theme.js";
 import { refreshSite } from "./refresh.js";
+import { pickColor } from "./customui.js";
 import { hasNativeGoogle, nativeGoogleSignIn } from "./native.js";
 import { screenHelpNode } from "./screenhelp.js";
 import * as E2E from "./crypto.js";
@@ -169,17 +170,40 @@ $("devAccountBtn").onclick = () => showRaw("Developer: account", async () => {
   const sw = $("accentSwatches");
   for (const c of ACCENT_PRESETS) { const b = document.createElement("button"); b.type = "button"; b.className = "swatch"; b.style.background = c; b.dataset.c = c; b.setAttribute("aria-label", "Accent " + c); sw.append(b); }
   const paint = () => {
-    const a = getAppearance(), cur = a.accent || ACCENT_PRESETS[0];
-    $("accentPick").value = cur; $("accentHex").textContent = a.accent ? a.accent : "default";
+    const a = getAppearance();
+    $("accentPick").firstElementChild.style.background = a.accent || ACCENT_PRESETS[0]; $("accentHex").textContent = a.accent ? a.accent : "default";
     sw.querySelectorAll(".swatch").forEach(b => b.classList.toggle("on", !!a.accent && b.dataset.c === a.accent));
     $("accentBox").classList.toggle("dim", a.material);
     $("accentPick").disabled = a.material; $("accentReset").disabled = a.material || !a.accent;
+    paintRows();
   };
-  $("midnight").onchange = () => setAppearance({ midnight: $("midnight").checked });
+  $("midnight").onchange = () => { setAppearance({ midnight: $("midnight").checked }); paint(); };
   $("material").onchange = () => { setAppearance({ material: $("material").checked }); paint(); };
   sw.addEventListener("click", e => { const c = e.target.dataset && e.target.dataset.c; if (c && !getAppearance().material) { setAppearance({ accent: c }); paint(); } });
-  $("accentPick").oninput = () => { if (hexOk($("accentPick").value)) { setAppearance({ accent: $("accentPick").value }); paint(); } };
+  $("accentPick").onclick = async () => { const c = await pickColor({ title: "Accent colour", value: getAppearance().accent || ACCENT_PRESETS[0] }); if (c) { setAppearance({ accent: c }); paint(); } };
   $("accentReset").onclick = () => { setAppearance({ accent: "" }); paint(); };
+
+  // your own colours, separately for light and dark mode
+  let scheme = activeScheme();
+  const rows = $("colorRows");
+  const tokenOf = (role) => { const T = window.__qmThemeTokens ? window.__qmThemeTokens() : null, key = { bg: "bg", surface: "surface", own: "ownBubble", other: "otherBubble", text: "text" }[role]; return T && T[key] ? T[key][scheme === "dark" ? 1 : 0] : "#888888"; };
+  function paintRows() {
+    $("schemeSeg").querySelectorAll("button").forEach(b => b.classList.toggle("on", b.dataset.s === scheme));
+    const mine = getColors()[scheme] || {};
+    rows.replaceChildren();
+    for (const [role, label, hint] of COLOR_ROLES) {
+      const row = document.createElement("div"); row.className = "color-row";
+      const lab = document.createElement("div"); lab.className = "cr-label"; lab.textContent = label; const sm = document.createElement("small"); sm.textContent = hint; lab.append(sm);
+      const btn = document.createElement("button"); btn.type = "button"; btn.className = "color-btn";
+      const dot = document.createElement("i"); dot.style.background = mine[role] || tokenOf(role); const tx = document.createElement("span"); tx.textContent = mine[role] || "default"; btn.append(dot, tx);
+      btn.onclick = async () => { const c = await pickColor({ title: label + (scheme === "dark" ? " (dark mode)" : " (light mode)"), value: mine[role] || tokenOf(role) }); if (c) { setColor(scheme, role, c); paintRows(); } };
+      const reset = document.createElement("button"); reset.type = "button"; reset.className = "btn small ghost"; reset.textContent = "Default"; reset.hidden = !mine[role];
+      reset.onclick = () => { setColor(scheme, role, ""); paintRows(); };
+      row.append(lab, btn, reset); rows.append(row);
+    }
+  }
+  $("schemeSeg").addEventListener("click", e => { const s2 = e.target.dataset && e.target.dataset.s; if (s2) { scheme = s2; paintRows(); } });
+  $("colorsReset").onclick = () => { setColor(scheme, "bg", ""); for (const [r] of COLOR_ROLES) setColor(scheme, r, ""); paintRows(); };
   paint();
 }
 
