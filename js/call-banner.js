@@ -1,4 +1,4 @@
-// "Call in progress" strip for the chat page (Discord-style): who is in the call and how long it has been going.
+// "Call in progress" strip for the chat page (Discord-style): who is in the call, how long it has been going, and a Join button (not in Android bubbles).
 // Also points the header call button at call.html for this chat.
 //
 //   import { initCallBanner } from "./call-banner.js";
@@ -43,7 +43,7 @@ export function initCallBanner({ chatId, callBtn, after }) {
   bar.href = href;
   bar.hidden = true;
   bar.addEventListener("click", open);
-  bar.innerHTML = `<span class="cb-live"></span><span class="cb-text"><strong>Call in progress</strong><span class="cb-meta"></span></span><span class="cb-faces"></span>`;
+  bar.innerHTML = `<span class="cb-live"></span><span class="cb-text"><strong>Call in progress</strong><span class="cb-meta"></span></span><span class="cb-faces"></span><span class="cb-join">Join</span>`;
   const meta = bar.querySelector(".cb-meta"), faces = bar.querySelector(".cb-faces");
   (after?.parentNode || document.body).insertBefore(bar, after ? after.nextSibling : document.body.firstChild);
 

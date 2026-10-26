@@ -28,7 +28,7 @@ final class Notifier: NSObject, UNUserNotificationCenterDelegate {
         if enabled { startKeepAlive() }
     }
 
-    @objc private func resume() { if enabled && !inCall { startKeepAlive() } }
+    @objc private func resume() { if enabled || inCall { startKeepAlive() } }
 
     func handle(_ body: Any) {
         guard let m = body as? [String: Any], let op = m["op"] as? String else { return }
@@ -46,8 +46,11 @@ final class Notifier: NSObject, UNUserNotificationCenterDelegate {
         case "show":
             show(m)
         case "call":
+            // While a call (or a screen share) is running the app keeps itself alive in the background too, so the shared screen and the call
+            // don't freeze when you switch to another app: the silence plays (mixed with the call's own audio) and the page plays a silent sound.
             inCall = (m["on"] as? Bool) == true
-            if inCall { stopKeepAlive() } else if enabled { startKeepAlive() }
+            stopKeepAlive()
+            if inCall || enabled { startKeepAlive() }
         default:
             break
         }
@@ -75,10 +78,10 @@ final class Notifier: NSObject, UNUserNotificationCenterDelegate {
 
     // ---- keep the page alive in the background: inaudible looping silence (the app has the "audio" background mode)
     private func startKeepAlive() {
-        if inCall { return }
         if let p = player, p.isPlaying { return }
         do {
-            try AVAudioSession.sharedInstance().setCategory(.playback, mode: .default, options: [.mixWithOthers])
+            if inCall { try AVAudioSession.sharedInstance().setCategory(.playAndRecord, mode: .default, options: [.mixWithOthers, .defaultToSpeaker, .allowBluetooth]) }
+            else { try AVAudioSession.sharedInstance().setCategory(.playback, mode: .default, options: [.mixWithOthers]) }
             try AVAudioSession.sharedInstance().setActive(true)
             let p = try AVAudioPlayer(data: Notifier.silentWav())
             p.numberOfLoops = -1

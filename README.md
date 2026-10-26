@@ -365,3 +365,23 @@ The `companion*`/`pairings` database rules and `js/companion.js`, `js/phone-call
 ## Round 33 – updates through the web view
 - Free hosts (InfinityFree) answer the app's own HTTP request with **403** (browser check). The update now downloads the APK with the **page's own `fetch()`** (inside the web view, which has passed the check) and hands it to the app in 192 KB pieces (`updateBegin/Chunk/End/Abort` on the bridge → `Updater.kt` writes `update.apk` and installs it). If the host still answers with its check page, the update bar says so ("reload the app once and try again"). The old native download stays as a fallback. Tests `t48`, `t44`.
 - Not tested on a phone.
+
+## Round 34
+- **Call banner**: the Join button is back; it is hidden only inside Android chat bubbles.
+- **Top bar**: buttons can no longer be pushed out (call / options / account stay put at phone widths; the Download button shows just its icon below 560 px; the title shrinks with "…").
+- **Camera not displaying**: a camera switched off and on over the same stream (or a track added to a stream that is already playing) never fired "playing" again, so the avatar kept covering a working camera. Tiles now watch the frames themselves (`requestVideoFrameCallback` + a quick poll).
+- **Developer views**
+  - Update speed and graph length accept any number (preset list + "custom…").
+  - Row arrows are drawn as little shapes (and the "open graph" marker is a CSS chevron) instead of text characters, which showed up as odd symbols with some fonts / host encodings. Dev code is also ASCII-escaped.
+  - Graph scale is steady: starts at 0, tops out at a round number, grows at once and shrinks only slowly; the right edge is "now"; scale labels shown. Small dips no longer make the whole line jump.
+  - Recording the graphs never pauses while the view is open (pressing / "Pause" only keep what is on screen still; hidden tab keeps recording); closing it clears everything.
+  - Rates (bitrate, fps, dropped frames) no longer fall to 0 between the browser's once-a-second counter updates when updating every frame: the last real rate is kept until the counter moves.
+- **iPhone app**
+  - `challenge.js` (iOS app only) solves the host's JavaScript "browser check" when a script / stylesheet / fetch gets the test page back (runs the host's own aes.js, sets the cookie, retries the fetch or reloads once). The website and Android app don't have it. Test `t49`.
+  - The download menu says "App on iOS".
+  - Screen share upside down: the extension no longer applies 180° / mirrored orientation values (only sideways ones). This is a best guess without a device - tell me if it is still wrong.
+  - Runs in the background: during a call the app now keeps its audio session (silence mixed with the call) and the page plays an inaudible sound, so the web page isn't suspended and the shared screen doesn't freeze when you leave the app. Needs a real device to verify.
+
+## Round 35
+- Call stats panel: title / tabs / Copy / Pause / Close stay on the first row; the update-speed and graph-length controls moved to their own row (they had pushed the Close button out). Test `t51`.
+- The iPhone / iPad app now reports itself in calls as **App on iOS** (was "Browser on macOS"): `js/call/device.js` checks the app's user agent (`QuickMessageiOS`) / `window.__qmIosApp`.

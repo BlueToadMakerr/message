@@ -2,6 +2,7 @@
 export function deviceLabel() {
   const ua = navigator.userAgent || "";
   if (/QuickMessageApp/.test(ua)) return "App on Android";
+  if (/QuickMessageiOS/.test(ua) || window.__qmIosApp) return "App on iOS";        // the iPhone / iPad app (its web view reports "Safari on macOS" / "Browser")
   const browser =
     /Edg\//.test(ua) ? "Edge" :
     /OPR\/|Opera/.test(ua) ? "Opera" :

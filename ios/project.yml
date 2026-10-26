@@ -34,7 +34,10 @@ targets:
     type: application
     platform: iOS
     sources:
-      - QuickMessage
+      - path: QuickMessage
+        excludes: ["challenge.js"]
+      - path: QuickMessage/challenge.js
+        buildPhase: resources
     dependencies:
       - target: QuickMessageBroadcast
         embed: true

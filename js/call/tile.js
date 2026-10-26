@@ -1,4 +1,4 @@
-// Tile — one video/screen tile. Overlay controls live in four fixed zones so they can never stack:
+// Tile \u2014 one video/screen tile. Overlay controls live in four fixed zones so they can never stack:
 //   top-left: connection status      top-right: tools (pin / fullscreen / move-self)
 //   bottom-left: name + indicators   bottom-right: volume
 import { icon, avatarEl } from "../ui.js";
@@ -24,8 +24,8 @@ const HTML = `
   <div class="t-vol"><button type="button" class="t-btn t-mute"></button><input class="t-range" type="range" min="0" max="2" step="0.01" value="1" aria-label="Volume (up to 200%)"><span class="t-pct">100%</span></div>
 </div>`;
 
-const STATUS_TEXT = { connecting: "Connecting…", reconnecting: "Reconnecting…", failed: "Connection failed" };
-/** Account → "Show live frame rate on videos" (this device). */
+const STATUS_TEXT = { connecting: "Connecting\u2026", reconnecting: "Reconnecting\u2026", failed: "Connection failed" };
+/** Account \u2192 "Show live frame rate on videos" (this device). */
 export const fpsOn = () => { try { return localStorage.getItem("qm-show-fps") === "1"; } catch (_) { return false; } };
 
 export class Tile {
@@ -40,7 +40,7 @@ export class Tile {
     this.hasFrame = false;
     this.wantVideo = false;
     this.stream = null;
-    this.vol = 1;                 // 0 … 2 (100 % default, up to 200 %)
+    this.vol = 1;                 // 0 \u2026 2 (100 % default, up to 200 %)
     this.userMuted = false;
     this.booster = new Booster();
     this.meter = kind === "screen" ? null : new LevelMeter(on => this.el.classList.toggle("speaking", on));
@@ -101,12 +101,13 @@ export class Tile {
 
     this._state = null; this._wantAudio = false; this._loadingSince = 0; this._fpsLast = null;
     this._tick = setInterval(() => this._tickOnce(), 1000);
+    this._fast = setInterval(() => this._watchFrames(), 250);           // pick up the first frame quickly
     addEventListener("storage", this._onStore = e => { if (e.key === "qm-show-fps") this._tickOnce(); });
     this.video.addEventListener("playing", () => { this.hasFrame = true; this._paint(); });
     this.video.addEventListener("resize", () => { this.hasFrame = true; this._paint(); });
     this.video.addEventListener("emptied", () => { this.hasFrame = false; this._paint(); });
 
-    // No browser context menu on the video (save / copy / loop …) — use the buttons instead.
+    // No browser context menu on the video (save / copy / loop \u2026) \u2014 use the buttons instead.
     el.addEventListener("contextmenu", e => e.preventDefault());
     this.video.disableRemotePlayback = true;
     this.poppedEl = $(".t-popped");
@@ -210,6 +211,7 @@ export class Tile {
     this.wantVideo = this.kind === "screen" ? true : !!video;
     this._wantAudio = this.kind !== "screen" && !!audio;
     if (!this.wantVideo) this.hasFrame = false;
+    else if (!this.hasFrame) queueMicrotask(() => this._watchFrames());
     this.camIc.hidden = this.kind === "screen" || !!video;
     this.el.classList.toggle("mirror", !!mirror && this.kind !== "screen");
     this._paint();
@@ -220,13 +222,13 @@ export class Tile {
     this._status();
   }
 
-  /** The badge in the top-left corner: the connection state, or — when the connection is fine but the camera / microphone
-   *  that is switched on hasn't arrived yet — "Loading camera…" / "Loading mic…". */
+  /** The badge in the top-left corner: the connection state, or \u2014 when the connection is fine but the camera / microphone
+   *  that is switched on hasn't arrived yet \u2014 "Loading camera\u2026" / "Loading mic\u2026". */
   _loading() {
     if (this.kind === "screen") return "";
     const needCam = this.wantVideo && !this.hasFrame;
     const needMic = !this.isSelf && this._wantAudio && !(this.stream && this.stream.getAudioTracks().some(t => t.readyState === "live"));
-    return needCam && needMic ? "Loading camera & mic…" : needCam ? "Loading camera…" : needMic ? "Loading mic…" : "";
+    return needCam && needMic ? "Loading camera & mic\u2026" : needCam ? "Loading camera\u2026" : needMic ? "Loading mic\u2026" : "";
   }
   _status() {
     let text = STATUS_TEXT[this._state] || "", st = this._state || "";
@@ -242,7 +244,22 @@ export class Tile {
     this.retryBtn.hidden = this._state !== "failed" || !this._canRetry;
   }
 
+  /** Frames are really being drawn: the "playing" / "resize" events don't fire again when a camera is switched off and on over the same stream
+   *  (or a video track is added to a stream that is already playing), which left the avatar covering a working camera. Watch the frames themselves. */
+  _watchFrames() {
+    const v = this.video;
+    if (this.hasFrame || !this.wantVideo || !v.srcObject) return;
+    if (v.paused && v.srcObject) this.play();
+    if (v.videoWidth > 0 && v.readyState >= 2 && !v.paused && v.currentTime !== this._lastT) { this._lastT = v.currentTime; this.hasFrame = true; this._paint(); return; }
+    this._lastT = v.currentTime;
+    if (!this._rvfc && v.requestVideoFrameCallback) {
+      this._rvfc = true;
+      v.requestVideoFrameCallback(() => { this._rvfc = false; if (this.wantVideo && !this.hasFrame) { this.hasFrame = true; this._paint(); } });
+    }
+  }
+
   _tickOnce() {
+    this._watchFrames();
     this._status();
     // live frame rate (decoded / rendered frames per second)
     let fps = null;
@@ -276,7 +293,7 @@ export class Tile {
     this.popBtn.hidden = !((document.pictureInPictureEnabled || (window.QMApp && window.QMApp.enterPip)) && this.wantVideo && this.hasFrame);
   }
 
-  // ≤ 100 %: plain element volume. > 100 %: the element is muted and the audio runs through a GainNode instead.
+  // \u2264 100 %: plain element volume. > 100 %: the element is muted and the audio runs through a GainNode instead.
   _applyVolume() {
     if (this.isSelf) return;
     const mutedNow = this.userMuted || this.forceMute, v = mutedNow ? 0 : this.vol;
@@ -313,7 +330,7 @@ export class Tile {
   }
 
   destroy() {
-    clearInterval(this._tick); removeEventListener("storage", this._onStore);
+    clearInterval(this._tick); clearInterval(this._fast); removeEventListener("storage", this._onStore);
     this.meter?.destroy();
     unregisterSink(this.video);
     this.booster.release();

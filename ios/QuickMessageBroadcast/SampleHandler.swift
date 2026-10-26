@@ -90,9 +90,17 @@ class SampleHandler: RPBroadcastSampleHandler {
         guard let px = CMSampleBufferGetImageBuffer(sampleBuffer) else { return }
         last = now
         var img = CIImage(cvPixelBuffer: px)
+        // ReplayKit hands over the screen already upright for portrait (a 180° "down" / mirrored value there is how the DEVICE is held, not how the
+        // picture is stored: applying it turned the shared screen upside down). Only the sideways landscape values need turning.
         if let o = CMGetAttachment(sampleBuffer, key: RPVideoSampleOrientationKey as CFString, attachmentModeOut: nil) as? NSNumber,
            let ori = CGImagePropertyOrientation(rawValue: o.uint32Value) {
-            img = img.oriented(ori)
+            switch ori {
+            case .left, .leftMirrored, .right, .rightMirrored:
+                // only if the picture really is stored portrait while the device is landscape (otherwise it is already sideways-correct)
+                if img.extent.height > img.extent.width { img = img.oriented(ori == .left || ori == .leftMirrored ? .left : .right) }
+            default:
+                break
+            }
         }
         let longest = max(img.extent.width, img.extent.height)
         if longest > edge { let s = edge / longest; img = img.transformed(by: CGAffineTransform(scaleX: s, y: s)) }
