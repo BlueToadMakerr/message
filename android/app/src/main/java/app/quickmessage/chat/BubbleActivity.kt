@@ -19,6 +19,9 @@ import android.widget.FrameLayout
 class BubbleActivity : Activity() {
     private lateinit var web: WebView
     private var chat = ""
+    private var fileCb: ValueCallback<Array<Uri>>? = null
+    private var camReq: PermissionRequest? = null
+    private companion object { const val REQ_FILE = 2; const val REQ_CAM = 11 }
 
     @SuppressLint("SetJavaScriptEnabled")
     override fun onCreate(b: Bundle?) {
@@ -55,9 +58,13 @@ class BubbleActivity : Activity() {
             }
         }
         web.webChromeClient = object : WebChromeClient() {
-            override fun onPermissionRequest(r: PermissionRequest) { r.deny() }
+            // Camera (taking a photo for the chat) is allowed; the microphone is not (no calls from a bubble).
+            override fun onPermissionRequest(r: PermissionRequest) { runOnUiThread { askCamera(r) } }
             override fun onCreateWindow(view: WebView, isDialog: Boolean, isUserGesture: Boolean, resultMsg: Message): Boolean = externalWindow(view, resultMsg)           // no camera / microphone in a bubble
-            override fun onShowFileChooser(w: WebView, cb: ValueCallback<Array<Uri>>, p: FileChooserParams): Boolean { cb.onReceiveValue(null); return true }
+            override fun onShowFileChooser(w: WebView, cb: ValueCallback<Array<Uri>>, p: FileChooserParams): Boolean {
+                fileCb?.onReceiveValue(null); fileCb = cb
+                return try { startActivityForResult(p.createIntent(), REQ_FILE); true } catch (_: Exception) { fileCb = null; false }
+            }
         }
         web.loadUrl("$allowed?chatId=$chat&standalone=1&bubble=1")
     }
@@ -83,6 +90,27 @@ class BubbleActivity : Activity() {
         (resultMsg.obj as WebView.WebViewTransport).webView = tmp
         resultMsg.sendToTarget()
         return true
+    }
+
+    private fun askCamera(r: PermissionRequest) {
+        val video = r.resources.filter { it == PermissionRequest.RESOURCE_VIDEO_CAPTURE }.toTypedArray()
+        if (video.isEmpty()) { r.deny(); return }
+        if (checkSelfPermission(android.Manifest.permission.CAMERA) == android.content.pm.PackageManager.PERMISSION_GRANTED) { r.grant(video); return }
+        camReq?.deny(); camReq = r
+        requestPermissions(arrayOf(android.Manifest.permission.CAMERA), REQ_CAM)
+    }
+
+    override fun onRequestPermissionsResult(code: Int, perms: Array<out String>, res: IntArray) {
+        super.onRequestPermissionsResult(code, perms, res)
+        if (code != REQ_CAM) return
+        val r = camReq ?: return; camReq = null
+        if (res.isNotEmpty() && res[0] == android.content.pm.PackageManager.PERMISSION_GRANTED) r.grant(arrayOf(PermissionRequest.RESOURCE_VIDEO_CAPTURE)) else r.deny()
+    }
+
+    @Deprecated("Deprecated in Java")
+    override fun onActivityResult(req: Int, res: Int, data: Intent?) {
+        super.onActivityResult(req, res, data)
+        if (req == REQ_FILE) { fileCb?.onReceiveValue(WebChromeClient.FileChooserParams.parseResult(res, data)); fileCb = null }
     }
 
     override fun onDestroy() { web.destroy(); super.onDestroy() }

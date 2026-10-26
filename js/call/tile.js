@@ -10,6 +10,7 @@ const HTML = `
 <div class="t-avatar"></div>
 <div class="t-top">
   <div class="t-status" hidden><span class="t-status-text"></span><button type="button" class="t-retry" hidden>Retry</button></div>
+  <div class="t-fps" hidden></div>
   <div class="t-tools">
     <button type="button" class="t-btn t-self" hidden></button>
     <button type="button" class="t-btn t-pop" hidden></button>
@@ -24,6 +25,8 @@ const HTML = `
 </div>`;
 
 const STATUS_TEXT = { connecting: "Connecting…", reconnecting: "Reconnecting…", failed: "Connection failed" };
+/** Account → "Show live frame rate on videos" (this device). */
+export const fpsOn = () => { try { return localStorage.getItem("qm-show-fps") === "1"; } catch (_) { return false; } };
 
 export class Tile {
   constructor({ key, kind = "cam", isSelf = false, onPin, onRetry, onSelfToggle, onBlocked }) {
@@ -53,6 +56,7 @@ export class Tile {
     this.avatarHost = $(".t-avatar");
     this.statusEl = $(".t-status");
     this.statusText = $(".t-status-text");
+    this.fpsEl = $(".t-fps");
     this.retryBtn = $(".t-retry");
     this.nameEl = $(".nm");
     this.tagEl = $(".tag");
@@ -95,6 +99,9 @@ export class Tile {
       this.selfBtn.innerHTML = icon("grid", 16);
     }
 
+    this._state = null; this._wantAudio = false; this._loadingSince = 0; this._fpsLast = null;
+    this._tick = setInterval(() => this._tickOnce(), 1000);
+    addEventListener("storage", this._onStore = e => { if (e.key === "qm-show-fps") this._tickOnce(); });
     this.video.addEventListener("playing", () => { this.hasFrame = true; this._paint(); });
     this.video.addEventListener("resize", () => { this.hasFrame = true; this._paint(); });
     this.video.addEventListener("emptied", () => { this.hasFrame = false; this._paint(); });
@@ -201,6 +208,7 @@ export class Tile {
     this.deafIc.hidden = this.kind === "screen" || !deaf;
     this.micIc.hidden = this.kind === "screen" || !!audio;
     this.wantVideo = this.kind === "screen" ? true : !!video;
+    this._wantAudio = this.kind !== "screen" && !!audio;
     if (!this.wantVideo) this.hasFrame = false;
     this.camIc.hidden = this.kind === "screen" || !!video;
     this.el.classList.toggle("mirror", !!mirror && this.kind !== "screen");
@@ -208,11 +216,43 @@ export class Tile {
   }
 
   setLinkState(state, canRetry = true) {
-    const text = STATUS_TEXT[state];
+    this._state = state; this._canRetry = canRetry;
+    this._status();
+  }
+
+  /** The badge in the top-left corner: the connection state, or — when the connection is fine but the camera / microphone
+   *  that is switched on hasn't arrived yet — "Loading camera…" / "Loading mic…". */
+  _loading() {
+    if (this.kind === "screen") return "";
+    const needCam = this.wantVideo && !this.hasFrame;
+    const needMic = !this.isSelf && this._wantAudio && !(this.stream && this.stream.getAudioTracks().some(t => t.readyState === "live"));
+    return needCam && needMic ? "Loading camera & mic…" : needCam ? "Loading camera…" : needMic ? "Loading mic…" : "";
+  }
+  _status() {
+    let text = STATUS_TEXT[this._state] || "", st = this._state || "";
+    if (!text) {
+      const l = this._loading();
+      if (!l) this._loadingSince = 0;
+      else if (!this._loadingSince) this._loadingSince = Date.now();
+      if (l && Date.now() - this._loadingSince > 1200) { text = l; st = "loading"; }     // a short grace period so normal start-up doesn't flash
+    }
     this.statusEl.hidden = !text;
-    this.statusText.textContent = text || "";
-    this.statusEl.dataset.state = state || "";
-    this.retryBtn.hidden = state !== "failed" || !canRetry;
+    this.statusText.textContent = text;
+    this.statusEl.dataset.state = st;
+    this.retryBtn.hidden = this._state !== "failed" || !this._canRetry;
+  }
+
+  _tickOnce() {
+    this._status();
+    // live frame rate (decoded / rendered frames per second)
+    let fps = null;
+    if (fpsOn() && this.hasFrame && this.wantVideo && this.video.getVideoPlaybackQuality) {
+      const n = this.video.getVideoPlaybackQuality().totalVideoFrames, t = performance.now();
+      if (this._fpsLast && n >= this._fpsLast.n) fps = Math.round((n - this._fpsLast.n) * 1000 / Math.max(1, t - this._fpsLast.t));
+      this._fpsLast = { n, t };
+    } else this._fpsLast = null;
+    this.fpsEl.hidden = fps === null;
+    if (fps !== null) this.fpsEl.textContent = fps + " fps";
   }
 
   setPinned(on) {
@@ -231,6 +271,7 @@ export class Tile {
 
   // ------------------------------------------------------------------ helpers
   _paint() {
+    this._status();
     this.el.classList.toggle("no-video", !(this.wantVideo && this.hasFrame));
     this.popBtn.hidden = !((document.pictureInPictureEnabled || (window.QMApp && window.QMApp.enterPip)) && this.wantVideo && this.hasFrame);
   }
@@ -272,6 +313,7 @@ export class Tile {
   }
 
   destroy() {
+    clearInterval(this._tick); removeEventListener("storage", this._onStore);
     this.meter?.destroy();
     unregisterSink(this.video);
     this.booster.release();

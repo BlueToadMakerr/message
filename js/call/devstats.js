@@ -1,4 +1,4 @@
-import { devCard, devGrid, devPill, devBar, devWho, devSection, devHistRow, devLoop, rateSelect, devRate } from "../dev.js";
+import { devCard, devGrid, devPill, devBar, devWho, devSection, devHistRow, devLoop, rateSelect, devRate, spanSelect, holdGuard, histClear } from "../dev.js";
 import { getProfile } from "../users.js";
 // Developer mode: a floating panel with live call statistics (WebRTC getStats) and the raw call state. Opened by the small { } button in the call.
 const prev = new Map();            // "linkId|ssrc|dir" -> { t, bytes, frames }
@@ -53,7 +53,7 @@ const trackInfo = t => t && { id: t.id, kind: t.kind, label: t.label, state: t.r
 
 export async function callSnapshot(S) {
   const links = {};
-  await Promise.all([...S.links].map(async ([sid, link]) => { links[sid] = await linkStats(sid, link, S); }));
+  await Promise.all([...S.links].map(async ([sid, link]) => { try { links[sid] = await linkStats(sid, link, S); } catch (e) { links[sid] = { error: String(e && e.message || e) }; } }));   // one broken link must not freeze the others
   const m = S.media;
   const sum = l => `${l.connection} ` + (l.path ? `${l.path.local && l.path.local.type}→${l.path.remote && l.path.remote.type} ${l.path.rttMs}ms` : "");
   return {
@@ -205,16 +205,15 @@ export async function visualCall(S, snap) {
 
 let panel = null, stopLoop = null;
 export function toggleDevPanel(S, plain) {
-  if (panel) { stopLoop && stopLoop(); panel.remove(); panel = null; return; }
+  if (panel) { stopLoop && stopLoop(); panel.remove(); panel = null; histClear(); return; }
   panel = document.createElement("div"); panel.className = "dev-panel";
   panel.innerHTML = `<div class="dev-panel-head"><strong>Call stats</strong><span class="dev-tabs"><button type="button" class="dev-tab on" data-a="vis">Visual</button><button type="button" class="dev-tab" data-a="raw">Raw</button></span><span class="grow"></span><span data-slot="rate"></span><button type="button" class="dev-btn" data-a="copy">Copy</button><button type="button" class="dev-btn" data-a="pause">Pause</button><button type="button" class="dev-btn" data-a="x" aria-label="Close">✕</button></div><div class="dev-pane"></div>`;
-  panel.querySelector('[data-slot="rate"]').append(rateSelect());
+  panel.querySelector('[data-slot="rate"]').append(rateSelect(), spanSelect());
   document.body.append(panel);
-  const pane = panel.querySelector(".dev-pane"); let paused = false, last = "", mode = "vis", down = false;
-  pane.addEventListener("pointerdown", () => { down = true; });                      // don't swap the content under a click that is in progress
-  addEventListener("pointerup", () => setTimeout(() => { down = false; }, 60), true);
+  const pane = panel.querySelector(".dev-pane"); let paused = false, last = "", mode = "vis";
+  const held = holdGuard(pane);                                                       // don't swap the content under a click that is in progress
   const tick = async () => {
-    if (paused || down) return;
+    if (paused || held()) return;
     let snap = null; try { snap = await callSnapshot(S); last = plain(snap); } catch (e) { last = String(e); }
     if (!snap || !panel) return;
     if (mode === "vis") { try { const keep = pane.scrollTop; pane.replaceChildren(await visualCall(S, snap)); pane.scrollTop = keep; } catch (e) { pane.textContent = String(e); } }

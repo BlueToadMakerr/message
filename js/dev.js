@@ -92,7 +92,7 @@ export function devCard(title, rows, { head } = {}) {
       row.classList.add("has-hist"); row.title = "Click for history graph"; row.tabIndex = 0;
       const toggle = () => { if (OPEN.has(hist.h)) { OPEN.delete(hist.h); row.nextSibling && row.nextSibling.classList && row.nextSibling.classList.contains("dev-graph") && row.nextSibling.remove(); row.classList.remove("open"); } else { OPEN.add(hist.h); row.classList.add("open"); row.after(devGraph(hist.h, hist.unit)); } };
       row.addEventListener("click", toggle); row.addEventListener("keydown", e => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); toggle(); } });
-      if (OPEN.has(hist.h)) { row.classList.add("open"); c.append(devGraph(hist.h, hist.unit)); }
+      if (OPEN.has(hist.h)) { row.classList.add("open"); c.append(devGraph(hist.h, hist.unit)); }   // (appended right after its row: rows are added in order)
     }
   }
   return c;
@@ -117,12 +117,22 @@ export async function showDev(title, { visual, raw, every = 0 }) {
   };
   tabs.addEventListener("click", e => { const b = e.target.closest(".dev-tab"); if (b) { mode = b.dataset.tab; paint(); } });
   copy.onclick = async () => { try { await copyText(last); copy.textContent = "Copied ✓"; } catch (_) { copy.textContent = "Couldn't copy"; } setTimeout(() => { copy.textContent = "Copy all"; }, 1500); };
-  const top = h("div", "row wrap"); top.append(tabs, h("span", "grow"), ...(every ? [rateSelect()] : []), copy);
+  const top = h("div", "row wrap"); top.append(tabs, h("span", "grow"), ...(every ? [rateSelect(), spanSelect()] : []), copy);
   wrap.append(top, pane);
   await paint();
-  let down = false; pane.addEventListener("pointerdown", () => { down = true; }); addEventListener("pointerup", () => setTimeout(() => { down = false; }, 60), true);   // keep the content still during a click
-  const stop = every ? devLoop(() => (down ? null : paint())) : null;                              // live views follow the chosen update speed
-  try { await confirmDialog({ title, node: wrap, okText: "Close", hideCancel: true }); } finally { if (stop) stop(); }
+  const held = holdGuard(pane);                                                                  // keep the content still during a click
+  const stop = every ? devLoop(() => (held() ? null : paint())) : null;                              // live views follow the chosen update speed
+  try { await confirmDialog({ title, node: wrap, okText: "Close", hideCancel: true }); } finally { if (stop) stop(); histClear(); }
+}
+/** True while a click / press on `el` is in progress (so a live view doesn't swap its content under the finger). It always lets go again:
+ *  a touch that turns into a scroll ends with pointercancel (no pointerup), and a release outside the window sends nothing, so it also expires by itself. */
+export function holdGuard(el) {
+  let until = 0;
+  const hold = () => { until = Date.now() + 1500; }, free = () => { until = Date.now() + 60; };
+  el.addEventListener("pointerdown", hold);
+  for (const ev of ["pointerup", "pointercancel"]) addEventListener(ev, free, true);
+  addEventListener("blur", free);
+  return () => Date.now() < until;
 }
 export const fmtBytes = n => typeof n !== "number" ? "" : n < 1024 ? n + " B" : n < 1048576 ? (n / 1024).toFixed(1) + " KB" : (n / 1048576).toFixed(1) + " MB";
 
@@ -146,7 +156,7 @@ export function devLoop(fn) {
   let stop = false, timer = 0, raf = 0;
   const run = async () => {
     if (stop) return;
-    try { await fn(); } catch (_) { /* keep going */ }
+    try { await Promise.race([fn(), new Promise(r => setTimeout(r, 5000))]); } catch (_) { /* keep going */ }     // a stuck request must not freeze the view for good
     if (stop) return;
     const ms = devRate();
     if (ms === 0) raf = requestAnimationFrame(run); else timer = setTimeout(run, ms);
@@ -156,19 +166,38 @@ export function devLoop(fn) {
 }
 
 const HIST = new Map();            // key -> [[t, v], …]
-const HIST_MAX = 1500, HIST_SPAN = 10 * 60 * 1000;
+const SPAN_KEY = "qm-dev-span", HIST_MAX = 8000;
+/** How long a graph remembers (the "max length"), in seconds. */
+export const SPANS = [[30, "30 s"], [60, "1 min"], [300, "5 min"], [600, "10 min"], [1800, "30 min"], [3600, "1 hour"]];
+export const devSpan = () => { try { const v = Number(localStorage.getItem(SPAN_KEY)); return SPANS.some(s => s[0] === v) ? v : 600; } catch (_) { return 600; } };
+export const setDevSpan = s => { try { localStorage.setItem(SPAN_KEY, String(s)); } catch (_) { /* ignore */ } trimAll(); };
+/** A <select> for the graph length. */
+export function spanSelect(onChange) {
+  const sel = h("select", "dev-rate"); sel.title = "How much history the graphs keep"; sel.setAttribute("aria-label", "Graph length");
+  for (const [s, label] of SPANS) sel.add(new Option("Graph: " + label, String(s)));
+  sel.value = String(devSpan());
+  sel.onchange = () => { setDevSpan(Number(sel.value)); onChange && onChange(Number(sel.value)); };
+  addEventListener("storage", e => { if (e.key === SPAN_KEY) sel.value = String(devSpan()); });
+  return sel;
+}
+function trim(a, t) { const lim = devSpan() * 1000; let i = 0; while (i < a.length && t - a[i][0] > lim) i++; if (i) a.splice(0, i); if (a.length > HIST_MAX) a.splice(0, a.length - HIST_MAX); }
+function trimAll() { const t = performance.now(); for (const [k, a] of HIST) { trim(a, t); if (!a.length) HIST.delete(k); } }
+/** Forget all recorded values (the live views do this when they close, so the next one starts clean). */
+export function histClear() { HIST.clear(); }
 export function histPush(key, v) {
   if (typeof v !== "number" || !isFinite(v)) return;
   let a = HIST.get(key); if (!a) HIST.set(key, a = []);
-  const t = performance.now(); a.push([t, v]);
-  while (a.length > HIST_MAX || (a.length && t - a[0][0] > HIST_SPAN)) a.shift();
+  const t = performance.now(); a.push([t, v]); LAST.set(key, t);
+  trim(a, t);
+  if (++pushes % 200 === 0) for (const [k, at] of LAST) if (t - at > 20000) { HIST.delete(k); LAST.delete(k); }     // things that vanished (someone left): drop their old numbers
 }
-export const histGet = key => HIST.get(key) || [];
+let pushes = 0; const LAST = new Map();
+export const histGet = key => { const a = HIST.get(key); if (a) trim(a, performance.now()); return HIST.get(key) || []; };
 const OPEN = new Set();             // graphs the viewer has opened (kept across repaints)
 
 /** Line graph of a value's history, with min / avg / max and a hover read-out. */
 export function devGraph(key, unit = "") {
-  const box = h("div", "dev-graph"), pts = histGet(key);
+  const box = h("div", "dev-graph"), all = histGet(key), step = Math.ceil(all.length / 400), pts = step > 1 ? all.filter((_, i) => i % step === 0 || i === all.length - 1) : all;
   if (pts.length < 2) { box.append(h("small", "muted", "Collecting data… (" + pts.length + " sample" + (pts.length === 1 ? "" : "s") + ")")); return box; }
   const W = 300, H = 70, vs = pts.map(p => p[1]), min = Math.min(...vs), max = Math.max(...vs), avg = vs.reduce((a, b) => a + b, 0) / vs.length;
   const t0 = pts[0][0], t1 = pts[pts.length - 1][0], span = Math.max(1, t1 - t0), rng = max - min || 1;
@@ -178,7 +207,7 @@ export function devGraph(key, unit = "") {
   svg.setAttribute("viewBox", `0 0 ${W} ${H}`); svg.setAttribute("preserveAspectRatio", "none"); svg.setAttribute("class", "dev-svg");
   svg.innerHTML = `<path d="${d}L${W} ${H}L0 ${H}Z" class="dev-area"/><path d="${d}" class="dev-line"/><line class="dev-cur" x1="0" x2="0" y1="0" y2="${H}" visibility="hidden"/>`;
   const fmt = v => (Math.abs(v) >= 100 ? Math.round(v) : Math.round(v * 100) / 100) + unit;
-  const read = h("div", "dev-read", `now ${fmt(vs[vs.length - 1])} · min ${fmt(min)} · avg ${fmt(avg)} · max ${fmt(max)} · ${Math.round(span / 1000)} s`);
+  const read = h("div", "dev-read", `now ${fmt(vs[vs.length - 1])} · min ${fmt(min)} · avg ${fmt(avg)} · max ${fmt(max)} · ${Math.round(span / 1000)} s${performance.now() - t1 > 4000 ? " · no new data for " + Math.round((performance.now() - t1) / 1000) + " s" : ""}`);
   svg.addEventListener("pointermove", e => {
     const r = svg.getBoundingClientRect(), f = Math.max(0, Math.min(1, (e.clientX - r.left) / r.width)), t = t0 + f * span;
     let best = pts[0]; for (const p of pts) if (Math.abs(p[0] - t) < Math.abs(best[0] - t)) best = p;

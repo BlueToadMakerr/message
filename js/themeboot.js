@@ -115,12 +115,13 @@
       if (has("bg") && midnight && i === 1) callBg = o.bg;
     });
 
+    if (custom && !callBg) callBg = t.bg[1];                  // the call page / call layer always use the dark colours
     lastTokens = t;
     var css = "";
     if (custom) {                                            // plain rules (no light-dark(): Safari before 17.5 ignores it)
       var L = "", D = "";
       for (k in VAR) { L += VAR[k] + ":" + t[k][0] + ";"; D += VAR[k] + ":" + t[k][1] + ";"; }
-      if (callBg) L += "--call-bg:" + callBg + ";--tile-bg:#0c0c0f;";
+      if (callBg) L += "--call-bg:" + callBg + ";" + (midnight ? "--tile-bg:#0c0c0f;" : "");
       css = ":root:root:root{" + L + "}@media (prefers-color-scheme:dark){:root:root:not([data-theme=\"light\"]){" + D + "}}:root:root[data-theme=\"dark\"]{" + D + "}";
     }
     return { css: css, midnight: midnight };
@@ -142,4 +143,18 @@
   apply(true);
   addEventListener("storage", function (e) { if (!e.key || /^(qm-midnight|qm-accent|qm-material|qm-colors)$/.test(e.key)) apply(false); });
   try { new BroadcastChannel("qm-theme").onmessage = function () { apply(false); }; } catch (e) { /* old browser */ }
+
+  // The web app manifest is built here and handed over as a data: link, so no manifest.json file is needed (some web hosts refuse to serve one).
+  // Inside a data: manifest relative links don't work, so every address is made absolute from this page's own location.
+  try {
+    var base = new URL("./", document.baseURI).href, abs = function (p) { return new URL(p, base).href; };
+    var man = {
+      name: "QuickMessage", short_name: "QuickMsg", description: "A simple, lightweight private messaging app.",
+      start_url: abs("index.html"), scope: base, display: "standalone", orientation: "portrait", background_color: "#4f46e5", theme_color: "#4f46e5",
+      icons: [{ src: abs("icons/icon-192.png"), sizes: "192x192", type: "image/png", purpose: "any" }, { src: abs("icons/icon-512.png"), sizes: "512x512", type: "image/png", purpose: "any" }]
+    };
+    var lk = document.createElement("link"); lk.rel = "manifest"; lk.id = "qm-manifest";
+    lk.href = "data:application/manifest+json;charset=utf-8," + encodeURIComponent(JSON.stringify(man));
+    (document.head || R).appendChild(lk);
+  } catch (e) { /* no manifest: the site still works, it just can't be installed */ }
 })();

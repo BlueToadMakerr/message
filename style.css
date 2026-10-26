@@ -340,7 +340,6 @@ dialog#lightbox img { max-width: 100%; max-height: 100%; border-radius: 8px; }
 .call-banner .cb-text { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .call-banner .cb-meta { opacity: .9; font-variant-numeric: tabular-nums; }
 .call-banner .cb-faces { display: flex; padding-left: 6px; }
-.call-banner .cb-join { background: #fff; color: #15803d; font-weight: 700; padding: .3rem .85rem; border-radius: 999px; }
 .call-banner .cb-live { width: 9px; height: 9px; border-radius: 50%; background: #bbf7d0; animation: cb-pulse 1.6s ease-out infinite; flex: none; }
 @keyframes cb-pulse { 0% { box-shadow: 0 0 0 0 rgb(187 247 208 / .8); } 100% { box-shadow: 0 0 0 9px rgb(187 247 208 / 0); } }
 #callBtn.in-call { color: #16a34a; }

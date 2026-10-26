@@ -460,6 +460,7 @@ class MainActivity : Activity() {
             try { startActivity(Intent(this@MainActivity, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_REORDER_TO_FRONT or Intent.FLAG_ACTIVITY_SINGLE_TOP)) } catch (_: Exception) {}
         }
         @JavascriptInterface fun setCallDeaf(deafened: Boolean, useDeafenButton: Boolean) { NotifyService.setCallDeaf(this@MainActivity, deafened, useDeafenButton) }
+        @JavascriptInterface fun setCallWho(who: String) { NotifyService.setCallWho(this@MainActivity, who.take(120)) }
         @JavascriptInterface fun setCallInfo(title: String, muted: Boolean, screen: Boolean, canScreen: Boolean, photo: String, startMs: Double) { NotifyService.setCallInfo(this@MainActivity, title.take(60), muted, screen, canScreen, if (photo.startsWith("https://") || photo.startsWith("data:image/")) photo.take(3_000_000) else "", startMs.toLong()) }
 
         /** Message protection: true while the phone is still locked after a call opened the app over the lock screen. */

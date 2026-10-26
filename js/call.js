@@ -803,6 +803,8 @@ function pushShellState() {
     camOn: !!(S.media && S.media.camOn && S.media.cam), canCam: !!S.media?.canCam,
     screenOn: !!S.media?.screen, canScreen: !!S.media?.canScreen,
     uids: [...new Set(Object.values(S.sessions || {}).map(x => x.uid).concat(S.joined ? [S.me] : []))],
+    // group chats: who is in the call right now (shown instead of "Ongoing call" in Android's call notification); "" for 1:1 chats
+    who: S.participants.length > 2 ? [...new Set(Object.values(S.sessions || {}).map(x => x.uid))].filter(u => u !== S.me).map(u => profileOf(u).displayName).join(", ") : "",
     startLocal: start && S.room ? start - S.room.offset : null
   });
 }

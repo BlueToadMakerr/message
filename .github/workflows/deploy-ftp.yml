@@ -110,12 +110,14 @@ jobs:
           mkdir dl
           gh run download "${{ steps.run.outputs.id }}" --repo "$GITHUB_REPOSITORY" -n quickmessage-ios-unsigned -D dl
           gh run download "${{ steps.run.outputs.id }}" --repo "$GITHUB_REPOSITORY" -n quickmessage-ios-simulator -D dl
+          gh run download "${{ steps.run.outputs.id }}" --repo "$GITHUB_REPOSITORY" -n quickmessage-ios-tipa -D dl || echo "no .tipa in that build (older build): skipping"
       - name: Version file
         run: |
           num="${{ steps.run.outputs.num }}"
-          jq -n --argjson code "$((100 + num))" --arg name "1.0.$num" --arg built "$(date -u +%FT%TZ)" \
-            '{versionCode:$code, versionName:$name, url:"downloads/QuickMessage-unsigned.ipa", simulator:"downloads/QuickMessage-simulator.zip", built:$built}' > dl/ios.json
-          printf 'AddType application/vnd.android.package-archive .apk\nAddType application/octet-stream .ipa\n' > dl/.htaccess
+          tipa=""; [ -f dl/QuickMessage.tipa ] && tipa="downloads/QuickMessage.tipa"
+          jq -n --argjson code "$((100 + num))" --arg name "1.0.$num" --arg built "$(date -u +%FT%TZ)" --arg tipa "$tipa" \
+            '{versionCode:$code, versionName:$name, url:"downloads/QuickMessage-unsigned.ipa", simulator:"downloads/QuickMessage-simulator.zip", built:$built} + (if $tipa != "" then {tipa:$tipa} else {} end)' > dl/ios.json
+          printf 'AddType application/vnd.android.package-archive .apk\nAddType application/octet-stream .ipa\nAddType application/octet-stream .tipa\n' > dl/.htaccess
           ls -la dl; cat dl/ios.json
       - name: Upload to the server
         uses: SamKirkland/FTP-Deploy-Action@v4.3.5

@@ -1,5 +1,6 @@
 name: Build iOS app
 # Builds an UNSIGNED .ipa (no Apple developer account needed). Sign it yourself to install it: Sideloadly, AltStore, or Xcode with your Apple ID.
+# Also builds a .tipa for TrollStore (same app, fake-signed with ldid; TrollStore installs it permanently, no signing or 7-day expiry).
 on:
   push:
     paths: ["ios/**", ".github/workflows/build-ios.yml"]
@@ -33,6 +34,22 @@ jobs:
         with:
           name: quickmessage-ios-unsigned
           path: ios/QuickMessage-unsigned.ipa
+      # TrollStore: a .tipa is an .ipa whose binaries carry a fake signature (ldid) — TrollStore replaces it with its own permanent one.
+      - name: Package the .tipa (TrollStore)
+        working-directory: ios
+        run: |
+          brew install ldid
+          rm -rf tipa && mkdir -p tipa/Payload
+          cp -R build/Build/Products/Release-iphoneos/QuickMessage.app tipa/Payload/
+          app=tipa/Payload/QuickMessage.app
+          for b in "$app"/PlugIns/*.appex; do [ -d "$b" ] && ldid -S "$b/$(/usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' "$b/Info.plist")"; done
+          ldid -S "$app/$(/usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' "$app/Info.plist")"
+          (cd tipa && zip -qry ../QuickMessage.tipa Payload)
+          ls -la QuickMessage.tipa
+      - uses: actions/upload-artifact@v4
+        with:
+          name: quickmessage-ios-tipa
+          path: ios/QuickMessage.tipa
       # Simulator build: runs in the iOS Simulator on a Mac (no signing, no Apple account). Boot a simulator, then:
       #   xcrun simctl install booted QuickMessage.app && xcrun simctl launch booted app.quickmessage.chat
       # Installing again over an existing copy simply updates it.

@@ -121,12 +121,7 @@ function failedMedia(kind, url, name) {
 function onMedia(el) {
   if (el instanceof HTMLVideoElement && el.videoWidth === 0 && el.readyState >= 1) el = swapToAudio(el);   // an audio-only "video": just the player
   const msg = el && el.closest && el.closest(".msg");
-  if (msg && msg.dataset.old) {
-    const h = msg.offsetHeight, d = h - (+msg.dataset.h || h);
-    msg.dataset.h = h;
-    if (d && msg.getBoundingClientRect().top < messagesDiv.getBoundingClientRect().top) { ignoreScrollUntil = Date.now() + 250; messagesDiv.scrollTop += d; }
-    return;
-  }
+  if (msg && msg.dataset.old) return;        // the size watcher below keeps the view still while older messages grow
   if (stick) scrollToBottom();
 }
 const scrollToBottom = () => { messagesDiv.scrollTop = messagesDiv.scrollHeight; stick = true; jumpBtn.classList.add("hidden"); };
@@ -374,8 +369,25 @@ function buildMessage(key, msg) {
   col.append(row, foot);
   el.append(col);
   fillMessage(el, key, msg);
+  sizeWatch.observe(el);
   return el;
 }
+
+// Keeps the page from jumping when something in a message changes size later (link previews, pictures, edits, reactions):
+// at the bottom the view stays at the bottom, otherwise anything that grows ABOVE what you are reading pushes the scroll position by the same amount.
+const msgHeights = new WeakMap();
+const sizeWatch = new ResizeObserver(entries => {
+  let push = 0, bottom = false;
+  for (const e of entries) {
+    const h = e.target.offsetHeight, prev = msgHeights.get(e.target);
+    msgHeights.set(e.target, h);
+    if (prev == null || prev === h) continue;
+    if (stick) bottom = true;
+    else if (e.target.getBoundingClientRect().top < messagesDiv.getBoundingClientRect().top) push += h - prev;
+  }
+  if (bottom) scrollToBottom();
+  else if (push) { ignoreScrollUntil = Date.now() + 250; messagesDiv.scrollTop += push; }
+});
 
 function appendLive(key, msg) {
   if (document.getElementById("msg-" + key)) return null;

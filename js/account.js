@@ -1,5 +1,5 @@
 import { audioSettingsNode } from "./call/devices.js";
-import { rateSelect } from "./dev.js";
+import { rateSelect, spanSelect } from "./dev.js";
 import { toHome, toTop, QM, trackSplit, markReady } from "./embed.js";
 import { auth, db } from "./firebase.js";
 import {
@@ -34,8 +34,12 @@ function renderHeader(name, pfp) {
   $("headName").textContent = name;
 }
 
-// Live theme preview while choosing (saved to the profile on "Save changes").
+// Live theme preview while choosing (saved to the profile on "Save changes"). A preview that was never saved is undone as soon as you leave this page.
+let savedTheme = getTheme();
 $("themeSelect").addEventListener("change", e => applyTheme(e.target.value));
+const revertPreview = () => { try { if (getTheme() !== savedTheme) applyTheme(savedTheme); } catch (_) { /* ignore */ } };
+addEventListener("pagehide", revertPreview);
+addEventListener("beforeunload", revertPreview);
 
 // Live avatar preview
 $("pfpUrl").addEventListener("input", () => {
@@ -56,7 +60,7 @@ onAuthStateChanged(auth, async u => {
   $("pfpUrl").value = profile.pfp || "";
   // Bug fix: the old page read an undefined `info.theme` here and crashed.
   const theme = profile.theme || getTheme();
-  $("themeSelect").value = applyTheme(theme);
+  $("themeSelect").value = applyTheme(theme); savedTheme = $("themeSelect").value;
   renderHeader($("displayName").value || u.email || "?", profile.pfp);
 
   $("passwordSection").classList.toggle("hidden", !(u.providerData || []).some(p => p.providerId === "password"));
@@ -140,6 +144,8 @@ $("emailAddToggle").addEventListener("change", async e => {
   try { await update(ref(db, `accsettings/${user.uid}/settings`), { emailAdd: e.target.checked }); invalidateProfile(user.uid); toast(e.target.checked ? "People can add you by email." : "People need your UID to add you.", "success", 2500); }
   catch (_) { e.target.checked = !e.target.checked; toast("Couldn't save that.", "error"); }
 });
+try { $("fpsToggle").checked = localStorage.getItem("qm-show-fps") === "1"; } catch (_) { /* ignore */ }
+$("fpsToggle").addEventListener("change", e => { try { localStorage.setItem("qm-show-fps", e.target.checked ? "1" : "0"); } catch (_) { /* ignore */ } toast(e.target.checked ? "Frame rate shown in calls." : "Frame rate hidden.", "success", 2000); });
 $("previewToggle").addEventListener("change", e => { setPreviews(e.target.checked); toast(e.target.checked ? "Link previews on." : "Link previews off (reload chats to apply).", "success", 2500); });
 
 // ---------- call notification button (Android app) ----------
@@ -312,7 +318,7 @@ $("profileForm").addEventListener("submit", async e => {
   try {
     await update(ref(db, `accsettings/${user.uid}/settings`), { displayName, pfp, theme: $("themeSelect").value });
     invalidateProfile(user.uid);
-    applyTheme($("themeSelect").value);
+    savedTheme = applyTheme($("themeSelect").value);
     renderHeader(displayName, pfp);
     toast("Profile saved.", "success");
   } catch (err) {
@@ -418,4 +424,4 @@ markReady();   // tells the app shell this frame booted (see frame watchdog in s
 
 $("audioHost")?.append(audioSettingsNode());
 
-$("devRateHost")?.append(rateSelect());
+$("devRateHost")?.append(rateSelect(), spanSelect());

@@ -1,7 +1,7 @@
 // "Refresh site": makes the browser fetch the newest copy of every page, script and stylesheet, then reloads.
 // A normal reload only re-checks the page itself; scripts and styles that were loaded earlier can stay in the browser's HTTP cache.
 // So this re-downloads (cache: "reload") everything the app uses: what's already loaded in this tab and its frames, plus whatever those scripts import.
-const SEEDS = ["index.html", "message.html", "account.html", "call.html", "style.css", "call.css", "js/themeboot.js", "manifest.json", "firebase-messaging-sw.js"];
+const SEEDS = ["index.html", "message.html", "account.html", "call.html", "style.css", "call.css", "js/themeboot.js", "firebase-messaging-sw.js"];
 const IMPORT = /(?:from\s*|import\s*\(\s*|import\s+)["'](\.{1,2}\/[^"']+\.js)["']/g;
 
 function loadedUrls(win, out, depth = 0) {

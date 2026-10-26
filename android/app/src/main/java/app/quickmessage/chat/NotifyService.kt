@@ -29,6 +29,7 @@ class NotifyService : Service() {
 
         @Volatile var inCall = false
         @Volatile var callTitle = ""
+        @Volatile var callWho = ""
         @Volatile var callMuted = false
         @Volatile var callScreen = false
         @Volatile var callCanScreen = false
@@ -53,6 +54,14 @@ class NotifyService : Service() {
             if (photoChanged || callBmp == null) Thread { callBmp = Avatars.load(photo.ifBlank { null }, title.ifBlank { "Call" }); refresh() }.start() else refresh()
         }
 
+        /** Group calls: the names of the people in the call, shown instead of the default "Ongoing call" text. */
+        fun setCallWho(ctx: Context, who: String) {
+            if (who == callWho) return
+            callWho = who
+            if (inCall) { val i = Intent(ctx, NotifyService::class.java).putExtra("call", true)
+                try { if (Build.VERSION.SDK_INT >= 26) ctx.startForegroundService(i) else ctx.startService(i) } catch (_: Exception) {} }
+        }
+
         fun setCallDeaf(ctx: Context, deaf: Boolean, useDeaf: Boolean) {
             if (deaf == callDeaf && useDeaf == callUseDeaf) return
             callDeaf = deaf; callUseDeaf = useDeaf
@@ -63,7 +72,7 @@ class NotifyService : Service() {
         /** Tells the service a call is up, so it can hold the camera/microphone foreground types (Android blocks background capture otherwise). */
         fun setCall(ctx: Context, on: Boolean) {
             inCall = on
-            if (!on) { callBmp = null; callPhoto = ""; callTitle = "" }
+            if (!on) { callBmp = null; callPhoto = ""; callTitle = ""; callWho = "" }
             else if (callBmp == null && callTitle.isNotBlank()) Thread { callBmp = Avatars.load(callPhoto.ifBlank { null }, callTitle); setCall(ctx, true) }.start()
             val i = Intent(ctx, NotifyService::class.java).putExtra("call", on)
             try { if (Build.VERSION.SDK_INT >= 26) ctx.startForegroundService(i) else ctx.startService(i) } catch (_: Exception) {}
@@ -209,8 +218,9 @@ class NotifyService : Service() {
             if (Build.VERSION.SDK_INT >= 31) {
                 b.setStyle(Notification.CallStyle.forOngoingCall(android.app.Person.Builder().setName(title).setImportant(true).apply { callBmp?.let { setIcon(android.graphics.drawable.Icon.createWithBitmap(it)) } }.build(), hang))
                 callBmp?.let { b.setLargeIcon(it) }
+                if (callWho.isNotBlank()) b.setContentText(callWho)      // replaces the system's default "Ongoing call" line
             } else {
-                b.setContentTitle(title).setContentText("Ongoing call").addAction(Notification.Action.Builder(ic(android.R.drawable.ic_menu_close_clear_cancel), "Hang up", hang).build())
+                b.setContentTitle(title).setContentText(callWho.ifBlank { "Ongoing call" }).addAction(Notification.Action.Builder(ic(android.R.drawable.ic_menu_close_clear_cancel), "Hang up", hang).build())
             }
         } else b.setContentTitle("QuickMessage").setContentText("Listening for messages and calls")
         val n = b.build()

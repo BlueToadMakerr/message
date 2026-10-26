@@ -62,7 +62,7 @@ async function openMenu() {
   }
   if (isIOS) {
     const a = item("iPhone app", "Loading…", async () => {
-      const ok = await confirmDialog({ title: "iPhone app", message: "This downloads an unsigned app file (.ipa). iPhones only install it through a sideloading tool such as Sideloadly or AltStore.", okText: "Download" });
+      const ok = await confirmDialog({ title: "iPhone app", message: "This downloads an unsigned app file (.ipa). iPhones only install it through a sideloading tool such as Sideloadly or AltStore. (On a TrollStore device, use the .tipa from “More…”.)", okText: "Download" });
       if (ok) { const f = await getFile("ios", "downloads/QuickMessage-unsigned.ipa"); location.href = f.url; }
     });
     loadInfo("ios").then(j => { a.querySelector("small").textContent = j ? `Version ${j.versionName} · needs a sideloading tool` : "Needs a sideloading tool"; });

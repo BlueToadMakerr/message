@@ -27,7 +27,7 @@
   const link = (href, text) => { const a = document.createElement("a"); a.className = "btn"; a.href = href; a.textContent = text; return a; };
   const note = t => { const s = document.createElement("small"); s.textContent = t; const d = document.createElement("div"); d.append(s); return d; };
   show("android", "android.json", j => [link(j.url.replace(/^downloads\//, ""), "Download the APK (" + j.versionName + ")"), note("Allow “install unknown apps” when Android asks. Built " + (j.built || ""))]);
-  show("ios", "ios.json", j => [link(j.url.replace(/^downloads\//, ""), "Download the .ipa (" + j.versionName + ")"), link(j.simulator.replace(/^downloads\//, ""), "iOS Simulator build"), note("The .ipa is unsigned: install it with Sideloadly, AltStore or Xcode. The simulator zip is for a Mac: xcrun simctl install booted QuickMessage.app")]);
+  show("ios", "ios.json", j => [link(j.url.replace(/^downloads\//, ""), "Download the .ipa (" + j.versionName + ")"), ...(j.tipa ? [link(j.tipa.replace(/^downloads\//, ""), "Download the .tipa (TrollStore)")] : []), link(j.simulator.replace(/^downloads\//, ""), "iOS Simulator build"), note("The .ipa is unsigned: install it with Sideloadly, AltStore or Xcode. The .tipa is for TrollStore (open it with TrollStore: permanent install, no signing). The simulator zip is for a Mac: xcrun simctl install booted QuickMessage.app")]);
 </script>
 </body>
 </html>

@@ -372,6 +372,7 @@ function tellApp() {
     const key = st.call.joined + "/" + st.call.visible;
     if (st.call.joined && !st.call.joinedAt) st.call.joinedAt = Date.now();
     if (key !== lastAppCall) { lastAppCall = key; window.QMApp.setInCall(!!st.call.joined, !!st.call.visible); }
+    if (st.call.joined) window.QMApp.setCallWho?.(String(st.call.who || ""));
     if (st.call.joined) window.QMApp.setCallInfo?.(String(st.call.title || ""), !!st.call.muted, !!st.call.screenOn, !!st.call.canScreen, String(st.call.photo || ""), Number(st.call.startLocal || 0));
   } catch (_) { /* ignore */ }
 }

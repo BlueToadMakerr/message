@@ -5,7 +5,6 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
   <title>Account · QuickMessage</title>
   <meta name="theme-color" content="#4f46e5">
-  <link rel="manifest" href="manifest.json">
   <link rel="icon" href="icons/icon.svg" type="image/svg+xml">
   <link rel="apple-touch-icon" href="icons/icon-192.png">
   <link rel="stylesheet" href="style.css">
@@ -149,6 +148,11 @@
         </div>
       </section>
 
+      <section class="card">
+        <h2>Call display</h2>
+        <label class="switch-row"><input type="checkbox" id="fpsToggle"> <span><strong>Show live frame rate on videos</strong><br><small class="muted">Puts a small “30 fps” badge on each person's video in a call (how many frames per second this device is actually showing).</small></span></label>
+      </section>
+
       <section id="notifBtnCard" class="card hidden">
         <h2>Call notification</h2>
         <p class="muted" style="margin-top:0">Android shows at most three buttons in the ongoing-call notification, and one is always Hang up. Choose the third one next to Mute.</p>
@@ -158,7 +162,7 @@
       <section class="card">
         <h2>Developer</h2>
         <label class="switch-row"><input type="checkbox" id="devToggle"> <span><strong>Developer mode</strong><br><small class="muted">Adds small <code>{ }</code> buttons (chat list, chats, messages, calls) that open raw, copyable information: what is loaded, call frame rate, connection and WebRTC details, raw message data. Nothing changes on screen otherwise. Saved on this device.</small></span></label>
-        <div class="row wrap" style="margin-top:.7rem;align-items:center"><label class="lbl" style="margin:0">Update speed of live views</label><span id="devRateHost"></span></div>
+        <div class="row wrap" style="margin-top:.7rem;align-items:center"><label class="lbl" style="margin:0">Live views: update speed and graph length</label><span id="devRateHost"></span></div>
         <div class="row wrap" style="margin-top:.7rem"><button id="devAccountBtn" class="dev-btn" type="button">{ } Account info</button></div>
       </section>
 

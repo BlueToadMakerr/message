@@ -345,3 +345,19 @@ The `companion*`/`pairings` database rules and `js/companion.js`, `js/phone-call
 - New **Download** button in the top bar (hidden inside the Android/iPhone apps). It opens a menu with: **Install as a web app** (browser install prompt, or Add to Home Screen steps on iPhone), **Android app** (only on Android; version read from `downloads/android.json`), **iPhone app** (only on iPhone/iPad; unsigned .ipa, needs sideloading), and **More…**, which shows `downloads/index.html` inside the app.
 - Replaces the old separate "Android app" link and "Install" button. Code: `js/dl-menu.js`.
 - Not tested on real devices; web side covered by `t45`.
+
+## Round 31
+- **Call page uses your colours**: it always uses the *dark* colours of your theme (accent, own colours, Midnight, Material You) instead of fixed indigo/grey (`call.css`, `themeboot.js` now always sets `--call-bg` when something is customised).
+- **Link previews no longer shift the page**: every message is watched for size changes (`ResizeObserver` in `message.js`); anything that grows above what you are reading moves the scroll position by the same amount, and at the bottom the view stays at the bottom.
+- **Loading badge**: where "Reconnecting…" shows, a tile now says "Loading camera…", "Loading mic…" or "Loading camera & mic…" when the camera/mic is on but hasn't arrived yet (after a 1.2 s grace period).
+- **Live fps on videos**: Account → Call display → "Show live frame rate on videos" (per device).
+- **Developer graphs**: history is cleared when the live view closes, numbers of people who left are dropped, an open graph stays under its row after a refresh, and the graph length is selectable (30 s … 1 hour) next to the update speed. Live views no longer stop updating after a touch scroll (the click guard now also lets go on `pointercancel`/after 1.5 s), when one connection's stats hang (timeouts) or throw.
+- **Appearance preview**: choosing a theme without pressing "Save changes" is undone as soon as you leave the Account page.
+- **Android call notification**: in group chats the text under the name shows who is in the call (instead of "Ongoing call"); 1:1 chats keep the default.
+- **Call banner**: the "Join" button is gone (tap the banner).
+- **Bubbles**: file picking and the camera now work (file chooser + camera permission; the microphone is still blocked).
+- **iOS**: the build also makes `QuickMessage.tipa` for TrollStore (fake-signed with ldid); uploaded to `downloads/` and linked on the download page.
+- Not tested on real devices (Android bubbles/notification, TrollStore); web side covered by `t46`.
+
+## Round 32 – no manifest.json
+- `manifest.json` is gone. `js/themeboot.js` (loaded in every page) builds the web-app manifest and adds it as a `data:` link; its addresses are made absolute from the page's own location (relative ones don't work inside a data: manifest). Install-as-app still works from the browser; test `t47`.
