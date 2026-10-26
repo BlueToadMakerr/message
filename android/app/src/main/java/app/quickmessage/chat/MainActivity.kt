@@ -595,6 +595,11 @@ class MainActivity : Activity() {
             try { startActivity(Intent(android.provider.Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES, Uri.parse("package:$packageName"))) } catch (_: Exception) {}
         }
         @JavascriptInterface fun downloadUpdate(url: String) { Updater.download(this@MainActivity, url) }
+        // the page downloads the APK itself (works with hosts that block non-browser requests) and passes it in pieces
+        @JavascriptInterface fun updateBegin(): Boolean = Updater.beginUpload(this@MainActivity)
+        @JavascriptInterface fun updateChunk(b64: String): Boolean = Updater.uploadChunk(b64)
+        @JavascriptInterface fun updateEnd() { Thread { Updater.finishUpload(this@MainActivity) }.start() }
+        @JavascriptInterface fun updateAbort() { Updater.abortUpload() }
 
         @JavascriptInterface fun isDark(): Boolean = (resources.configuration.uiMode and android.content.res.Configuration.UI_MODE_NIGHT_MASK) == android.content.res.Configuration.UI_MODE_NIGHT_YES
 

@@ -24,6 +24,36 @@ object Updater {
         MainActivity.instance?.runJs("window.__qmUpdate&&window.__qmUpdate(${obj})")
     }
 
+    // ---- Download through the web view: the page itself fetches the APK (so the host's "browser check" / cookies are satisfied, which a plain
+    // HTTP request from the app can't do — free hosts answer those with 403) and hands it over in pieces; the app writes it and installs it.
+    private var out: java.io.OutputStream? = null
+    private var written = 0L
+    @Synchronized fun beginUpload(ctx: Context): Boolean {
+        if (busy) return false
+        busy = true
+        return try {
+            val f = File(ctx.applicationContext.cacheDir, "update.apk"); if (f.exists()) f.delete()
+            out = f.outputStream(); written = 0; true
+        } catch (_: Exception) { busy = false; false }
+    }
+    @Synchronized fun uploadChunk(b64: String): Boolean = try {
+        val b = android.util.Base64.decode(b64, android.util.Base64.DEFAULT); out!!.write(b); written += b.size; true
+    } catch (_: Exception) { abortUpload(); false }
+    @Synchronized fun abortUpload() { try { out?.close() } catch (_: Exception) {}; out = null; busy = false }
+    @Synchronized fun finishUpload(ctx: Context) {
+        val app = ctx.applicationContext
+        try {
+            out?.close(); out = null
+            val file = File(app.cacheDir, "update.apk")
+            if (file.length() < 100_000) throw RuntimeException("The downloaded file is too small to be the app (the host may have answered with a web page)")
+            report(JSONObject().put("state", "installing"))
+            install(app, file)
+        } catch (e: Exception) {
+            busy = false
+            report(JSONObject().put("state", "failed").put("message", e.message ?: "Install failed"))
+        }
+    }
+
     fun download(ctx: Context, url: String) {
         if (busy) return
         if (!url.startsWith(Config.SITE_URL)) { report(JSONObject().put("state", "failed").put("message", "The update has to come from your own site.")); return }

@@ -361,3 +361,7 @@ The `companion*`/`pairings` database rules and `js/companion.js`, `js/phone-call
 
 ## Round 32 – no manifest.json
 - `manifest.json` is gone. `js/themeboot.js` (loaded in every page) builds the web-app manifest and adds it as a `data:` link; its addresses are made absolute from the page's own location (relative ones don't work inside a data: manifest). Install-as-app still works from the browser; test `t47`.
+
+## Round 33 – updates through the web view
+- Free hosts (InfinityFree) answer the app's own HTTP request with **403** (browser check). The update now downloads the APK with the **page's own `fetch()`** (inside the web view, which has passed the check) and hands it to the app in 192 KB pieces (`updateBegin/Chunk/End/Abort` on the bridge → `Updater.kt` writes `update.apk` and installs it). If the host still answers with its check page, the update bar says so ("reload the app once and try again"). The old native download stays as a fallback. Tests `t48`, `t44`.
+- Not tested on a phone.

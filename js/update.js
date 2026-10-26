@@ -62,7 +62,39 @@ async function startUpdate(u, textEl, goBtn, laterBtn) {
     else if (s.state === "confirm") say("Confirm the update", "Tap Update in the Android window.");
     else if (s.state === "failed") { say("Update failed", s.message || "Try again later."); goBtn.disabled = false; goBtn.textContent = "Try again"; laterBtn.hidden = false; }
   };
+  if (q.updateBegin) { webDownload(q, u.url, say); return; }
   q.downloadUpdate(u.url);
+}
+
+/** Downloads the APK with the page's own fetch() (so the host's browser check and cookies are satisfied) and hands it to the app piece by piece. */
+async function webDownload(q, url, say) {
+  const fail = m => window.__qmUpdate({ state: "failed", message: m });
+  try {
+    if (!q.updateBegin()) return fail("Another update is already running.");
+    const r = await fetch(url, { cache: "no-store", credentials: "include" });
+    if (!r.ok) { q.updateAbort(); return fail("The server answered " + r.status + ". Reload the app and try again."); }
+    if (/text\/html/i.test(r.headers.get("content-type") || "")) { q.updateAbort(); return fail("The host showed its browser-check page instead of the file. Reload the app once and try again."); }
+    const total = Number(r.headers.get("content-length")) || 0, rd = r.body.getReader();
+    let done = 0, pending = [], size = 0, last = -1;
+    const flush = () => {
+      if (!size) return true;
+      const all = new Uint8Array(size); let o = 0; for (const p of pending) { all.set(p, o); o += p.length; } pending = []; size = 0;
+      for (let s = 0; s < all.length; s += 192 * 1024) {                      // pieces of at most 192 KB across the bridge
+        const part = all.subarray(s, s + 192 * 1024); let bin = "";
+        for (let i = 0; i < part.length; i += 0x8000) bin += String.fromCharCode.apply(null, part.subarray(i, i + 0x8000));
+        if (!q.updateChunk(btoa(bin))) return false;
+      }
+      return true;
+    };
+    for (;;) {
+      const { value, done: end } = await rd.read(); if (end) break;
+      pending.push(value); size += value.length; done += value.length;
+      if (size >= 192 * 1024 && !flush()) return fail("Couldn't save the download on this phone.");
+      if (total) { const p = Math.floor(done * 100 / total); if (p !== last) { last = p; say("Downloading…", p + "%"); } }
+    }
+    if (!flush()) return fail("Couldn't save the download on this phone.");
+    q.updateEnd();
+  } catch (e) { try { q.updateAbort(); } catch (_) { /* ignore */ } fail("Download failed: " + (e && e.message || e)); }
 }
 
 /** Looks for an update; shows the banner when there is one (unless you pressed "Later" for exactly this version, and it isn't a manual check). */
