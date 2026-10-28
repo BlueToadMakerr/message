@@ -21,7 +21,7 @@ Signing in happens on the website. `js/app-bridge.js` hands the signed-in accoun
 when the page isn't open; signing out removes it.
 
 ## Build
-GitHub Actions: `.github/workflows/build-android.yml` builds `app-debug.apk`. Or open `android/` in Android Studio.
+GitHub Actions: the `android` job of `.github/workflows/quickmessage.yml` builds `app-debug.apk`. Or open `android/` in Android Studio.
 Set `Config.SITE_URL` (your site, with trailing slash), `API_KEY` and `DB_URL` in `Api.kt`.
 No Firebase Android SDK or `google-services.json` is used.
 

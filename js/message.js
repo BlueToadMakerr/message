@@ -817,8 +817,9 @@ function paintJobProgress(job) {
   const failed = job.state === "error", uploading = job.progress !== "sending" && (job.litter || job.spec.type === "file") && !job.spec.extra?.url;
   const foot = job.el.querySelector(".time");
   const pct = typeof job.progress === "number" ? Math.floor(job.progress * 100) : null;
-  if (foot) foot.textContent = failed ? "Failed to send" : (uploading ? "Uploading…" : "Sending…");
-  if (job.note) job.note.textContent = failed ? (uploading ? "Upload failed" : "Couldn't send") : uploading ? (pct == null ? "Uploading…" : `Uploading… ${pct}%`) : "Sending…";
+  const waiting = job.state === "waiting";
+  if (foot) foot.textContent = failed ? "Failed to send" : waiting ? "Waiting for connection…" : (uploading ? "Uploading…" : "Sending…");
+  if (job.note) job.note.textContent = failed ? (uploading ? "Upload failed" : "Couldn't send") : waiting ? "Waiting for connection…" : uploading ? (pct == null ? "Uploading…" : `Uploading… ${pct}%`) : "Sending…";
   if (job.bar) {
     job.bar.classList.toggle("indet", !failed && uploading && pct == null);
     job.bar.hidden = failed || !uploading;
@@ -840,7 +841,10 @@ async function runJob(job) {
     }
     job.progress = "sending";
     paintJob(job);
-    await Promise.race([writeJob(job), new Promise((_, rej) => setTimeout(() => rej(new Error("Timed out — check your connection and retry.")), SEND_TIMEOUT))]);
+    // A slow connection is not a failed send: the database keeps the write and sends it as soon as it can (and the finished write still completes this
+    // bubble — see writeJob). So after a while the bubble just says "waiting for connection"; only a real refusal (no permission, bad data) is a failure.
+    const slow = setTimeout(() => { if (jobs.has(job.id) && job.state === "sending") { job.state = "waiting"; paintJob(job); } }, SEND_TIMEOUT);
+    try { await writeJob(job); } finally { clearTimeout(slow); }
   } catch (err) {
     if (job.cancelled || err.aborted || !jobs.has(job.id)) return;
     failJob(job, err);
@@ -924,9 +928,9 @@ function showJobMenu(job, btn) {
     b.addEventListener("click", () => { closeMenu(); fn(); });
     menuEl.append(b);
   };
-  if (job.state === "error") {
+  if (job.state === "error" || job.state === "waiting") {
     add("Retry", "send", () => runJob(job));
-    add("See error", "alert", () => alertDialog({ title: "Why it failed", message: job.error || "Unknown error" }));
+    if (job.state === "error") add("See error", "alert", () => alertDialog({ title: "Why it failed", message: job.error || "Unknown error" }));
   }
   add(job.state === "error" ? "Cancel" : "Cancel sending", "close", () => cancelJob(job), true);
   menuEl.classList.remove("hidden");
@@ -940,13 +944,22 @@ function showJobMenu(job, btn) {
 // Used by anything that just needs "send this now" semantics (e.g. the link dialog).
 function sendMessage(spec) { return startJob(spec); }
 
-async function notifyServer() {
-  try {
-    const idToken = await auth.currentUser.getIdToken();
-    await fetch("notify.php", { method: "POST", body: new URLSearchParams({ chatId, idToken }) });
-  } catch (err) {
-    console.warn("Notification request failed", err);
-  }
+// Asks the server to push the new message to the other people's devices. It must not get lost: it is tried again (with a fresh sign-in token)
+// when the network hiccups or the host answers with an error, and `keepalive` lets it finish even if you leave the chat right after sending.
+// The server answers as soon as it has marked the message as notified, so this is quick; "already sent" / "someone else handles it" count as done.
+let notifyChain = Promise.resolve();
+function notifyServer() {
+  notifyChain = notifyChain.then(async () => {
+    for (let attempt = 0; attempt < 4; attempt++) {
+      try {
+        const idToken = await auth.currentUser.getIdToken(attempt > 0);
+        const r = await fetch("notify.php", { method: "POST", body: new URLSearchParams({ chatId, idToken }), keepalive: true });
+        if (r.ok || r.status === 403 || r.status === 404 || r.status === 400) return;       // delivered to the server, or nothing (more) to do
+      } catch (err) { console.warn("Notification request failed (try " + (attempt + 1) + ")", err); }
+      await new Promise(res => setTimeout(res, 800 * 2 ** attempt));
+    }
+  }).catch(() => {});
+  return notifyChain;
 }
 
 // ---------- message actions ----------

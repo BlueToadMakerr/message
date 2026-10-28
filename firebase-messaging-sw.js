@@ -31,8 +31,11 @@ self.addEventListener('push', event => {
   const tag = notif.tag || (extra.call === '1' ? 'call_' + chatId : chatId ? 'chat_' + chatId : 'chat_notification');
 
   event.waitUntil((async () => {
-    // Don't buzz the user if they're already looking at this very chat.
-    const wins = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
+    // (both lookups at once: a push should reach the screen as quickly as possible)
+    const [wins, existing] = await Promise.all([
+      self.clients.matchAll({ type: 'window', includeUncontrolled: true }),
+      self.registration.getNotifications({ tag }).catch(() => [])
+    ]);
     const isCall = extra.call === '1' || (notif.tag || '').startsWith('call_');
     // The app shell shows incoming calls full-screen itself, so a call push is only needed when no app window is
     // on screen. Chat pushes are muted while that very chat is open (shell URL: ?chat=<id>).
@@ -40,11 +43,14 @@ self.addEventListener('push', event => {
       (isCall ? c.url.startsWith(self.registration.scope) : (chatId && (c.url.includes('chat=' + chatId) || c.url.includes('chatId=' + chatId)))));
     if (viewing) return;
 
-    const existing = await self.registration.getNotifications({ tag });
-    existing.forEach(n => n.close());
+    // Several messages in a row stack up in ONE notification (the last few lines) instead of each one wiping the one before.
+    // The new notification replaces the old one under the same tag, so there is no flicker of closing and reopening.
+    let lines = [];
+    if (!isCall) { const prev = existing[0] && existing[0].data && existing[0].data.lines; if (Array.isArray(prev)) lines = prev.slice(-4); }
+    lines.push(body);
     await self.registration.showNotification(title, {
-      body,
-      data: { link },
+      body: lines.length > 1 ? lines.join('\n') : body,
+      data: { link, lines: isCall ? [] : lines },
       icon: 'icons/icon-192.png',
       badge: 'icons/icon-192.png',
       vibrate: extra.call === '1' ? [300, 150, 300, 150, 300] : [100, 50, 100],

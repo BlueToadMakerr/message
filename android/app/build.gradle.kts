@@ -12,7 +12,7 @@ android {
         targetSdk = 35
         // Every GitHub build gets a higher versionCode, so a new APK installs over the old one.
         val run = System.getenv("GITHUB_RUN_NUMBER")?.toIntOrNull() ?: 0
-        versionCode = 100 + run
+        versionCode = System.getenv("QM_BUILD")?.toIntOrNull() ?: (100 + run)
         versionName = "1.0.$run"
     }
     // One fixed signing key for every build. Android only installs an update over an app signed with the SAME key; the CI's random

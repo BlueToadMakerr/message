@@ -520,10 +520,24 @@ async function setupNotifications(uid) {
 
   let token = null;
   let subscribed = false;
+  const flag = { get: () => { try { return localStorage.getItem("qm-push") === uid; } catch (_) { return false; } }, set: on => { try { on ? localStorage.setItem("qm-push", uid) : localStorage.removeItem("qm-push"); } catch (_) { /* ignore */ } } };
+  const retry = async (fn, tries = 3, gap = 600) => { let last; for (let i = 0; i < tries; i++) { try { const v = await fn(); if (v) return v; last = new Error("empty"); } catch (e) { last = e; } await new Promise(r => setTimeout(r, gap * (i + 1))); } throw last; };
+  const getTok = () => retry(() => getToken(messaging, { vapidKey: VAPID_KEY, serviceWorkerRegistration: reg }));   // the service worker / network may need a moment
+  const register = async () => {                                   // stores this device's token for the server; checked afterwards, so a slow answer isn't reported as a failure
+    token = await getTok();
+    await retry(async () => { await set(ref(db, `FCM/${uid}/${token}`), true); return true; }, 3, 800);
+    subscribed = true; flag.set(true);
+  };
   // Only fetch a token silently when permission was already granted (getToken may prompt otherwise).
   if (Notification.permission === "granted") {
     token = await getToken(messaging, { vapidKey: VAPID_KEY, serviceWorkerRegistration: reg }).catch(() => null);
-    if (token) subscribed = (await get(ref(db, `FCM/${uid}/${token}`)).catch(() => null))?.exists() || false;
+    if (token) {
+      const snap = await get(ref(db, `FCM/${uid}/${token}`)).catch(() => undefined);
+      if (snap === undefined) subscribed = flag.get();             // couldn't ask the database right now: believe what this device last did instead of showing "off"
+      else subscribed = snap.exists();
+      // The browser rotated the token (or it was cleaned up as dead) while notifications are meant to be on: sign this device up again by itself.
+      if (!subscribed && flag.get()) await register().catch(() => {});
+    } else if (flag.get()) subscribed = true;
   }
   setState(subscribed ? "Disable notifications" : "Enable notifications", subscribed ? "bell" : "bellOff", subscribed);
 
@@ -531,6 +545,7 @@ async function setupNotifications(uid) {
     btn.disabled = true;
     try {
       if (subscribed) {
+        flag.set(false);
         if (token) await remove(ref(db, `FCM/${uid}/${token}`));
         await deleteToken(messaging).catch(() => {});
         subscribed = false; token = null;
@@ -538,16 +553,13 @@ async function setupNotifications(uid) {
       } else {
         if (Notification.permission === "default") {
           const perm = await Notification.requestPermission();
-          if (perm !== "granted") throw new Error("Notification permission wasn't granted.");
+          if (perm !== "granted") { toast(perm === "denied" ? "Notifications are blocked in your browser settings." : "Notifications stay off. Press the bell again to turn them on.", "info", 5000); return; }
         }
-        token = await getToken(messaging, { vapidKey: VAPID_KEY, serviceWorkerRegistration: reg });
-        if (!token) throw new Error("No notification token received.");
-        await set(ref(db, `FCM/${uid}/${token}`), true);
-        subscribed = true;
+        await register();
         toast("Notifications enabled on this device.", "success");
       }
     } catch (err) {
-      toast(err.message || "Couldn't change notification settings.", "error");
+      toast(subscribed ? "Couldn't turn notifications off. Try again." : "Couldn't turn notifications on (" + ((err && err.message) || "network problem") + "). Check your connection and try again.", "error");
     } finally {
       setState(subscribed ? "Disable notifications" : "Enable notifications", subscribed ? "bell" : "bellOff", subscribed,
         Notification.permission === "denied");
@@ -556,6 +568,7 @@ async function setupNotifications(uid) {
 
   onMessage(messaging, payload => {
     const n = payload.notification || {};
+    try { const cid = payload.data && payload.data.chatId; if (cid && QM && QM.state && QM.state.chatId === cid && document.visibilityState === "visible") return; } catch (_) { /* ignore */ }   // already looking at that chat
     toast(`${n.title || "New message"}${n.body ? ": " + n.body : ""}`);
   });
 }
