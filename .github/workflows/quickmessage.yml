@@ -108,7 +108,8 @@ jobs:
           if [ ! -e "$src/index.html" ]; then echo "::error::The zip doesn't look like a QuickMessage project (no index.html)."; exit 1; fi
           excludes=(--exclude=/.git/ --exclude=/incoming/ --exclude='*.zip' --exclude=/secrets.php)       # secrets.php holds the Firebase private key: it is never committed
           if [ "$HAS_PAT" != "true" ]; then excludes+=(--exclude=/.github/); echo "::notice::No WORKFLOW_PAT secret: .github/ is left as it is."; fi
-          rsync -a "${excludes[@]}" "$src"/ ./
+          # The zip is the whole project, so files that are not in it any more are deleted too (excluded paths above are never touched).
+          rsync -a --delete "${excludes[@]}" "$src"/ ./
           rm -f incoming/*.zip
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
@@ -140,10 +141,11 @@ jobs:
     runs-on: ubuntu-latest
     env:
       HAS_KS: ${{ secrets.ANDROID_KEYSTORE_B64 != '' }}
-      QM_BUILD: ${{ 1000 + github.run_number }}      # versionCode: always higher than the builds of the old, separate workflows
     steps:
       - uses: actions/checkout@v4
         with: { ref: "${{ github.ref_name }}" }
+      - name: "Version number (1000 + run number, so it is above the old builds)"
+        run: echo "QM_BUILD=$((1000 + GITHUB_RUN_NUMBER))" >> "$GITHUB_ENV"
       - uses: actions/setup-java@v4
         with: { distribution: temurin, java-version: 17 }
       # The runner image already ships the Android SDK (ANDROID_HOME); the setup-android action's "sdkmanager tools" step now fails, so it isn't used.
@@ -185,11 +187,12 @@ jobs:
     if: needs.flags.outputs.ios == 'true'
     runs-on: macos-latest
     env:
-      BUILD: ${{ 1000 + github.run_number }}
       NAME: 1.0.${{ github.run_number }}
     steps:
       - uses: actions/checkout@v4
         with: { ref: "${{ github.ref_name }}" }
+      - name: Version number
+        run: echo "BUILD=$((1000 + GITHUB_RUN_NUMBER))" >> "$GITHUB_ENV"
       - name: Install XcodeGen
         run: brew install xcodegen
       - name: Generate the Xcode project

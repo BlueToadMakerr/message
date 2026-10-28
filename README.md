@@ -400,3 +400,7 @@ The `companion*`/`pairings` database rules and `js/companion.js`, `js/phone-call
 - Version numbers: the new workflow's run counter starts at 1, so builds are numbered `1000 + run number` (`QM_BUILD`, read by `android/app/build.gradle.kts`) so they stay above the old ones; Android refuses to install a lower versionCode.
 - **Manual step**: importing a zip only touches `.github/` when `WORKFLOW_PAT` is set, and never deletes files. Add `quickmessage.yml` on GitHub yourself and delete the four old workflow files there, otherwise they keep running as well.
 - Not run on GitHub yet - tell me if a job fails.
+
+## Round 38 – workflow fixes
+- Fixed "Unexpected symbol: '+'": GitHub expressions can't do arithmetic, so the `1000 + run number` build number is now computed in a shell step (`QM_BUILD` / `BUILD`).
+- The importer now **deletes files** that are in the repo but not in the uploaded zip (it mirrors the zip). Never touched: `.git`, `incoming/`, `secrets.php`, and `.github/` unless `WORKFLOW_PAT` is set (with it, old workflow files that aren't in the zip are deleted too).
