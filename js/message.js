@@ -504,6 +504,7 @@ window.addEventListener("message", e => {
 const IS_PANEL = new URLSearchParams(location.search).has("panel");
 function maybeMarkRead() {
   if (!ready || !latestKey || document.hidden || panelHidden) return;
+  try { if (window.frameElement && window.frameElement.hidden) return; } catch (_) { /* ignore */ }     // a parked chat (still uploading) isn't being looked at
   // the full-screen call covers this chat: nothing here counts as read (the call's own chat panel marks its messages itself)
   if (!IS_PANEL) { try { if (QM && QM.state && QM.state.call && QM.state.call.visible) return; } catch (_) { /* ignore */ } }
   if (String(lastMarked) === String(latestKey)) return;
@@ -739,6 +740,22 @@ const jobs = new Map();                 // id -> job
 const pendingKeys = new Set();          // message keys whose real child_added is held back until the write is acknowledged
 let jobSeq = 0;
 
+// Tell the app shell which attachments are uploading in this chat: it keeps this page alive when you leave the chat, shows the indicator in the chat
+// list, warns before the tab is closed and drives the app's upload notification.
+let lastReport = "";
+function reportUploads() {
+  const list = [];
+  for (const j of jobs.values()) {
+    if (!j.file) continue;
+    list.push({ id: j.id, name: String(j.file.name || "File").slice(0, 80), size: j.file.size || 0, pct: typeof j.progress === "number" ? Math.round(j.progress * 100) / 100 : null, state: j.state });
+  }
+  const key = JSON.stringify(list.map(j => [j.id, j.state, Math.floor((j.pct || 0) * 100)]));
+  if (key === lastReport) return;
+  lastReport = key;
+  try { const q = !IS_PANEL && window.top !== window && window.top.QM; q && q.setUploads && q.setUploads(chatId, list); } catch (_) { /* standalone */ }
+}
+window.addEventListener("pagehide", () => { try { const q = !IS_PANEL && window.top !== window && window.top.QM; q && q.setUploads && q.setUploads(chatId, []); } catch (_) { /* ignore */ } });
+
 const buildPayload = (spec, timestamp) => ({
   ...(spec.type === "text" ? { fromUid: me, text: spec.text, timestamp }
   : spec.type === "file" ? { fromUid: me, type: "file", text: spec.extra.name, ...spec.extra, timestamp }
@@ -767,6 +784,7 @@ function startJob(spec, opts = {}) {
   paintJob(job);
   scrollToBottom();
   runJob(job);
+  reportUploads();
   return job;
 }
 
@@ -814,6 +832,7 @@ function paintJob(job) {
 }
 
 function paintJobProgress(job) {
+  reportUploads();
   const failed = job.state === "error", uploading = job.progress !== "sending" && (job.litter || job.spec.type === "file") && !job.spec.extra?.url;
   const foot = job.el.querySelector(".time");
   const pct = typeof job.progress === "number" ? Math.floor(job.progress * 100) : null;
@@ -879,6 +898,7 @@ async function writeJob(job) {
 
 function finishJob(job) {
   jobs.delete(job.id);
+  reportUploads();
   pendingKeys.delete(job.key);
   if (job.localUrl) URL.revokeObjectURL(job.localUrl);
   job.el.remove();
@@ -898,6 +918,7 @@ function failJob(job, err) {
   job.state = "error";
   job.error = (err && err.message) || String(err);
   paintJob(job);
+  reportUploads();
   const what = job.spec.type === "text" ? "Message" : "File";
   toast(`${what} failed to send: ${friendlyError(job.error)}`, "error", 6000);
 }
@@ -908,6 +929,7 @@ function cancelJob(job) {
   job.cancelled = true;
   job.ctrl?.abort();
   jobs.delete(job.id);
+  reportUploads();
   if (job.key) { pendingKeys.delete(job.key); if (job.ref) remove(job.ref).catch(() => {}); }  // in case a timed-out write lands later
   if (job.localUrl) URL.revokeObjectURL(job.localUrl);
   job.el.remove();

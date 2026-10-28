@@ -78,6 +78,35 @@ class NotifyService : Service() {
             try { if (Build.VERSION.SDK_INT >= 26) ctx.startForegroundService(i) else ctx.startService(i) } catch (_: Exception) {}
         }
 
+        // ---- uploads: the page reports how many files are being uploaded; the ongoing notification shows the progress, so the app can be closed meanwhile
+        @Volatile var uploadCount = 0
+        @Volatile var uploadPct = -1          // 0..100, or -1 when the progress can't be measured
+        @Volatile var uploadText = ""
+
+        /** The page reports its running uploads (count 0 = none left). */
+        fun setUploads(ctx: Context, count: Int, pct: Int, text: String) {
+            if (count == uploadCount && pct == uploadPct && text == uploadText) return
+            val was = uploadCount
+            uploadCount = count.coerceAtLeast(0); uploadPct = pct; uploadText = text
+            if (uploadCount == 0 && was == 0) return
+            val i = Intent(ctx, NotifyService::class.java)
+            try { if (Build.VERSION.SDK_INT >= 26) ctx.startForegroundService(i) else ctx.startService(i) } catch (_: Exception) {}
+        }
+
+        /** An upload failed: a normal notification that opens the app (where the message shows Retry). */
+        fun uploadFailed(ctx: Context, text: String) {
+            try {
+                val nm = ctx.getSystemService(NOTIFICATION_SERVICE) as NotificationManager
+                if (Build.VERSION.SDK_INT >= 26) nm.createNotificationChannel(NotificationChannel(CH_MSG, "Messages", NotificationManager.IMPORTANCE_HIGH))
+                val pi = PendingIntent.getActivity(ctx, 920, Intent(ctx, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP), PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
+                @Suppress("DEPRECATION")
+                val b = if (Build.VERSION.SDK_INT >= 26) Notification.Builder(ctx, CH_MSG) else Notification.Builder(ctx)
+                b.setSmallIcon(android.R.drawable.stat_notify_error).setContentTitle("Upload failed").setContentText(text.ifBlank { "A file couldn't be sent." })
+                    .setStyle(Notification.BigTextStyle().bigText(text.ifBlank { "A file couldn't be sent." })).setContentIntent(pi).setAutoCancel(true)
+                nm.notify("upload-failed", (System.currentTimeMillis() % 100000).toInt() + 3000, b.build())
+            } catch (_: Exception) { /* ignore */ }
+        }
+
         fun start(ctx: Context) {
             val st = Store(ctx)
             if (!st.signedIn || (!st.notify && !inCall)) return
@@ -167,8 +196,8 @@ class NotifyService : Service() {
         fb = Firebase(store)
         foreground()
         holdWake()
-        if (!inCall && !store.notify) { running = false; stopForeground(STOP_FOREGROUND_REMOVE); stopSelf(); return START_NOT_STICKY }
-        if (!running && store.signedIn) {
+        if (!inCall && uploadCount == 0 && !store.notify) { running = false; stopForeground(STOP_FOREGROUND_REMOVE); stopSelf(); return START_NOT_STICKY }
+        if (!running && store.signedIn && (store.notify || inCall)) {
             running = true
             Thread({ liveLoop() }, "live").start()
             Thread({ pollLoop() }, "poll").start()
@@ -200,7 +229,8 @@ class NotifyService : Service() {
                 setBypassDnd(true) })
         }
         // in a call the status-bar icon is the same mic / screen-share icon as in the web interface (crossed out when muted)
-        val small = if (inCall) (if (callDeaf) R.drawable.ic_headphones_off else if (callScreen) R.drawable.ic_screen else if (callMuted) R.drawable.ic_mic_off else R.drawable.ic_mic) else android.R.drawable.stat_notify_chat
+        val uploading = uploadCount > 0 && !inCall
+        val small = if (uploading) android.R.drawable.stat_sys_upload else if (inCall) (if (callDeaf) R.drawable.ic_headphones_off else if (callScreen) R.drawable.ic_screen else if (callMuted) R.drawable.ic_mic_off else R.drawable.ic_mic) else android.R.drawable.stat_notify_chat
         val b = builder(CH_RUN).setSmallIcon(small).setOngoing(true).setContentIntent(open(null, false, 0))
         if (inCall) {
             // An ongoing call shows like a call: who it is, how long, and mic / screen share / hang up right from the notification.
@@ -222,6 +252,9 @@ class NotifyService : Service() {
             } else {
                 b.setContentTitle(title).setContentText(callWho.ifBlank { "Ongoing call" }).addAction(Notification.Action.Builder(ic(android.R.drawable.ic_menu_close_clear_cancel), "Hang up", hang).build())
             }
+        } else if (uploading) {
+            b.setContentTitle(if (uploadCount == 1) "Uploading a file" else "Uploading $uploadCount files").setContentText(uploadText.ifBlank { "Keep going in the background" }).setOnlyAlertOnce(true)
+            if (uploadPct >= 0) b.setProgress(100, uploadPct.coerceIn(0, 100), false) else b.setProgress(0, 0, true)
         } else b.setContentTitle("QuickMessage").setContentText("Listening for messages and calls")
         val n = b.build()
         if (Build.VERSION.SDK_INT >= 34) {

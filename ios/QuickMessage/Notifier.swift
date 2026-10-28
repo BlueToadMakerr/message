@@ -12,6 +12,7 @@ final class Notifier: NSObject, UNUserNotificationCenterDelegate {
     weak var web: WKWebView?
     private var player: AVAudioPlayer?
     private var inCall = false
+    private var uploading = false            // files are being uploaded: keep the page running in the background
     private let key = "qm-notify-enabled"
     private var enabled: Bool {
         get { UserDefaults.standard.bool(forKey: key) }
@@ -28,7 +29,10 @@ final class Notifier: NSObject, UNUserNotificationCenterDelegate {
         if enabled { startKeepAlive() }
     }
 
-    @objc private func resume() { if enabled || inCall { startKeepAlive() } }
+    @objc private func resume() {
+        if enabled || inCall || uploading { startKeepAlive() }
+        if UIApplication.shared.applicationState == .active { UNUserNotificationCenter.current().removeDeliveredNotifications(withIdentifiers: ["qm-upload"]) }
+    }
 
     func handle(_ body: Any) {
         guard let m = body as? [String: Any], let op = m["op"] as? String else { return }
@@ -50,7 +54,26 @@ final class Notifier: NSObject, UNUserNotificationCenterDelegate {
             // don't freeze when you switch to another app: the silence plays (mixed with the call's own audio) and the page plays a silent sound.
             inCall = (m["on"] as? Bool) == true
             stopKeepAlive()
-            if inCall || enabled { startKeepAlive() }
+            if inCall || enabled || uploading { startKeepAlive() }
+        case "upload":
+            // Uploads keep running when you leave the app (the silence keeps the page alive); in the background a quiet notification shows the progress.
+            let on = (m["on"] as? Bool) == true
+            let was = uploading
+            uploading = on
+            if on {
+                if !was { UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .badge]) { _, _ in } }
+                startKeepAlive()
+                uploadNote(m)
+            } else {
+                UNUserNotificationCenter.current().removeDeliveredNotifications(withIdentifiers: ["qm-upload"])
+                if !inCall && !enabled { stopKeepAlive() }
+            }
+        case "uploadFailed":
+            let c = UNMutableNotificationContent()
+            c.title = "Upload failed"
+            c.body = (m["text"] as? String) ?? "A file couldn't be sent."
+            c.sound = .default
+            UNUserNotificationCenter.current().add(UNNotificationRequest(identifier: UUID().uuidString, content: c, trigger: nil), withCompletionHandler: nil)
         default:
             break
         }
@@ -63,6 +86,16 @@ final class Notifier: NSObject, UNUserNotificationCenterDelegate {
                 self.web?.evaluateJavaScript("window.__qmIosNotify && window.__qmIosNotify({enabled:\(self.enabled), allowed:\(allowed)})", completionHandler: nil)
             }
         }
+    }
+
+    private func uploadNote(_ m: [String: Any]) {
+        guard UIApplication.shared.applicationState != .active else { return }
+        let n = (m["count"] as? Int) ?? 1
+        let pct = (m["pct"] as? Int) ?? -1
+        let c = UNMutableNotificationContent()
+        c.title = n == 1 ? "Uploading a file" : "Uploading \(n) files"
+        c.body = (pct >= 0 ? "\(pct)% - " : "") + ((m["text"] as? String) ?? "")
+        UNUserNotificationCenter.current().add(UNNotificationRequest(identifier: "qm-upload", content: c, trigger: nil), withCompletionHandler: nil)
     }
 
     private func show(_ m: [String: Any]) {

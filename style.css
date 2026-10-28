@@ -803,3 +803,15 @@ dialog.modal.small:has(.dl-frame-box) { width: min(720px, calc(100vw - 2rem)); }
 .dev-panel .dev-panel-head [data-slot="rate"] .dev-tune { flex: 1 1 auto; min-width: 0; }
 .dev-panel .dev-panel-head [data-slot="rate"] .dev-rate { min-width: 0; flex: 1 1 auto; }
 .dev-view .row.wrap { row-gap: .35rem; }
+
+/* uploads: parked chat pages stay alive but hidden; list in the "uploads in progress" popup; small indicator on chat list items */
+.detail-pane iframe.parked, body.has-detail .detail-pane iframe.parked { display: none !important; }
+.up-list { display: flex; flex-direction: column; gap: .5rem; max-height: 40vh; overflow: auto; margin-top: .5rem; }
+.up-row { display: flex; flex-direction: column; gap: 1px; padding: .45rem .65rem; border-radius: 10px; background: var(--surface-2); min-width: 0; }
+.up-row strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: .9rem; }
+.up-row span { font-size: .78rem; color: var(--muted, #667); }
+.chat-up { display: inline-flex; align-items: center; gap: 4px; margin-left: 6px; padding: 1px 7px; border-radius: 999px; font-size: .68rem; font-weight: 600; background: var(--accent-soft, rgb(99 102 241 / .16)); color: var(--accent); white-space: nowrap; }
+.chat-up::before { content: ""; width: 9px; height: 9px; border-radius: 50%; border: 2px solid currentColor; border-right-color: transparent; animation: qm-spin .8s linear infinite; }
+.chat-up.err { background: rgb(239 68 68 / .16); color: #dc2626; }
+.chat-up.err::before { animation: none; border: 0; content: "!"; width: auto; height: auto; font-weight: 800; }
+@media (prefers-reduced-motion: reduce) { .chat-up::before { animation-duration: 3s; } }

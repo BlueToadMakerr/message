@@ -28,5 +28,15 @@ function keepRunning(on) {
     document.body.append(a); a.play().catch(() => {}); keep = a;
   } catch (_) { /* ignore */ }
 }
-window.__qmIosCall = on => { send({ op: "call", on: !!on }); if (iosApp()) keepRunning(!!on); };
+window.__qmIosCall = on => { window.__qmIosCallOn = !!on; send({ op: "call", on: !!on }); if (iosApp()) keepRunning(!!on || !!window.__qmUpOn); };
 if (iosApp()) iosStatus();
+
+/** Running uploads: keeps the app alive in the background and shows their progress; `failed` gets its own notification. */
+export function iosUploads(info) {
+  if (!iosApp()) return;
+  const on = info.count > 0;
+  window.__qmUpOn = on;
+  send({ op: "upload", on, count: info.count, pct: info.pct, text: info.text });
+  if (on) keepRunning(true); else if (!window.__qmIosCallOn) keepRunning(false);
+}
+export const iosUploadFailed = text => send({ op: "uploadFailed", text });

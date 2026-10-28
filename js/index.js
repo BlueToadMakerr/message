@@ -341,7 +341,26 @@ function renderList() {
     a.append(body);
     chatListEl.append(a);
   }
+  paintUploadBadges();
 }
+
+// A small spinner on every chat that has an attachment uploading (red "!" when one failed; open the chat to retry).
+function paintUploadBadges() {
+  let up = null;
+  try { up = window.QM && QM.uploads && QM.uploads(); } catch (_) { up = null; }
+  for (const a of chatListEl.querySelectorAll(".chat-item")) {
+    const list = up && up.get(a.dataset.chat), old = a.querySelector(".chat-up");
+    if (!list || !list.length) { old && old.remove(); continue; }
+    const failed = list.every(j => j.state === "error");
+    const n = list.length;
+    const b = old || document.createElement("span");
+    b.className = "chat-up" + (failed ? " err" : "");
+    b.textContent = failed ? "Upload failed" : n > 1 ? `Uploading ${n}` : "Uploading";
+    b.title = list.map(j => j.name).join("\n");
+    if (!old) a.querySelector(".chat-preview")?.prepend(b);
+  }
+}
+window.addEventListener("qm-uploads", paintUploadBadges);
 
 // ---------- start a new chat ----------
 const ncDialog = $("newChatDialog"), ncForm = $("newChatForm");

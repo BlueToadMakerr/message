@@ -3,12 +3,12 @@
 // Discord-style "in call" bar while the call is minimised. Embedded pages reach this through `parent.QM` (see embed.js).
 import { watchIncomingCalls, hideIncoming } from "./incoming.js";
 import { fmtDuration } from "./call-banner.js";
-import { icon, avatarEl, localToast, confirmDialog } from "./ui.js";
+import { icon, avatarEl, localToast, confirmDialog, alertDialog } from "./ui.js";
 
 window.__qmToast = localToast;       // embedded pages route their toasts here (see ui.js toast)
 import { getProfile } from "./users.js";
 import { watchDeclines } from "./declines.js";
-import "./ios-notify.js";     // iPhone app: defines window.__qmIosCall (pauses the background-keepalive during calls)
+import { iosUploads, iosUploadFailed } from "./ios-notify.js";     // iPhone app: defines window.__qmIosCall (pauses the background-keepalive during calls)
 import "./viewer.js";                 // registers window.__qmOpenImage: images from every frame open full-screen here
 
 const $ = id => document.getElementById(id);
@@ -102,6 +102,83 @@ function viewFromUrl() {
   return { chat: null, pane: null, call: false };
 }
 
+// ------------------------------------------------------------------ uploads
+// The chat page reports its running uploads here (QM.setUploads). While a chat has any, its page is kept (hidden) when you leave it, so the upload
+// continues and the message is still sent. The chat list shows a small indicator, the browser asks before the tab is closed, and the apps show a notification.
+const upl = new Map();                    // chatId -> [{ id, name, size, pct, state }]
+const parked = new Map();                 // chatId -> hidden <iframe> that still has uploads
+const chatOfSrc = src => { const m = /^message\.html\?chatId=([^&]+)/.exec(src || ""); try { return m ? decodeURIComponent(m[1]) : null; } catch (_) { return null; } };
+function park(frame, chat) {
+  clearWatch(frame);
+  frame.id = "parked-" + chat; frame.hidden = true; frame.classList.add("parked"); delete frame.dataset.src;
+  parked.set(chat, frame);
+}
+function parkFresh(old, chat, url) {
+  const fresh = document.createElement("iframe");
+  for (const a of old.attributes) if (!["src", "name", "id", "hidden", "class", "data-src"].includes(a.name)) fresh.setAttribute(a.name, a.value);
+  fresh.id = "detailFrame"; fresh.name = "qmf" + Math.random().toString(36).slice(2, 9);
+  if (url !== "about:blank") fresh.dataset.src = url;
+  fresh.src = url;
+  park(old, chat);
+  old.after(fresh);
+  armWatch(fresh, url, false);
+}
+const upTitle = chat => { const el = document.querySelector(`.chat-item[data-chat="${CSS.escape(chat)}"] .chat-title`); return el ? el.textContent : "a chat"; };
+const activeUploads = () => { const out = []; for (const [chat, list] of upl) for (const j of list) if (j.state !== "error") out.push({ ...j, chat }); return out; };
+let lastNative = "", failedSeen = new Set();
+function uploadsChanged() {
+  try { window.dispatchEvent(new CustomEvent("qm-uploads")); } catch (_) { /* ignore */ }
+  const act = activeUploads();
+  const known = act.filter(j => typeof j.pct === "number");
+  const pct = known.length ? Math.round(known.reduce((a, j) => a + j.pct, 0) / known.length * 100) : -1;
+  const text = act.slice(0, 3).map(j => j.name).join(", ") + (act.length > 3 ? " +" + (act.length - 3) : "");
+  const key = act.length + "/" + pct + "/" + text;
+  if (key !== lastNative) {
+    lastNative = key;
+    try { window.QMApp?.setUploads?.(act.length, pct, text); } catch (_) { /* ignore */ }
+    try { iosUploads({ count: act.length, pct, text }); } catch (_) { /* ignore */ }
+  }
+  // a failure while you aren't looking at that chat is announced (the app shows a notification, the web a message)
+  for (const [chat, list] of upl) for (const j of list) {
+    const k = chat + ":" + j.id;
+    if (j.state === "error" && !failedSeen.has(k)) {
+      failedSeen.add(k);
+      if (st.chatId !== chat || st.call.visible) {
+        const msg = `${j.name} couldn't be uploaded in ${upTitle(chat)}. Open the chat to retry.`;
+        localToast(msg, "error", 6000);
+        try { window.QMApp?.uploadFailed?.(msg); } catch (_) { /* ignore */ }
+        try { iosUploadFailed(msg); } catch (_) { /* ignore */ }
+      }
+    }
+  }
+}
+function setUploads(chatId, list) {
+  if (!chatId || !/^[\w-]{1,64}$/.test(chatId)) return;
+  list = Array.isArray(list) ? list.slice(0, 50) : [];
+  if (list.length) upl.set(chatId, list); else upl.delete(chatId);
+  if (!list.length && parked.has(chatId)) { const f = parked.get(chatId); parked.delete(chatId); clearWatch(f); f.remove(); }
+  uploadsChanged();
+}
+// Closing / reloading the tab: the browser asks; if you stay, a list of what is still uploading appears.
+addEventListener("beforeunload", e => {
+  if (nested || !activeUploads().length) return;
+  e.preventDefault(); e.returnValue = "";
+  setTimeout(showUploadsPopup, 300);       // only runs when the page stays open
+});
+function showUploadsPopup() {
+  const act = activeUploads();
+  if (!act.length) return;
+  const box = document.createElement("div");
+  box.className = "up-list";
+  for (const j of act) {
+    const row = document.createElement("div"); row.className = "up-row";
+    const a = document.createElement("strong"); a.textContent = j.name;
+    const b = document.createElement("span"); b.textContent = `${upTitle(j.chat)} · ${j.state === "waiting" ? "waiting for connection" : typeof j.pct === "number" ? Math.floor(j.pct * 100) + "%" : "uploading…"}`;
+    row.append(a, b); box.append(row);
+  }
+  alertDialog({ title: "Uploads still in progress", message: "These files are still uploading. If you close this page they won't be sent.", node: box, okText: "Keep waiting" });
+}
+
 /** Make the screen match [view]. Only touches a frame when what it should show actually changes. */
 function render(view) {
   const { detail } = els();
@@ -109,8 +186,19 @@ function render(view) {
   st.chatId = want && view.pane === "chat" ? view.chat : null;
   st.pane = want ? view.pane : null;
   const cur = detail.dataset.src || "";
-  if (want && cur !== want) { detail.dataset.src = want; navFrame(detail, want); }
-  if (!want && cur) { delete detail.dataset.src; navFrame(detail, "about:blank"); }
+  if (want !== cur && (want || cur)) {
+    // A chat that is still uploading is not closed: its page is parked (hidden) so the upload and the final send carry on, and it comes back as it was.
+    const curChat = chatOfSrc(cur), keep = !!curChat && upl.has(curChat) && !parked.has(curChat);
+    const back = want && st.chatId ? parked.get(st.chatId) : null;
+    if (back) {
+      parked.delete(st.chatId);
+      if (keep) park(detail, curChat); else { clearWatch(detail); detail.remove(); }
+      back.id = "detailFrame"; back.hidden = false; back.classList.remove("parked"); back.dataset.src = want;
+    } else if (want) {
+      if (keep) parkFresh(detail, curChat, want); else { detail.dataset.src = want; navFrame(detail, want); }
+    } else if (keep) parkFresh(detail, curChat, "about:blank");
+    else { delete detail.dataset.src; navFrame(detail, "about:blank"); }
+  }
   document.body.classList.toggle("has-detail", !!want);
   document.querySelectorAll(".chat-item").forEach(a => a.classList.toggle("active", a.dataset.chat === st.chatId));
   if (view.call && !st.call.visible && st.call.chatId) showCall();
@@ -334,6 +422,7 @@ function wire() {
 // ------------------------------------------------------------------ public API
 export const QM = (window.QM = {
   declined: (chatId, by) => { try { els().callFrame.contentWindow.__qmDeclined?.(chatId, by); } catch (_) { /* ignore */ } },
+  setUploads, uploads: () => new Map(upl), activeUploads, showUploadsPopup,
   openChat, openPane, closeDetail, androidBack, openCall, minimizeCall, callEnded, setCallState, frameReady, frameEscaped,
   isSplit: () => split.matches,
   toggleMute: () => callWin()?.toggleMute(), toggleDeafen: () => callWin()?.toggleDeafen(), toggleScreen: () => callWin()?.toggleScreen(), hangup: () => leaveCall(),
@@ -422,6 +511,8 @@ export function resetShell() {
   uid = null;
   stopRings?.(); stopRings = null;
   stopDeclines?.(); stopDeclines = null;
+  for (const f of parked.values()) { clearWatch(f); f.remove(); }
+  parked.clear(); upl.clear(); uploadsChanged();
   if (wired) { closeCallFrame(); commit({ chat: null, pane: null, call: false }, true); }
 }
 

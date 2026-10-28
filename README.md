@@ -404,3 +404,11 @@ The `companion*`/`pairings` database rules and `js/companion.js`, `js/phone-call
 ## Round 38 – workflow fixes
 - Fixed "Unexpected symbol: '+'": GitHub expressions can't do arithmetic, so the `1000 + run number` build number is now computed in a shell step (`QM_BUILD` / `BUILD`).
 - The importer now **deletes files** that are in the repo but not in the uploaded zip (it mirrors the zip). Never touched: `.git`, `incoming/`, `secrets.php`, and `.github/` unless `WORKFLOW_PAT` is set (with it, old workflow files that aren't in the zip are deleted too).
+
+## Round 39 – uploads keep going
+- **Leaving a chat no longer cancels its uploads.** The app shell keeps a chat's page (hidden, "parked") as long as it has an attachment in any state (uploading, waiting, failed); the upload and the final send finish there, and opening the chat again brings the same page back (Retry still works on a failed one). The parked page is dropped when its last attachment is done/cancelled. `QM.setUploads` in `js/shell.js`, reports from `reportUploads()` in `js/message.js`. Test `t54`.
+- **Chat list**: every chat with an attachment uploading shows a small spinner + "Uploading" (or "Upload failed" in red) next to the preview.
+- **Web**: closing / reloading the tab while something uploads brings up the browser's "leave site?" question; if you stay, a popup "Uploads still in progress" lists the files, their chat and progress. (Browsers don't allow custom text in their own question, so the list is a second popup.)
+- **Android app**: the app's background notification turns into "Uploading N files" with a progress bar while anything uploads (so the app can be closed meanwhile), and a failure posts an "Upload failed" notification (`NotifyService.setUploads/uploadFailed`, bridge `QMApp.setUploads/uploadFailed`). Not compiled/tested here.
+- **iPhone app**: uploads keep the app alive in the background (same silence trick as calls) and show a progress notification while in the background; failures post a notification (`Notifier.swift` ops `upload` / `uploadFailed`). Not compiled/tested here. iOS can still stop an app after a long time in the background.
+- A call-panel chat's uploads (the chat shown inside the call page) aren't tracked by this.
