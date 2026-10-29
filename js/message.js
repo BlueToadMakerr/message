@@ -976,7 +976,9 @@ function notifyServer() {
       try {
         const idToken = await auth.currentUser.getIdToken(attempt > 0);
         const r = await fetch("notify.php", { method: "POST", body: new URLSearchParams({ chatId, idToken }), keepalive: true });
-        if (r.ok || r.status === 403 || r.status === 404 || r.status === 400) return;       // delivered to the server, or nothing (more) to do
+        const body = await r.text().catch(() => "");
+        let json = null; try { json = JSON.parse(body); } catch (_) { /* not JSON: a host error / "browser check" page, not our server's answer */ }
+        if (json && (r.ok || r.status === 403 || r.status === 404 || r.status === 400)) return;       // delivered to the server, or nothing (more) to do
       } catch (err) { console.warn("Notification request failed (try " + (attempt + 1) + ")", err); }
       await new Promise(res => setTimeout(res, 800 * 2 ** attempt));
     }

@@ -18,6 +18,7 @@ import {
 import { getProfile, ensureProfile, profileExists } from "./users.js";
 import { applyTheme } from "./theme.js";
 import { QM, initShell, resetShell } from "./shell.js";
+import { maybeShowTour } from "./onboarding.js";
 import * as E2E from "./crypto.js";
 import { devButton, showDev, envInfo, devCard, devGrid, devPill, devWho } from "./dev.js";
 import { activeDbUrl } from "./dburl.js";
@@ -684,6 +685,7 @@ onAuthStateChanged(auth, async user => {
   initShell(user.uid);
   accountLink.onclick = e => { if (e.metaKey || e.ctrlKey || e.shiftKey) return; e.preventDefault(); QM.openPane("account"); };
   setupNotifications(user.uid).catch(err => console.error("Notification setup failed", err));
+  try { maybeShowTour(user, { openAccount: () => QM.openPane("account") }); } catch (err) { console.error("Welcome tour failed", err); }
 });
 
 

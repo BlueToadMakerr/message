@@ -25,12 +25,21 @@ export const isLitterUrl = u => typeof u === "string" && HOST_RE.test(u);
 export const kindOf = mime => (mime || "").startsWith("image/") ? "image" : (mime || "").startsWith("video/") ? "video" : (mime || "").startsWith("audio/") ? "audio" : "file";
 
 // Same-origin proxy upload: XHR so we can report real progress (no CORS involved, so upload listeners are safe here).
-function postProxy(form, onProgress, signal) {
+function postProxy(form, onProgress, signal, retried = false) {
   return new Promise((resolve, reject) => {
     const x = new XMLHttpRequest();
     x.open("POST", "upload.php");
     x.upload.onprogress = e => { if (e.lengthComputable && onProgress) onProgress(e.loaded / e.total); };
-    x.onload = () => (x.status >= 200 && x.status < 300) ? resolve(x.responseText.trim()) : reject(Object.assign(new Error(x.responseText.trim() || "Upload failed (" + x.status + ")"), { http: x.status }));
+    x.onload = () => {
+      const text = x.responseText || "";
+      const ch = window.__qmChallenge;
+      if (ch && !retried && ch.isChallenge(text)) {         // the host's "browser check" page came back instead of the answer: solve it and send again
+        ch.solve(text, location.href).then(() => postProxy(form, onProgress, signal, true)).then(resolve, reject);
+        return;
+      }
+      if (x.status >= 200 && x.status < 300) resolve(text.trim());
+      else reject(Object.assign(new Error(text.trim().slice(0, 200) || "Upload failed (" + x.status + ")"), { http: x.status }));
+    };
     x.onerror = () => reject(new Error("Couldn't reach the upload helper (network error)."));
     if (signal) signal.addEventListener("abort", () => { x.abort(); reject(Object.assign(new Error("Cancelled"), { aborted: true })); }, { once: true });
     x.send(form);

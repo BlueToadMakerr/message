@@ -23,6 +23,7 @@ import { devOn, setDev, devButton, showRaw, envInfo } from "./dev.js";
 import { PRESETS, RES, getScreenPrefs, setScreenPrefs, resetScreenPrefs, DEFAULTS } from "./screenprefs.js";
 import { previewsOn, setPreviews } from "./linkpreview.js";
 import { refreshVerified, resendVerification } from "./verify.js";
+import { showTour } from "./onboarding.js";
 
 hydrateIcons();
 const $ = id => document.getElementById(id);
@@ -140,6 +141,7 @@ $("addPwBtn").onclick = async () => {
 };
 
 // ---------- privacy ----------
+$("tourBtn").onclick = () => showTour({ uid: user.uid });
 $("emailAddToggle").addEventListener("change", async e => {
   try { await update(ref(db, `accsettings/${user.uid}/settings`), { emailAdd: e.target.checked }); invalidateProfile(user.uid); toast(e.target.checked ? "People can add you by email." : "People need your UID to add you.", "success", 2500); }
   catch (_) { e.target.checked = !e.target.checked; toast("Couldn't save that.", "error"); }

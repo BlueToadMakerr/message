@@ -214,22 +214,21 @@ let panel = null, stopLoop = null;
 export function toggleDevPanel(S, plain) {
   if (panel) { stopLoop && stopLoop(); panel.remove(); panel = null; histClear(); return; }
   panel = document.createElement("div"); panel.className = "dev-panel";
-  panel.innerHTML = `<div class="dev-panel-head"><strong>Call stats</strong><span class="dev-tabs"><button type="button" class="dev-tab on" data-a="vis">Visual</button><button type="button" class="dev-tab" data-a="raw">Raw</button></span><span class="grow"></span><span data-slot="rate"></span><button type="button" class="dev-btn" data-a="copy">Copy</button><button type="button" class="dev-btn" data-a="pause">Pause</button><button type="button" class="dev-btn" data-a="x" aria-label="Close">\u2715</button></div><div class="dev-pane"></div>`;
+  panel.innerHTML = `<div class="dev-panel-head"><strong>Call stats</strong><span class="dev-tabs"><button type="button" class="dev-tab on" data-a="vis">Visual</button><button type="button" class="dev-tab" data-a="raw">Raw</button></span><span class="grow"></span><span data-slot="rate"></span><button type="button" class="dev-btn" data-a="copy">Copy</button><button type="button" class="dev-btn" data-a="x" aria-label="Close">\u2715</button></div><div class="dev-pane"></div>`;
   panel.querySelector('[data-slot="rate"]').append(rateSelect(), spanSelect());
   document.body.append(panel);
-  const pane = panel.querySelector(".dev-pane"); let paused = false, last = "", mode = "vis";
+  const pane = panel.querySelector(".dev-pane"); let last = "", mode = "vis";
   const held = holdGuard(pane);                                                       // don't swap the content under a click that is in progress
   const tick = async () => {
-    // recording the graphs never pauses (only closing the panel stops it); "Pause" and a press only keep what is on screen still
+    // recording the graphs never pauses (only closing the panel stops it); a press only keeps what is on screen still
     let snap = null; try { snap = await callSnapshot(S); last = plain(snap); } catch (e) { last = String(e); }
     if (!snap || !panel) return;
-    if (mode === "vis") { try { const v = await visualCall(S, snap); if (paused || held()) return; const keep = pane.scrollTop; pane.replaceChildren(v); pane.scrollTop = keep; } catch (e) { if (!paused && !held()) pane.textContent = String(e); } }
+    if (mode === "vis") { try { const v = await visualCall(S, snap); if (held()) return; const keep = pane.scrollTop; pane.replaceChildren(v); pane.scrollTop = keep; } catch (e) { if (!held()) pane.textContent = String(e); } }
     else { const pre = pane.querySelector("pre") || pane.appendChild(Object.assign(document.createElement("pre"), { className: "dev-pre" })); pre.textContent = last; }
   };
   panel.addEventListener("click", async e => {
     const a = e.target && e.target.dataset && e.target.dataset.a;
     if (a === "x") toggleDevPanel(S, plain);
-    else if (a === "pause") { paused = !paused; e.target.textContent = paused ? "Resume" : "Pause"; }
     else if (a === "vis" || a === "raw") { mode = a; panel.querySelectorAll(".dev-tab").forEach(b => b.classList.toggle("on", b.dataset.a === a)); pane.replaceChildren(); tick(); }
     else if (a === "copy") { try { await navigator.clipboard.writeText(last); e.target.textContent = "Copied \u2713"; setTimeout(() => { e.target.textContent = "Copy"; }, 1200); } catch (_) { /* ignore */ } }
   });

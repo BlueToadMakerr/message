@@ -1127,11 +1127,16 @@ async function ringUser(uid) {
   try {
     ringId = await startRing(chatId, S.me, uid);
     let result = null;
-    try {
-      const idToken = await auth.currentUser.getIdToken();
-      const r = await fetch("call-notify.php", { method: "POST", body: new URLSearchParams({ chatId, targetUid: uid, sessionId: ringId, idToken }) });
-      result = await r.json().catch(() => null);
-    } catch (err) { dbg("notify failed", err); }
+    // Tried up to 3 times: a network blip, or a host "browser check" page instead of our server's answer (the fetch wrapper in js/challenge.js solves that and
+    // repeats the request itself; the retry covers whatever is left), must not show up as "Notification failed".
+    for (let attempt = 0; attempt < 3 && !result; attempt++) {
+      try {
+        const idToken = await auth.currentUser.getIdToken(attempt > 0);
+        const r = await fetch("call-notify.php", { method: "POST", body: new URLSearchParams({ chatId, targetUid: uid, sessionId: ringId, idToken }) });
+        result = await r.json().catch(() => null);
+      } catch (err) { dbg("notify failed", err); }
+      if (!result && attempt < 2) await new Promise(res => setTimeout(res, 700 * (attempt + 1)));
+    }
     const status = result?.status === "sent" ? "sent" : result?.status === "no_token" ? "no_token" : "failed";
     setRingStatus(chatId, uid, status);
     say(status === "sent" ? "Notification sent" : status === "no_token" ? "No notification device" : "Notification failed");

@@ -1,10 +1,12 @@
-/* iPhone / iPad app only (injected by WebView.swift into every frame, before the page runs; the website and the Android app don't have this).
+/* Solves the host's JavaScript "browser check" (loaded first in every page, in the website and in both apps; the iPhone app also injects an identical copy
+ * into every frame before the page runs: ios/QuickMessage/challenge.js).
  *
  * Free hosts such as InfinityFree answer requests that did not come from a "real" browser run with a small JavaScript test page
  * (<script src="/aes.js"> + an inline script that sets a "__test" cookie and redirects). A page navigation passes it by itself, but a script / module /
- * stylesheet / fetch() that gets that test page back instead of its file breaks the app ("Unexpected token '<'", "Importing a module script failed").
- * This solves the test the same way the page would (runs the host's own aes.js on the numbers in the test page, in a sandboxed function),
- * stores the cookie, and then retries the fetch / reloads the page once.
+ * stylesheet / fetch() that gets that test page back instead of its file breaks the app ("Unexpected token '<'", a notification that "failed" because the
+ * answer wasn't JSON...). This solves the test the same way the page would (runs the host's own aes.js on the numbers in the test page, in a sandboxed
+ * function), stores the cookie, and then repeats the fetch / reloads the page once.
+ * window.__qmChallenge = { solve(html, baseUrl), isChallenge(text), fetch(input, init) } - fetch() is the plain one without this handling.
  */
 (function () {
   if (window.__qmChallenge) return;
@@ -34,7 +36,7 @@
     solving.then(done, done);
     return solving;
   }
-  window.__qmChallenge = { solve: solve, isChallenge: isChallenge };
+  window.__qmChallenge = { solve: solve, isChallenge: isChallenge, fetch: nativeFetch };
 
   // fetch(): a non-page URL that answers with the test page is solved and asked again
   window.fetch = function (input, init) {

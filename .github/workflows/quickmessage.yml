@@ -1,8 +1,10 @@
 name: QuickMessage
 # ONE workflow for everything. It looks at what happened and runs only the parts that are needed:
 #
-#   plan ──► import (only when a zip was uploaded to incoming/) ──► flags ──► android (build) ─┐
-#                                                                          └─► ios (build) ────┼─► deploy (site → Android files → iOS files, over FTP)
+#   prepare (what changed? unpack an uploaded zip) ─┬─► site  (website → FTP)  ──────────────┐
+#                                                    ├─► android (APK) ─────────────────────────┼─► publish (APK / iOS files → FTP)
+#                                                    ├─► ios (.ipa + .tipa) ────────────────────┤
+#                                                    └─► ios-sim (simulator build, in parallel) ┘
 #
 #  • Upload a quickmessage-callNN.zip into incoming/ (GitHub → Add file → Upload files): it is unpacked over the project and committed, then
 #    the parts that changed are built / uploaded: Android build if android/ changed, iOS build if ios/ changed, website upload if anything else changed.
@@ -35,18 +37,22 @@ env:
   GH_TOKEN: ${{ github.token }}
 
 jobs:
-  # ------------------------------------------------------------------ what happened?
-  plan:
+  # ------------------------------------------------------------------ what happened? (and unpack an uploaded zip)
+  prepare:
     runs-on: ubuntu-latest
     outputs:
-      zip: ${{ steps.p.outputs.zip }}
-      site: ${{ steps.p.outputs.site }}
-      android: ${{ steps.p.outputs.android }}
-      ios: ${{ steps.p.outputs.ios }}
+      site: ${{ steps.p.outputs.site == 'true' || steps.u.outputs.site == 'true' }}
+      android: ${{ steps.p.outputs.android == 'true' || steps.u.outputs.android == 'true' }}
+      ios: ${{ steps.p.outputs.ios == 'true' || steps.u.outputs.ios == 'true' }}
+    env:
+      HAS_PAT: ${{ secrets.WORKFLOW_PAT != '' }}
     steps:
       - uses: actions/checkout@v4
-        with: { fetch-depth: 0 }
+        with:
+          token: ${{ secrets.WORKFLOW_PAT || github.token }}
+          fetch-depth: 0
       - id: p
+        name: What changed?
         env:
           WHAT: ${{ inputs.what }}
           EVENT: ${{ github.event_name }}
@@ -74,25 +80,9 @@ jobs:
           fi
           echo "zip=$zip" >> "$GITHUB_OUTPUT"; echo "site=$site" >> "$GITHUB_OUTPUT"; echo "android=$android" >> "$GITHUB_OUTPUT"; echo "ios=$ios" >> "$GITHUB_OUTPUT"
           echo "plan: zip=$zip site=$site android=$android ios=$ios"
-
-  # ------------------------------------------------------------------ unpack an uploaded zip and commit it
-  import:
-    needs: plan
-    if: needs.plan.outputs.zip == 'true'
-    runs-on: ubuntu-latest
-    outputs:
-      site: ${{ steps.u.outputs.site }}
-      android: ${{ steps.u.outputs.android }}
-      ios: ${{ steps.u.outputs.ios }}
-    env:
-      HAS_PAT: ${{ secrets.WORKFLOW_PAT != '' }}
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          token: ${{ secrets.WORKFLOW_PAT || github.token }}
-          fetch-depth: 2
       - id: u
         name: Unpack the newest zip and commit
+        if: steps.p.outputs.zip == 'true'
         run: |
           set -e
           shopt -s nullglob
@@ -122,138 +112,10 @@ jobs:
           grep -q '^ios/' "$RUNNER_TEMP/changed.txt" && echo "ios=true" >> "$GITHUB_OUTPUT" || true
           grep -qv -e '^android/' -e '^ios/' -e '^\.github/' -e '^README' "$RUNNER_TEMP/changed.txt" && echo "site=true" >> "$GITHUB_OUTPUT" || true
 
-  # ------------------------------------------------------------------ what to build / upload (what the plan says, plus what the import changed)
-  flags:
-    needs: [plan, import]
-    if: always() && needs.plan.result == 'success' && needs.import.result != 'failure' && needs.import.result != 'cancelled'
-    runs-on: ubuntu-latest
-    outputs:
-      site: ${{ needs.import.outputs.site || needs.plan.outputs.site }}
-      android: ${{ needs.import.outputs.android || needs.plan.outputs.android }}
-      ios: ${{ needs.import.outputs.ios || needs.plan.outputs.ios }}
-    steps:
-      - run: echo "site=${{ needs.import.outputs.site || needs.plan.outputs.site }} android=${{ needs.import.outputs.android || needs.plan.outputs.android }} ios=${{ needs.import.outputs.ios || needs.plan.outputs.ios }}"
-
-  # ------------------------------------------------------------------ Android APK
-  android:
-    needs: flags
-    if: needs.flags.outputs.android == 'true'
-    runs-on: ubuntu-latest
-    env:
-      HAS_KS: ${{ secrets.ANDROID_KEYSTORE_B64 != '' }}
-    steps:
-      - uses: actions/checkout@v4
-        with: { ref: "${{ github.ref_name }}" }
-      - name: "Version number (1000 + run number, so it is above the old builds)"
-        run: echo "QM_BUILD=$((1000 + GITHUB_RUN_NUMBER))" >> "$GITHUB_ENV"
-      - uses: actions/setup-java@v4
-        with: { distribution: temurin, java-version: 17 }
-      # The runner image already ships the Android SDK (ANDROID_HOME); the setup-android action's "sdkmanager tools" step now fails, so it isn't used.
-      - name: Accept SDK licenses
-        run: yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses > /dev/null || true
-      - uses: gradle/actions/setup-gradle@v4
-        with: { gradle-version: 8.14.3 }
-      - name: Use your own signing key (optional secrets)
-        if: env.HAS_KS == 'true'
-        env:
-          KS_B64: ${{ secrets.ANDROID_KEYSTORE_B64 }}
-        run: |
-          echo "$KS_B64" | base64 -d > "$RUNNER_TEMP/qm.jks"
-          echo "QM_KEYSTORE=$RUNNER_TEMP/qm.jks" >> "$GITHUB_ENV"
-          echo "QM_STORE_PASS=${{ secrets.ANDROID_STORE_PASS }}" >> "$GITHUB_ENV"
-          echo "QM_KEY_ALIAS=${{ secrets.ANDROID_KEY_ALIAS }}" >> "$GITHUB_ENV"
-          echo "QM_KEY_PASS=${{ secrets.ANDROID_KEY_PASS }}" >> "$GITHUB_ENV"
-      - name: Build debug APK
-        working-directory: android
-        run: set -o pipefail; gradle assembleDebug --no-daemon --stacktrace 2>&1 | tee build.log
-      - name: Show compile errors in the job summary
-        if: failure()
-        run: |
-          { echo '### Build errors'; echo '```'; grep -E '^e: |error:|FAILED|What went wrong' -A3 android/build.log | head -80; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
-      - name: Upload the build log
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: android-build-log
-          path: android/build.log
-      - uses: actions/upload-artifact@v4
-        with:
-          name: quickmessage-debug
-          path: android/app/build/outputs/apk/debug/app-debug.apk
-
-  # ------------------------------------------------------------------ iOS: unsigned .ipa, TrollStore .tipa, simulator build
-  ios:
-    needs: flags
-    if: needs.flags.outputs.ios == 'true'
-    runs-on: macos-latest
-    env:
-      NAME: 1.0.${{ github.run_number }}
-    steps:
-      - uses: actions/checkout@v4
-        with: { ref: "${{ github.ref_name }}" }
-      - name: Version number
-        run: echo "BUILD=$((1000 + GITHUB_RUN_NUMBER))" >> "$GITHUB_ENV"
-      - name: Install XcodeGen
-        run: brew install xcodegen
-      - name: Generate the Xcode project
-        working-directory: ios
-        run: xcodegen generate
-      - name: Build (unsigned)
-        working-directory: ios
-        run: |
-          xcodebuild -project QuickMessage.xcodeproj -scheme QuickMessage \
-            -configuration Release -sdk iphoneos -destination 'generic/platform=iOS' \
-            -derivedDataPath build \
-            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" \
-            CURRENT_PROJECT_VERSION=$BUILD MARKETING_VERSION=$NAME \
-            build
-      - name: Package the .ipa
-        working-directory: ios
-        run: |
-          rm -rf Payload && mkdir Payload
-          cp -R build/Build/Products/Release-iphoneos/QuickMessage.app Payload/
-          zip -qr QuickMessage-unsigned.ipa Payload
-      - uses: actions/upload-artifact@v4
-        with:
-          name: quickmessage-ios-unsigned
-          path: ios/QuickMessage-unsigned.ipa
-      # TrollStore: a .tipa is an .ipa whose binaries carry a fake signature (ldid) — TrollStore replaces it with its own permanent one.
-      - name: Package the .tipa (TrollStore)
-        working-directory: ios
-        run: |
-          brew install ldid
-          rm -rf tipa && mkdir -p tipa/Payload
-          cp -R build/Build/Products/Release-iphoneos/QuickMessage.app tipa/Payload/
-          app=tipa/Payload/QuickMessage.app
-          for b in "$app"/PlugIns/*.appex; do [ -d "$b" ] && ldid -S "$b/$(/usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' "$b/Info.plist")"; done
-          ldid -S "$app/$(/usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' "$app/Info.plist")"
-          (cd tipa && zip -qry ../QuickMessage.tipa Payload)
-          ls -la QuickMessage.tipa
-      - uses: actions/upload-artifact@v4
-        with:
-          name: quickmessage-ios-tipa
-          path: ios/QuickMessage.tipa
-      # Simulator build: boot a simulator, then: xcrun simctl install booted QuickMessage.app && xcrun simctl launch booted app.quickmessage.chat
-      - name: Build for the iOS Simulator
-        working-directory: ios
-        run: |
-          xcodebuild -project QuickMessage.xcodeproj -scheme QuickMessage \
-            -configuration Debug -sdk iphonesimulator -destination 'generic/platform=iOS Simulator' \
-            -derivedDataPath build-sim ARCHS="arm64 x86_64" ONLY_ACTIVE_ARCH=NO \
-            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" \
-            CURRENT_PROJECT_VERSION=$BUILD MARKETING_VERSION=$NAME \
-            build
-          mkdir -p sim && cp -R build-sim/Build/Products/Debug-iphonesimulator/QuickMessage.app sim/
-          ditto -c -k --keepParent sim/QuickMessage.app QuickMessage-simulator.zip
-      - uses: actions/upload-artifact@v4
-        with:
-          name: quickmessage-ios-simulator
-          path: ios/QuickMessage-simulator.zip
-
-  # ------------------------------------------------------------------ upload to your hosting (one job, one after the other, so the FTP server only ever has one upload running)
-  deploy:
-    needs: [flags, android, ios]
-    if: always() && needs.flags.result == 'success' && (needs.flags.outputs.site == 'true' || needs.android.result == 'success' || needs.ios.result == 'success')
+  # ------------------------------------------------------------------ website -> FTP (runs while the apps build)
+  site:
+    needs: prepare
+    if: needs.prepare.outputs.site == 'true'
     runs-on: ubuntu-latest
     env:
       HAS_FTP: ${{ secrets.FTP_SERVER != '' && secrets.FTP_USERNAME != '' && secrets.FTP_PASSWORD != '' }}
@@ -261,7 +123,7 @@ jobs:
     steps:
       - name: No FTP secrets
         if: env.HAS_FTP != 'true'
-        run: echo "::notice::FTP_SERVER / FTP_USERNAME / FTP_PASSWORD are not set, so nothing is uploaded. The builds are in this run's artifacts."
+        run: echo "::notice::FTP_SERVER / FTP_USERNAME / FTP_PASSWORD are not set, so nothing is uploaded."
       - uses: actions/checkout@v4
         if: env.HAS_FTP == 'true'
         with: { ref: "${{ github.ref_name }}" }
@@ -269,10 +131,8 @@ jobs:
         if: env.HAS_FTP == 'true'
         id: d
         run: d="${FTP_DIR_RAW:-./}"; case "$d" in */) ;; *) d="$d/";; esac; echo "dir=$d" >> "$GITHUB_OUTPUT"
-
-      # ---- website
       - name: Upload the website
-        if: env.HAS_FTP == 'true' && needs.flags.outputs.site == 'true'
+        if: env.HAS_FTP == 'true'
         uses: SamKirkland/FTP-Deploy-Action@v4.3.5
         with:
           server: ${{ secrets.FTP_SERVER }}
@@ -294,19 +154,177 @@ jobs:
             database.rules.json
             secrets.php
 
-      # ---- Android files (downloads/quickmessage.apk + android.json)
-      - name: Get the APK
-        if: env.HAS_FTP == 'true' && needs.android.result == 'success'
-        uses: actions/download-artifact@v4
-        with: { name: quickmessage-debug, path: dl-android }
-      - name: Android version file
-        if: env.HAS_FTP == 'true' && needs.android.result == 'success'
+  # ------------------------------------------------------------------ Android APK
+  android:
+    needs: prepare
+    if: needs.prepare.outputs.android == 'true'
+    runs-on: ubuntu-latest
+    env:
+      HAS_KS: ${{ secrets.ANDROID_KEYSTORE_B64 != '' }}
+    steps:
+      - uses: actions/checkout@v4
+        with: { ref: "${{ github.ref_name }}" }
+      - name: "Version number (1000 + run number, so it is above the old builds)"
+        run: echo "QM_BUILD=$((1000 + GITHUB_RUN_NUMBER))" >> "$GITHUB_ENV"
+      - uses: actions/setup-java@v4
+        with: { distribution: temurin, java-version: 17 }
+      - uses: gradle/actions/setup-gradle@v4
+        with: { gradle-version: 8.14.3 }
+      - name: Use your own signing key (optional secrets)
+        if: env.HAS_KS == 'true'
+        env:
+          KS_B64: ${{ secrets.ANDROID_KEYSTORE_B64 }}
         run: |
-          mv dl-android/app-debug.apk dl-android/quickmessage.apk
-          jq -n --argjson code "$((1000 + ${{ github.run_number }}))" --arg name "1.0.${{ github.run_number }}" --argjson size "$(stat -c%s dl-android/quickmessage.apk)" --arg built "$(date -u +%FT%TZ)" \
-            '{versionCode:$code, versionName:$name, url:"downloads/quickmessage.apk", size:$size, built:$built}' > dl-android/android.json
-          printf 'AddType application/vnd.android.package-archive .apk\nAddType application/octet-stream .ipa\nAddType application/octet-stream .tipa\n' > dl-android/.htaccess
-          cat dl-android/android.json
+          echo "$KS_B64" | base64 -d > "$RUNNER_TEMP/qm.jks"
+          echo "QM_KEYSTORE=$RUNNER_TEMP/qm.jks" >> "$GITHUB_ENV"
+          echo "QM_STORE_PASS=${{ secrets.ANDROID_STORE_PASS }}" >> "$GITHUB_ENV"
+          echo "QM_KEY_ALIAS=${{ secrets.ANDROID_KEY_ALIAS }}" >> "$GITHUB_ENV"
+          echo "QM_KEY_PASS=${{ secrets.ANDROID_KEY_PASS }}" >> "$GITHUB_ENV"
+      # The runner image already ships the Android SDK (ANDROID_HOME) and accepts its licences; the gradle cache from setup-gradle speeds up later builds.
+      - name: Build debug APK
+        working-directory: android
+        run: set -o pipefail; gradle assembleDebug --no-daemon --build-cache --stacktrace 2>&1 | tee build.log
+      - name: Show compile errors in the job summary
+        if: failure()
+        run: |
+          { echo '### Build errors'; echo '```'; grep -E '^e: |error:|FAILED|What went wrong' -A3 android/build.log | head -80; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: quickmessage-debug
+          path: android/app/build/outputs/apk/debug/app-debug.apk
+          compression-level: 0
+      - name: Upload the build log (only when it failed)
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-build-log
+          path: android/build.log
+
+  # ------------------------------------------------------------------ iOS: unsigned .ipa + TrollStore .tipa
+  ios:
+    needs: prepare
+    if: needs.prepare.outputs.ios == 'true'
+    runs-on: macos-latest
+    env:
+      NAME: 1.0.${{ github.run_number }}
+      HOMEBREW_NO_AUTO_UPDATE: 1
+      HOMEBREW_NO_INSTALL_CLEANUP: 1
+      HOMEBREW_NO_ENV_HINTS: 1
+    steps:
+      - uses: actions/checkout@v4
+        with: { ref: "${{ github.ref_name }}" }
+      - name: Tools and version number
+        run: |
+          echo "BUILD=$((1000 + GITHUB_RUN_NUMBER))" >> "$GITHUB_ENV"
+          brew install xcodegen ldid
+      - name: Generate the Xcode project and build (unsigned)
+        working-directory: ios
+        run: |
+          xcodegen generate
+          xcodebuild -project QuickMessage.xcodeproj -scheme QuickMessage \
+            -configuration Release -sdk iphoneos -destination 'generic/platform=iOS' \
+            -derivedDataPath build \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" \
+            CURRENT_PROJECT_VERSION=$BUILD MARKETING_VERSION=$NAME \
+            build | tail -n 40
+      - name: Package the .ipa and the .tipa (TrollStore)
+        working-directory: ios
+        run: |
+          app_src=build/Build/Products/Release-iphoneos/QuickMessage.app
+          rm -rf Payload && mkdir Payload && cp -R "$app_src" Payload/
+          zip -qr QuickMessage-unsigned.ipa Payload
+          # TrollStore: a .tipa is an .ipa whose binaries carry a fake signature (ldid) - TrollStore replaces it with its own permanent one.
+          rm -rf tipa && mkdir -p tipa/Payload && cp -R "$app_src" tipa/Payload/
+          app=tipa/Payload/QuickMessage.app
+          for b in "$app"/PlugIns/*.appex; do [ -d "$b" ] && ldid -S "$b/$(/usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' "$b/Info.plist")"; done
+          ldid -S "$app/$(/usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' "$app/Info.plist")"
+          (cd tipa && zip -qry ../QuickMessage.tipa Payload)
+          ls -la QuickMessage-unsigned.ipa QuickMessage.tipa
+      - uses: actions/upload-artifact@v4
+        with:
+          name: quickmessage-ios
+          path: |
+            ios/QuickMessage-unsigned.ipa
+            ios/QuickMessage.tipa
+          compression-level: 0
+
+  # ------------------------------------------------------------------ iOS Simulator build (its own runner, so it doesn't make the device build wait)
+  ios-sim:
+    needs: prepare
+    if: needs.prepare.outputs.ios == 'true'
+    runs-on: macos-latest
+    env:
+      NAME: 1.0.${{ github.run_number }}
+      HOMEBREW_NO_AUTO_UPDATE: 1
+      HOMEBREW_NO_INSTALL_CLEANUP: 1
+      HOMEBREW_NO_ENV_HINTS: 1
+    steps:
+      - uses: actions/checkout@v4
+        with: { ref: "${{ github.ref_name }}" }
+      - name: Build for the iOS Simulator
+        working-directory: ios
+        run: |
+          BUILD=$((1000 + GITHUB_RUN_NUMBER))
+          brew install xcodegen
+          xcodegen generate
+          # boot a simulator, then: xcrun simctl install booted QuickMessage.app && xcrun simctl launch booted app.quickmessage.chat
+          xcodebuild -project QuickMessage.xcodeproj -scheme QuickMessage \
+            -configuration Debug -sdk iphonesimulator -destination 'generic/platform=iOS Simulator' \
+            -derivedDataPath build-sim ARCHS="arm64 x86_64" ONLY_ACTIVE_ARCH=NO \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" \
+            CURRENT_PROJECT_VERSION=$BUILD MARKETING_VERSION=$NAME \
+            build | tail -n 40
+          mkdir -p sim && cp -R build-sim/Build/Products/Debug-iphonesimulator/QuickMessage.app sim/
+          ditto -c -k --keepParent sim/QuickMessage.app QuickMessage-simulator.zip
+      - uses: actions/upload-artifact@v4
+        with:
+          name: quickmessage-ios-simulator
+          path: ios/QuickMessage-simulator.zip
+          compression-level: 0
+
+  # ------------------------------------------------------------------ app files -> FTP (after the builds; the site upload, if any, is already done by then)
+  publish:
+    needs: [prepare, site, android, ios, ios-sim]
+    if: always() && needs.prepare.result == 'success' && (needs.android.result == 'success' || needs.ios.result == 'success')
+    runs-on: ubuntu-latest
+    env:
+      HAS_FTP: ${{ secrets.FTP_SERVER != '' && secrets.FTP_USERNAME != '' && secrets.FTP_PASSWORD != '' }}
+      FTP_DIR_RAW: ${{ secrets.FTP_DIR }}
+      RUN: ${{ github.run_number }}
+    steps:
+      - name: No FTP secrets
+        if: env.HAS_FTP != 'true'
+        run: echo "::notice::FTP_SERVER / FTP_USERNAME / FTP_PASSWORD are not set, so nothing is uploaded. The builds are in this run's artifacts."
+      - name: Server folder
+        if: env.HAS_FTP == 'true'
+        id: d
+        run: d="${FTP_DIR_RAW:-./}"; case "$d" in */) ;; *) d="$d/";; esac; echo "dir=$d" >> "$GITHUB_OUTPUT"
+      - name: Get the builds
+        if: env.HAS_FTP == 'true'
+        uses: actions/download-artifact@v4
+        with: { path: builds }
+        continue-on-error: true
+      - name: Version files
+        if: env.HAS_FTP == 'true'
+        run: |
+          code=$((1000 + RUN)); name="1.0.$RUN"; built=$(date -u +%FT%TZ)
+          htaccess='AddType application/vnd.android.package-archive .apk\nAddType application/octet-stream .ipa\nAddType application/octet-stream .tipa\n'
+          mkdir -p dl-android dl-ios
+          if [ "${{ needs.android.result }}" = "success" ] && [ -f builds/quickmessage-debug/app-debug.apk ]; then
+            mv builds/quickmessage-debug/app-debug.apk dl-android/quickmessage.apk
+            jq -n --argjson code "$code" --arg name "$name" --argjson size "$(stat -c%s dl-android/quickmessage.apk)" --arg built "$built" \
+              '{versionCode:$code, versionName:$name, url:"downloads/quickmessage.apk", size:$size, built:$built}' > dl-android/android.json
+            printf "$htaccess" > dl-android/.htaccess
+            cat dl-android/android.json
+          fi
+          if [ "${{ needs.ios.result }}" = "success" ] && [ -d builds/quickmessage-ios ]; then
+            mv builds/quickmessage-ios/* dl-ios/
+            sim=""; if [ -f builds/quickmessage-ios-simulator/QuickMessage-simulator.zip ]; then mv builds/quickmessage-ios-simulator/QuickMessage-simulator.zip dl-ios/; sim="downloads/QuickMessage-simulator.zip"; fi
+            jq -n --argjson code "$code" --arg name "$name" --arg built "$built" --arg sim "$sim" \
+              '{versionCode:$code, versionName:$name, url:"downloads/QuickMessage-unsigned.ipa", tipa:"downloads/QuickMessage.tipa", built:$built} + (if $sim != "" then {simulator:$sim} else {} end)' > dl-ios/ios.json
+            printf "$htaccess" > dl-ios/.htaccess
+            ls -la dl-ios; cat dl-ios/ios.json
+          fi
       - name: Upload the Android files
         if: env.HAS_FTP == 'true' && needs.android.result == 'success'
         uses: SamKirkland/FTP-Deploy-Action@v4.3.5
@@ -319,19 +337,6 @@ jobs:
           server-dir: ${{ steps.d.outputs.dir }}downloads/
           local-dir: dl-android/
           state-name: .ftp-state-android.json
-
-      # ---- iOS files (downloads/QuickMessage-unsigned.ipa, QuickMessage.tipa, QuickMessage-simulator.zip + ios.json)
-      - name: Get the iOS files
-        if: env.HAS_FTP == 'true' && needs.ios.result == 'success'
-        uses: actions/download-artifact@v4
-        with: { pattern: quickmessage-ios-*, path: dl-ios, merge-multiple: true }
-      - name: iOS version file
-        if: env.HAS_FTP == 'true' && needs.ios.result == 'success'
-        run: |
-          jq -n --argjson code "$((1000 + ${{ github.run_number }}))" --arg name "1.0.${{ github.run_number }}" --arg built "$(date -u +%FT%TZ)" \
-            '{versionCode:$code, versionName:$name, url:"downloads/QuickMessage-unsigned.ipa", tipa:"downloads/QuickMessage.tipa", simulator:"downloads/QuickMessage-simulator.zip", built:$built}' > dl-ios/ios.json
-          printf 'AddType application/vnd.android.package-archive .apk\nAddType application/octet-stream .ipa\nAddType application/octet-stream .tipa\n' > dl-ios/.htaccess
-          ls -la dl-ios; cat dl-ios/ios.json
       - name: Upload the iOS files
         if: env.HAS_FTP == 'true' && needs.ios.result == 'success'
         uses: SamKirkland/FTP-Deploy-Action@v4.3.5

@@ -815,3 +815,17 @@ dialog.modal.small:has(.dl-frame-box) { width: min(720px, calc(100vw - 2rem)); }
 .chat-up.err { background: rgb(239 68 68 / .16); color: #dc2626; }
 .chat-up.err::before { animation: none; border: 0; content: "!"; width: auto; height: auto; font-weight: 800; }
 @media (prefers-reduced-motion: reduce) { .chat-up::before { animation-duration: 3s; } }
+
+/* first-login welcome tour */
+.tour { max-width: min(440px, calc(100vw - 24px)); }
+.tour-page { display: flex; flex-direction: column; gap: .6rem; min-height: 15rem; }
+.tour-page h2 { margin: .2rem 0 0; }
+.tour-page p { margin: 0; line-height: 1.45; }
+.tour-ico { width: 52px; height: 52px; border-radius: 16px; display: grid; place-items: center; background: var(--accent-soft, rgb(99 102 241 / .16)); color: var(--accent); }
+.tour-note { font-size: .85rem; padding: .55rem .7rem; border-radius: 10px; background: var(--surface-2); color: var(--muted, inherit); }
+.tour-go { align-self: flex-start; }
+.tour-dots { display: flex; justify-content: center; gap: 6px; margin: .9rem 0 .2rem; }
+.tour-dots span { width: 7px; height: 7px; border-radius: 50%; background: var(--border, #cbd); }
+.tour-dots span.on { background: var(--accent); width: 18px; border-radius: 4px; }
+.ai-note { font-size: .8rem; line-height: 1.4; padding: .6rem .75rem; border-radius: 10px; background: var(--surface-2); color: var(--muted, inherit); margin: 0; }
+.ai-note strong { color: var(--text); }
