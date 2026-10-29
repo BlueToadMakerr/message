@@ -110,6 +110,31 @@
         <label class="switch-row" style="margin-top:.8rem"><input type="checkbox" id="previewToggle"> <span><strong>Link previews</strong><br><small class="muted">Shows what links in messages are (title, picture, video). Fetching a preview asks this site's server to open the link; nothing is stored.</small></span></label>
       </section>
 
+      <section class="card" id="hostsCard">
+        <h2>File hosting</h2>
+        <p class="muted" style="margin-top:0">Photos and short clips are sent inside the chat. Anything bigger, and any other kind of file, is uploaded to a free file hosting service and the chat gets a link. Choose which services may be used and in what order. These choices are saved on this device.</p>
+        <label class="lbl" for="hostMode">When a file needs a service</label>
+        <select id="hostMode" class="field">
+          <option value="priority">Use my priority list (the first one that works)</option>
+          <option value="ask">Ask me every time</option>
+        </select>
+        <label class="lbl" for="hostTtl" style="margin-top:.7rem">Keep files for</label>
+        <select id="hostTtl" class="field"></select>
+        <p class="hint">Each service uses the time it offers that is closest to yours; if you pick longer than it can do, it uses its longest. Files are never set to be deleted after the first download.</p>
+        <div id="hostList" class="host-list"></div>
+        <p class="hint">If a service fails, or can't take the file (too big for it), the next switched-on service in the list is tried. A switched-off service is never used.</p>
+        <div class="row wrap"><button id="hostReset" class="btn" type="button">Reset to defaults</button></div>
+        <details class="adv" style="margin-top:.8rem">
+          <summary>Rules that apply to all of them</summary>
+          <ul class="rules">
+            <li>Uploads are anonymous but public to anyone who has the link. Don't upload anything private unless the chat is end-to-end encrypted (then the file is scrambled before it leaves your device).</li>
+            <li>These services scan uploads and remove malware, copyrighted material and abuse; illegal content is not allowed.</li>
+            <li>Free services can be slow, rate-limit you or disappear. That's why the list falls back to the next one; when the service you want is busy, wait a moment and retry.</li>
+            <li>Limits and times shown here come from each service's own information and can change. Check their terms on their websites.</li>
+          </ul>
+        </details>
+      </section>
+
       <section class="card" id="audioCard">
         <h2>Audio</h2>
         <p class="muted" style="margin-top:0">Microphone, speakers and microphone volume for calls. Changes also apply to a call that is running.</p>

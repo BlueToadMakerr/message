@@ -24,6 +24,7 @@ import { PRESETS, RES, getScreenPrefs, setScreenPrefs, resetScreenPrefs, DEFAULT
 import { previewsOn, setPreviews } from "./linkpreview.js";
 import { refreshVerified, resendVerification } from "./verify.js";
 import { showTour } from "./onboarding.js";
+import { HOSTS, getHostSettings, setHostSettings, resetHostSettings, EXPIRY_CHOICES, maxTtl, fmtTtl, fmtLimit } from "./hosts.js";
 
 hydrateIcons();
 const $ = id => document.getElementById(id);
@@ -141,6 +142,44 @@ $("addPwBtn").onclick = async () => {
 };
 
 // ---------- privacy ----------
+// ---------- file hosting ----------
+function paintHosts() {
+  const s = getHostSettings();
+  $("hostMode").value = s.mode;
+  const sel = $("hostTtl");
+  if (!sel.options.length) for (const [v, l] of EXPIRY_CHOICES) sel.append(new Option(l, String(v)));
+  sel.value = String(s.ttl);
+  if (sel.value !== String(s.ttl)) { sel.append(new Option(fmtTtl(s.ttl), String(s.ttl))); sel.value = String(s.ttl); }
+  const list = $("hostList"); list.replaceChildren();
+  const save = n => { setHostSettings(n); paintHosts(); };
+  s.order.forEach((id, i) => {
+    const h = HOSTS[id], on = !!s.enabled[id];
+    const row = document.createElement("div"); row.className = "host-row" + (on ? "" : " off");
+    const top = document.createElement("div"); top.className = "host-top";
+    const num = document.createElement("span"); num.className = "host-num"; num.textContent = s.mode === "priority" ? String(i + 1) : "•";
+    const info = document.createElement("div"); info.className = "host-info";
+    const nm = document.createElement("strong"); nm.textContent = h.name;
+    const sm = document.createElement("small"); sm.textContent = `Up to ${fmtLimit(h.maxBytes)} · keeps files ${h.range ? fmtTtl(h.range[0]) + " to " + fmtTtl(h.range[1]) : h.expiries.length > 1 ? "up to " + fmtTtl(maxTtl(h)) + " (" + h.expiries.map(fmtTtl).join(", ") + ")" : fmtTtl(maxTtl(h))}`;
+    info.append(nm, sm);
+    const mv = (d) => () => { const o = s.order.slice(); const j = i + d; if (j < 0 || j >= o.length) return; [o[i], o[j]] = [o[j], o[i]]; save({ ...s, order: o }); };
+    const up = document.createElement("button"); up.type = "button"; up.className = "icon-btn"; up.textContent = "↑"; up.disabled = i === 0; up.setAttribute("aria-label", "Move " + h.name + " up"); up.onclick = mv(-1);
+    const dn = document.createElement("button"); dn.type = "button"; dn.className = "icon-btn"; dn.textContent = "↓"; dn.disabled = i === s.order.length - 1; dn.setAttribute("aria-label", "Move " + h.name + " down"); dn.onclick = mv(1);
+    const sw = document.createElement("input"); sw.type = "checkbox"; sw.checked = on; sw.className = "host-on"; sw.setAttribute("aria-label", "Use " + h.name);
+    sw.onchange = () => save({ ...s, enabled: { ...s.enabled, [id]: sw.checked } });
+    top.append(num, info, up, dn, sw);
+    const det = document.createElement("details"); det.className = "host-rules";
+    const su = document.createElement("summary"); su.textContent = "Rules and limits";
+    const ul = document.createElement("ul"); ul.className = "rules"; for (const r of h.rules) { const li = document.createElement("li"); li.textContent = r; ul.append(li); }
+    const a = document.createElement("a"); a.href = h.site; a.target = "_blank"; a.rel = "noopener noreferrer"; a.textContent = "Open " + h.site.replace("https://", "");
+    det.append(su, ul, a);
+    row.append(top, det); list.append(row);
+  });
+}
+$("hostMode").onchange = () => setHostSettings({ ...getHostSettings(), mode: $("hostMode").value }) || paintHosts();
+$("hostTtl").onchange = () => setHostSettings({ ...getHostSettings(), ttl: +$("hostTtl").value || 0 });
+$("hostReset").onclick = () => { resetHostSettings(); paintHosts(); toast("File hosting settings reset.", "success", 2000); };
+paintHosts();
+
 $("tourBtn").onclick = () => showTour({ uid: user.uid });
 $("emailAddToggle").addEventListener("change", async e => {
   try { await update(ref(db, `accsettings/${user.uid}/settings`), { emailAdd: e.target.checked }); invalidateProfile(user.uid); toast(e.target.checked ? "People can add you by email." : "People need your UID to add you.", "success", 2500); }

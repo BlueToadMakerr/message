@@ -11,7 +11,8 @@ import {
 } from "./ui.js";
 import { initCallBanner } from "./call-banner.js";
 import { QM, enterShell, trackSplit, toHome, markReady } from "./embed.js";
-import { uploadToLitterbox, isLitterUrl, fmtBytes, kindOf, MAX_BYTES } from "./litter.js";
+import { isLitterUrl, fmtBytes, kindOf, relayMax } from "./litter.js";
+import { uploadToHosts, fmtTtl, fmtLimit } from "./hosts.js";
 import { logEvent } from "./catlog.js";
 import { getProfile, peekProfile, ensureProfile, profileExists, invalidateProfile } from "./users.js";
 import * as E2E from "./crypto.js";
@@ -1107,8 +1108,28 @@ for (const id of ["fileInput", "cameraInput"]) {
     e.target.value = "";
     if (!file) return;
     attachDialog.close();
-    sendFile(file);
+    confirmFile(file).then(ok => { if (ok) sendFile(file); });
   });
+}
+
+// "Send this file?": every file picked from the device is shown (name, size, preview, where it goes) before anything is uploaded.
+async function confirmFile(file) {
+  const t = file.type || "", box = document.createElement("div"); box.className = "send-prev";
+  const url = URL.createObjectURL(file);
+  let el = null;
+  if (t.startsWith("image/")) { el = new Image(); el.alt = "Preview"; el.src = url; }
+  else if (t.startsWith("video/")) { el = document.createElement("video"); el.controls = true; el.muted = true; el.preload = "metadata"; el.playsInline = true; el.src = url; }
+  else if (t.startsWith("audio/")) { el = document.createElement("audio"); el.controls = true; el.src = url; }
+  if (el) box.append(el);
+  const nm = document.createElement("div"); nm.className = "nm"; nm.textContent = file.name || "File";
+  const meta = document.createElement("div"); meta.className = "hint"; meta.textContent = `${fmtBytes(file.size)}${t ? " · " + t : ""}`;
+  const where = document.createElement("div"); where.className = "hint";
+  const inline = t.startsWith("image/") || ((t.startsWith("video/") || t.startsWith("audio/")) && file.size <= MAX_VIDEO_BYTES);
+  where.textContent = inline ? "It will be sent directly in the chat." : "This file is too big or not a photo / short clip, so it will be uploaded to a file hosting service (Account → File hosting) and the link will expire after a while.";
+  box.append(nm, meta, where);
+  const ok = await confirmDialog({ title: "Send this file?", node: box, okText: "Send" });
+  URL.revokeObjectURL(url);
+  return ok;
 }
 
 $("sendLinkBtn").onclick = async () => {
@@ -1155,12 +1176,27 @@ async function prepareImage(file) {
   throw new Error("That image is too large even after resizing.");
 }
 
-const TOO_BIG = "That file is too big to send directly, so it's being uploaded to Litterbox. It will expire after 3 days.";
-const OTHER = "Files are uploaded to Litterbox and expire after 3 days.";
+const TOO_BIG = "That file is too big to send directly, so it's being uploaded to a file hosting service. It will expire after a while.";
+const OTHER = "Files are uploaded to a file hosting service and expire after a while (see Account → File hosting).";
+
+// Mode "ask me every time": which service should this file go to?
+async function pickHost(list) {
+  const box = document.createElement("div"); box.className = "host-pick";
+  list.forEach(({ host, ttl }, i) => {
+    const l = document.createElement("label");
+    const r = document.createElement("input"); r.type = "radio"; r.name = "qm-host"; r.value = host.id; r.checked = i === 0;
+    const t = document.createElement("span"); const b = document.createElement("strong"); b.textContent = host.name;
+    const sm = document.createElement("small"); sm.textContent = `Keeps the file ${fmtTtl(ttl)} · up to ${fmtLimit(host.maxBytes)}`;
+    t.append(b, sm); l.append(r, t); box.append(l);
+  });
+  const ok = await confirmDialog({ title: "Where should this file go?", message: "Pick a file hosting service. If it fails, the next ones you've turned on are tried.", node: box, okText: "Upload" });
+  if (!ok) return null;
+  const id = box.querySelector("input:checked")?.value;
+  return (list.find(x => x.host.id === id) || list[0]).host;
+}
 
 async function litterSpec(job, why) {
   const file = job.file;
-  if (file.size > MAX_BYTES) throw new Error("That file is over Litterbox's 1 GB limit.");
   const sealed = canSeal();
   job.litter = true;
   if (!job.noticed) { job.noticed = true; toast(why, "info", 7000); }
@@ -1171,7 +1207,13 @@ async function litterSpec(job, why) {
     up = new File([await E2E.encBytes(chatId, await file.arrayBuffer())], "x.bin", { type: "application/octet-stream" });
   }
   const wv = (file.type || "").startsWith("audio/") ? await waveFromFile(file) : null;      // the waveform travels with the message
-  const info = await uploadToLitterbox(up, f => { job.progress = f; paintJobProgress(job); }, job.ctrl.signal);
+  let info;
+  try {
+    info = await uploadToHosts(up, {
+      onProgress: f => { job.progress = f; paintJobProgress(job); }, signal: job.ctrl.signal, relayMax: await relayMax(), choose: pickHost,
+      onSwitch: (a, b, e) => toast(`${a.name} didn't work (${friendlyError((e && e.message) || "error")}). Trying ${b.name}…`, "info", 5000)
+    });
+  } catch (e) { if (e.aborted && !job.cancelled) cancelJob(job); throw e; }
   if (wv) Object.assign(info, wv);
   if (sealed) Object.assign(info, { name: file.name || "File", size: file.size, mime: file.type || "application/octet-stream", kind: kindOf(file.type) });
   return { type: "file", extra: info };
@@ -1667,22 +1709,37 @@ onAuthStateChanged(auth, async user => {
 });
 
 
-// ---------- take a photo with the camera ----------
-const camDlg = $("cameraDialog"), camVideo = $("camVideo"), camShot = $("camShot");
-let camStream = null, camFacing = "environment", camBlob = null;
+// ---------- camera: photo or video, the whole picture ----------
+const camDlg = $("cameraDialog"), camVideo = $("camVideo"), camShot = $("camShot"), camPlay = $("camPlay"), camTime = $("camTime");
+let camStream = null, camFacing = "environment", camBlob = null, camMode = "photo", camRec = null, camChunks = [], camTick = null, camT0 = 0, camPlayUrl = null;
+const mmss = ms => { const s = Math.floor(ms / 1000); return Math.floor(s / 60) + ":" + String(s % 60).padStart(2, "0"); };
+const pickMime = list => (window.MediaRecorder && list.find(m => MediaRecorder.isTypeSupported(m))) || "";
 const stopCam = () => { camStream?.getTracks().forEach(t => t.stop()); camStream = null; camVideo.srcObject = null; };
+function discardRec() { if (camRec) { camRec.onstop = null; try { camRec.state !== "inactive" && camRec.stop(); } catch (_) { /* ignore */ } camRec = null; } clearInterval(camTick); camTime.hidden = true; }
+function camUi(state) {   // "live" | "recording" | "review"
+  const photo = camMode === "photo";
+  camVideo.hidden = state === "review"; camShot.hidden = !(state === "review" && photo); camPlay.hidden = !(state === "review" && !photo);
+  $("camSnap").hidden = state === "review"; $("camSend").hidden = state !== "review"; $("camRetake").hidden = state !== "review";
+  $("camSnap").textContent = state === "recording" ? "Stop" : photo ? "Take photo" : "Start recording";
+  $("camSnap").classList.toggle("danger", state === "recording");
+  $("camModePhoto").classList.toggle("on", photo); $("camModeVideo").classList.toggle("on", !photo);
+  $("camModePhoto").disabled = $("camModeVideo").disabled = state !== "live";
+  $("camTitle").textContent = state === "review" ? (photo ? "Your photo" : "Your video") : photo ? "Take a photo" : "Record a video";
+  $("camFlip").hidden = state !== "live" || $("camFlip").dataset.n < 2;
+}
 async function startCam() {
-  stopCam();
-  camVideo.hidden = false; camShot.hidden = true; camBlob = null;
-  $("camSnap").hidden = false; $("camSend").hidden = true; $("camRetake").hidden = true;
-  camStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: camFacing }, width: { ideal: 1920 } }, audio: false });
+  stopCam(); discardRec();
+  camBlob = null; if (camPlayUrl) { URL.revokeObjectURL(camPlayUrl); camPlayUrl = null; }
+  camUi("live");
+  camStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: camFacing }, width: { ideal: 1920 } }, audio: camMode === "video" });
   camVideo.srcObject = camStream;
   await camVideo.play().catch(() => {});
   const n = (await navigator.mediaDevices.enumerateDevices()).filter(d => d.kind === "videoinput").length;
-  $("camFlip").hidden = n < 2;
+  $("camFlip").dataset.n = n; $("camFlip").hidden = n < 2;
 }
 async function openCamera() {
   if (!navigator.mediaDevices?.getUserMedia) { $("cameraInput").click(); return; }   // old browsers: system camera picker
+  camMode = "photo";
   camDlg.showModal();
   try { await startCam(); }
   catch (err) {
@@ -1691,10 +1748,34 @@ async function openCamera() {
   }
 }
 wireDialog(camDlg);
-camDlg.addEventListener("close", stopCam);
+camDlg.addEventListener("close", () => { stopCam(); discardRec(); if (camPlayUrl) { URL.revokeObjectURL(camPlayUrl); camPlayUrl = null; } });
 $("camClose").onclick = () => camDlg.close();
 $("camFlip").onclick = async () => { camFacing = camFacing === "user" ? "environment" : "user"; try { await startCam(); } catch (_) { /* keep dialog */ } };
+const setCamMode = async m => { if (camMode === m) return; camMode = m; try { await startCam(); } catch (e) { camDlg.close(); toast(e && e.name === "NotAllowedError" ? "Camera or microphone access was blocked. Allow it in your browser's site settings." : "Couldn't switch the camera mode.", "error"); } };
+$("camModePhoto").onclick = () => setCamMode("photo");
+$("camModeVideo").onclick = () => setCamMode("video");
 $("camSnap").onclick = () => {
+  if (camMode === "video") {
+    if (camRec) { camRec.stop(); return; }                 // Stop
+    if (!camStream || !window.MediaRecorder) return toast("This browser can't record video here.", "error");
+    const mime = pickMime(["video/mp4", "video/webm;codecs=vp9,opus", "video/webm;codecs=vp8,opus", "video/webm"]);
+    camChunks = [];
+    camRec = new MediaRecorder(camStream, mime ? { mimeType: mime } : undefined);
+    camRec.ondataavailable = e => { if (e.data && e.data.size) camChunks.push(e.data); };
+    camRec.onstop = () => {
+      clearInterval(camTick); camTime.hidden = true;
+      const type = (camRec && camRec.mimeType || mime || "video/webm").split(";")[0];
+      camRec = null;
+      camBlob = new Blob(camChunks, { type });
+      camPlayUrl = URL.createObjectURL(camBlob); camPlay.src = camPlayUrl;
+      stopCam(); camUi("review");
+    };
+    camRec.start(1000);
+    camT0 = Date.now(); camTime.textContent = "0:00"; camTime.hidden = false;
+    camTick = setInterval(() => { camTime.textContent = mmss(Date.now() - camT0); }, 250);
+    camUi("recording");
+    return;
+  }
   const w = camVideo.videoWidth, h = camVideo.videoHeight;
   if (!w) return;
   const c = document.createElement("canvas"); c.width = w; c.height = h;
@@ -1703,16 +1784,71 @@ $("camSnap").onclick = () => {
     if (!b) return;
     camBlob = b;
     camShot.src = URL.createObjectURL(b);
-    camShot.hidden = false; camVideo.hidden = true;
-    $("camSnap").hidden = true; $("camSend").hidden = false; $("camRetake").hidden = false;
-    stopCam();
+    stopCam(); camUi("review");
   }, "image/jpeg", 0.9);
 };
-$("camRetake").onclick = () => { URL.revokeObjectURL(camShot.src); startCam().catch(() => camDlg.close()); };
+$("camRetake").onclick = () => { if (camShot.src.startsWith("blob:")) URL.revokeObjectURL(camShot.src); startCam().catch(() => camDlg.close()); };
 $("camSend").onclick = () => {
   if (!camBlob) return;
-  const file = new File([camBlob], "photo.jpg", { type: "image/jpeg" });
+  const ext = camMode === "photo" ? "jpg" : /mp4/.test(camBlob.type) ? "mp4" : "webm";
+  const file = new File([camBlob], (camMode === "photo" ? "photo." : "video.") + ext, { type: camBlob.type || (camMode === "photo" ? "image/jpeg" : "video/webm") });
   camDlg.close();
+  sendFile(file);
+};
+
+// ---------- record audio (a voice recording sent as an audio file) ----------
+const voiceDlg = $("voiceDialog"), voicePlay = $("voicePlay");
+let vStream = null, vRec = null, vChunks = [], vTick = null, vT0 = 0, vBlob = null, vUrl = null, vCtx = null, vRaf = 0;
+function vStop() { cancelAnimationFrame(vRaf); vStream?.getTracks().forEach(t => t.stop()); vStream = null; try { vCtx?.close(); } catch (_) { /* ignore */ } vCtx = null; $("voiceLevel").firstChild.style.width = "0"; }
+function vReset() { if (vRec) { vRec.onstop = null; try { vRec.state !== "inactive" && vRec.stop(); } catch (_) { /* ignore */ } vRec = null; } clearInterval(vTick); vStop(); if (vUrl) { URL.revokeObjectURL(vUrl); vUrl = null; } vBlob = null; }
+function vUi(state) {   // "idle" | "recording" | "review"
+  voicePlay.hidden = state !== "review"; $("voiceLevel").hidden = state === "review";
+  $("voiceRec").hidden = state === "review"; $("voiceSend").hidden = state !== "review"; $("voiceRetake").hidden = state !== "review";
+  $("voiceRec").textContent = state === "recording" ? "Stop" : "Start recording"; $("voiceRec").classList.toggle("danger", state === "recording");
+  if (state === "idle") $("voiceTime").textContent = "0:00";
+}
+wireDialog(voiceDlg);
+voiceDlg.addEventListener("close", vReset);
+$("voiceClose").onclick = () => voiceDlg.close();
+$("pickVoiceBtn").onclick = () => { attachDialog.close(); vReset(); vUi("idle"); $("voiceMsg").textContent = ""; voiceDlg.showModal(); };
+$("voiceRetake").onclick = () => { vReset(); vUi("idle"); };
+$("voiceRec").onclick = async () => {
+  if (vRec) { vRec.stop(); return; }
+  if (!navigator.mediaDevices?.getUserMedia || !window.MediaRecorder) { $("voiceMsg").textContent = "This browser can't record audio."; return; }
+  try { vStream = await navigator.mediaDevices.getUserMedia({ audio: true }); }
+  catch (err) { $("voiceMsg").textContent = err && err.name === "NotAllowedError" ? "Microphone access was blocked. Allow it in your browser's site settings." : "Couldn't open the microphone."; return; }
+  $("voiceMsg").textContent = "";
+  const mime = pickMime(["audio/mp4", "audio/webm;codecs=opus", "audio/webm", "audio/ogg;codecs=opus"]);
+  vChunks = [];
+  vRec = new MediaRecorder(vStream, mime ? { mimeType: mime } : undefined);
+  vRec.ondataavailable = e => { if (e.data && e.data.size) vChunks.push(e.data); };
+  vRec.onstop = () => {
+    clearInterval(vTick);
+    const type = (vRec && vRec.mimeType || mime || "audio/webm").split(";")[0];
+    vRec = null; vStop();
+    vBlob = new Blob(vChunks, { type });
+    vUrl = URL.createObjectURL(vBlob); voicePlay.src = vUrl;
+    vUi("review");
+  };
+  vRec.start(1000);
+  // live level meter
+  try {
+    vCtx = new (window.AudioContext || window.webkitAudioContext)();
+    const an = vCtx.createAnalyser(); an.fftSize = 512; vCtx.createMediaStreamSource(vStream).connect(an);
+    const buf = new Uint8Array(an.fftSize);
+    const loop = () => { an.getByteTimeDomainData(buf); let m = 0; for (const v of buf) m = Math.max(m, Math.abs(v - 128)); $("voiceLevel").firstChild.style.width = Math.min(100, m / 128 * 140) + "%"; vRaf = requestAnimationFrame(loop); };
+    loop();
+  } catch (_) { /* no meter */ }
+  vT0 = Date.now(); $("voiceTime").textContent = "0:00";
+  vTick = setInterval(() => { $("voiceTime").textContent = mmss(Date.now() - vT0); }, 250);
+  vUi("recording");
+};
+$("voiceSend").onclick = () => {
+  if (!vBlob) return;
+  const d = new Date(), p = n => String(n).padStart(2, "0");
+  const ext = /mp4|aac/.test(vBlob.type) ? "m4a" : /ogg/.test(vBlob.type) ? "ogg" : "webm";
+  const file = new File([vBlob], `recording-${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}-${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}.${ext}`, { type: vBlob.type || "audio/webm" });
+  voiceDlg.close();
   sendFile(file);
 };
 

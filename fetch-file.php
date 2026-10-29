@@ -1,12 +1,12 @@
 <?php
-// Same-origin relay for downloading (encrypted) uploads from Litterbox when the browser can't fetch them directly (no CORS).
+// Same-origin relay for downloading (encrypted) uploads from the file hosts when the browser can't fetch them directly (no CORS).
 declare(strict_types=1);
 require __DIR__ . '/lib.php';
 $config = require __DIR__ . '/config.php';
 $caller = qm_caller($config, (string)($_GET['t'] ?? ''));
 qm_rate('ff:' . $caller['uid'], 300, 600);
 $u = (string)($_GET['u'] ?? '');
-if (!preg_match('#^https://litter\.catbox\.moe/[\w.\-]+$#i', $u)) qm_out(400, ['error' => 'Only Litterbox files']);
+if (strlen($u) > 300 || !preg_match('#^https://(?:litter\.catbox\.moe|oshi\.at|tmpfile\.link|(?:www\.)?file\.io)/[\w.\-/%~+]+$#i', $u)) qm_out(400, ['error' => 'Only files from the supported file hosts']);
 header('Content-Type: application/octet-stream');
 header('Cache-Control: private, max-age=3600');
 $ch = curl_init($u);

@@ -436,8 +436,8 @@ a.file-card:hover { background: color-mix(in srgb, currentColor 18%, transparent
 .read-av img { width: 100%; height: 100%; object-fit: cover; }
 .msg-event .readBy { flex-basis: 100%; justify-content: center; }
 
-.cam-dialog .cam-stage { background: #000; border-radius: 12px; overflow: hidden; display: grid; place-items: center; aspect-ratio: 4 / 3; }
-.cam-dialog video, .cam-dialog img { width: 100%; height: 100%; object-fit: cover; }
+.cam-dialog .cam-stage { position: relative; background: #000; border-radius: 12px; overflow: hidden; display: grid; place-items: center; min-height: 8rem; }
+.cam-dialog video, .cam-dialog img { display: block; width: 100%; height: auto; max-height: min(62vh, 560px); object-fit: contain; }      /* the whole picture, never cropped */
 .cam-dialog [hidden] { display: none; }
 
 /* message page loaded as the in-call chat panel: no navigation chrome */
@@ -829,3 +829,35 @@ dialog.modal.small:has(.dl-frame-box) { width: min(720px, calc(100vw - 2rem)); }
 .tour-dots span.on { background: var(--accent); width: 18px; border-radius: 4px; }
 .ai-note { font-size: .8rem; line-height: 1.4; padding: .6rem .75rem; border-radius: 10px; background: var(--surface-2); color: var(--muted, inherit); margin: 0; }
 .ai-note strong { color: var(--text); }
+
+/* camera mode switch, recording timer, voice recorder */
+.seg { display: flex; gap: 4px; padding: 3px; border-radius: 999px; background: var(--surface-2); align-self: center; }
+.seg button { border: 0; background: transparent; color: var(--text); padding: .35rem 1rem; border-radius: 999px; font: inherit; font-weight: 600; font-size: .85rem; cursor: pointer; }
+.seg button.on { background: var(--accent); color: #fff; }
+.cam-time { position: absolute; top: 8px; left: 8px; padding: 2px 9px; border-radius: 999px; background: rgb(220 38 38 / .9); color: #fff; font-weight: 700; font-size: .8rem; font-variant-numeric: tabular-nums; }
+.cam-time::before { content: "● "; }
+.voice-stage { display: flex; flex-direction: column; align-items: center; gap: .7rem; padding: 1rem 0; }
+.voice-level { width: 100%; height: 10px; border-radius: 999px; background: var(--surface-2); overflow: hidden; }
+.voice-level i { display: block; height: 100%; width: 0; background: var(--accent); transition: width .08s linear; }
+.voice-time { font-size: 2rem; font-weight: 700; font-variant-numeric: tabular-nums; }
+.voice-stage audio { width: 100%; }
+.host-pick { display: flex; flex-direction: column; gap: .4rem; margin-top: .6rem; }
+.host-pick label { display: flex; gap: .6rem; align-items: flex-start; padding: .5rem .65rem; border-radius: 10px; background: var(--surface-2); cursor: pointer; }
+.host-pick small { display: block; color: var(--muted, inherit); }
+.send-prev { display: flex; flex-direction: column; gap: .5rem; margin-top: .5rem; }
+.send-prev img, .send-prev video { max-width: 100%; max-height: 220px; border-radius: 10px; align-self: center; }
+.send-prev audio { width: 100%; }
+.send-prev .nm { font-weight: 600; overflow-wrap: anywhere; }
+
+/* Account → File hosting */
+.host-list { display: flex; flex-direction: column; gap: .5rem; margin: .8rem 0; }
+.host-row { padding: .6rem .7rem; border-radius: 12px; background: var(--surface-2); }
+.host-row.off { opacity: .6; }
+.host-top { display: flex; align-items: center; gap: .5rem; }
+.host-info { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.host-info small { color: var(--muted, inherit); }
+.host-num { width: 22px; height: 22px; border-radius: 50%; display: grid; place-items: center; background: var(--accent); color: #fff; font-size: .75rem; font-weight: 700; flex: none; }
+.host-on { width: 20px; height: 20px; flex: none; }
+.host-rules { margin-top: .4rem; font-size: .85rem; }
+.host-rules summary, .adv summary { cursor: pointer; }
+.rules { margin: .4rem 0; padding-left: 1.1rem; display: flex; flex-direction: column; gap: .25rem; }

@@ -105,6 +105,7 @@
     <div class="row">
       <button id="pickFileBtn" class="btn grow" type="button">Choose file</button>
       <button id="pickCameraBtn" class="btn grow" type="button">Camera</button>
+      <button id="pickVoiceBtn" class="btn grow" type="button">Record audio</button>
     </div>
     <input id="fileInput" type="file" class="hidden">
     <input id="cameraInput" type="file" accept="image/*,video/*" capture="environment" class="hidden">
@@ -113,19 +114,33 @@
       <input id="mediaUrl" class="field" type="url" placeholder="https://… image or video" autocomplete="off">
       <button id="sendLinkBtn" class="btn primary" type="button">Send</button>
     </div>
-    <p class="hint">Small photos and videos are sent directly. Anything bigger — and any other kind of file — is uploaded to Litterbox and expires after 3&nbsp;days.</p>
+    <p class="hint">Small photos and videos are sent directly. Anything bigger — and any other kind of file — is uploaded to a free file hosting service and expires after a while (choose the services and how long in Account → File hosting). You'll be asked to confirm before a file is sent.</p>
   </div>
 </dialog>
 
 <dialog id="cameraDialog" class="modal cam-dialog">
   <div class="modal-body">
-    <div class="modal-head"><h2>Take a photo</h2><button type="button" class="icon-btn" id="camClose" aria-label="Close" data-icon="close"></button></div>
-    <div class="cam-stage"><video id="camVideo" playsinline muted autoplay></video><img id="camShot" alt="Your photo" hidden></div>
+    <div class="modal-head"><h2 id="camTitle">Camera</h2><button type="button" class="icon-btn" id="camClose" aria-label="Close" data-icon="close"></button></div>
+    <div class="seg" role="tablist" aria-label="Camera mode"><button id="camModePhoto" class="on" type="button" role="tab">Photo</button><button id="camModeVideo" type="button" role="tab">Video</button></div>
+    <div class="cam-stage"><video id="camVideo" playsinline muted autoplay></video><img id="camShot" alt="Your photo" hidden><video id="camPlay" playsinline controls hidden></video><span id="camTime" class="cam-time" hidden>0:00</span></div>
     <div class="row">
       <button id="camFlip" class="btn" type="button" hidden>Flip</button>
       <button id="camRetake" class="btn grow" type="button" hidden>Retake</button>
       <button id="camSnap" class="btn primary grow" type="button">Take photo</button>
       <button id="camSend" class="btn primary grow" type="button" hidden>Send</button>
+    </div>
+  </div>
+</dialog>
+
+<dialog id="voiceDialog" class="modal voice-dialog">
+  <div class="modal-body">
+    <div class="modal-head"><h2>Record audio</h2><button type="button" class="icon-btn" id="voiceClose" aria-label="Close" data-icon="close"></button></div>
+    <div class="voice-stage"><div id="voiceLevel" class="voice-level"><i></i></div><div id="voiceTime" class="voice-time">0:00</div><audio id="voicePlay" controls hidden></audio></div>
+    <p id="voiceMsg" class="hint" style="margin:0"></p>
+    <div class="row">
+      <button id="voiceRetake" class="btn grow" type="button" hidden>Record again</button>
+      <button id="voiceRec" class="btn primary grow" type="button">Start recording</button>
+      <button id="voiceSend" class="btn primary grow" type="button" hidden>Send</button>
     </div>
   </div>
 </dialog>

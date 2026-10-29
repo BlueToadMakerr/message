@@ -6,7 +6,7 @@ const API = "https://litterbox.catbox.moe/resources/internals/api.php";
 export const RETENTION = "72h";
 export const RETENTION_MS = 72 * 3600 * 1000;
 export const MAX_BYTES = 1000 * 1024 * 1024;           // Litterbox's limit is 1 GB
-const HOST_RE = /^https:\/\/litter\.catbox\.moe\/[\w.\-]+$/i;
+const HOST_RE = /^https:\/\/(?:litter\.catbox\.moe|oshi\.at|tmpfile\.link|(?:www\.)?file\.io)\/[\w.\-\/%~+]+$/i;      // every file host we accept links from (see hosts.js)
 
 const rand16 = () => {
   const a = crypto.getRandomValues(new Uint8Array(16)), c = "abcdefghijklmnopqrstuvwxyz0123456789";
@@ -19,8 +19,8 @@ const extOf = f => {
   return t ? "." + t.replace(/[^a-z0-9].*$/i, "") : "";
 };
 
-/** Is this URL one we'd render? (only Litterbox links) */
-export const isLitterUrl = u => typeof u === "string" && HOST_RE.test(u);
+/** Is this URL one we'd render? (only links to our file hosts: Litterbox, oshi.at, tmpfile.link, file.io) */
+export const isLitterUrl = u => typeof u === "string" && u.length <= 300 && HOST_RE.test(u);
 
 export const kindOf = mime => (mime || "").startsWith("image/") ? "image" : (mime || "").startsWith("video/") ? "video" : (mime || "").startsWith("audio/") ? "audio" : "file";
 
@@ -69,13 +69,14 @@ const relayLimit = () => limitP ||= fetch("upload.php?limits", { cache: "no-stor
  * @param {AbortSignal} [signal]
  * @returns {Promise<{url:string, name:string, size:number, mime:string, kind:string, expiresAt:number}>}
  */
-export async function uploadToLitterbox(file, onProgress, signal) {
+export async function uploadToLitterbox(file, onProgress, signal, ttl = 72 * 3600) {
+  const time = ttl <= 3600 ? "1h" : ttl <= 12 * 3600 ? "12h" : ttl <= 24 * 3600 ? "24h" : "72h";
   if (file.size > MAX_BYTES) throw new Error("That file is over Litterbox's 1 GB limit.");
   const stored = rand16() + extOf(file);                 // 16-character name, original name kept only in the chat message
   const build = () => {
     const f = new FormData();
     f.append("reqtype", "fileupload");
-    f.append("time", RETENTION);
+    f.append("time", time);
     f.append("fileNameLength", "16");
     f.append("fileToUpload", file, stored);
     return f;
@@ -83,6 +84,7 @@ export async function uploadToLitterbox(file, onProgress, signal) {
   const viaRelay = async () => {
     const f = build();
     f.append("idToken", await auth.currentUser.getIdToken());
+    f.append("host", "litterbox"); f.append("ttl", String(ttl)); f.append("json", "1");
     onProgress && onProgress(0);
     return postProxy(f, onProgress, signal);
   };
@@ -104,8 +106,10 @@ export async function uploadToLitterbox(file, onProgress, signal) {
       throw new Error("Couldn't reach Litterbox from this browser" + (max ? ", and this file is too big for the upload helper (" + fmtBytes(max) + " max)." : "."));
     }
   }
-  if (!HOST_RE.test(text)) throw new Error("Litterbox didn't accept that file: " + text.slice(0, 120));
-  return { url: text, name: file.name || stored, size: file.size, mime: file.type || "application/octet-stream", kind: kindOf(file.type), expiresAt: Date.now() + RETENTION_MS };
+  let url = text, secs = ttl;
+  if (text.startsWith("{")) { try { const j = JSON.parse(text); url = String(j.url || ""); secs = +j.expiresIn || ttl; } catch (_) { /* plain text */ } }
+  if (!HOST_RE.test(url)) throw new Error("Litterbox didn't accept that file: " + text.slice(0, 120));
+  return { url, name: file.name || stored, size: file.size, mime: file.type || "application/octet-stream", kind: kindOf(file.type), expiresAt: Date.now() + secs * 1000 };
 }
 
 export function fmtBytes(n) {
@@ -113,4 +117,60 @@ export function fmtBytes(n) {
   if (n < 1048576) return (n / 1024).toFixed(0) + " KB";
   if (n < 1073741824) return (n / 1048576).toFixed(1) + " MB";
   return (n / 1073741824).toFixed(2) + " GB";
+}
+
+/** Upload through this site's relay (upload.php) to another host (oshi / tmpfile / fileio). `ttl` = the retention (seconds) the host will use. */
+export async function uploadViaRelay(host, file, ttl, onProgress, signal) {
+  const max = await relayLimit();
+  if (!max || file.size > max) throw new Error("This site's upload helper can't take a file this big" + (max ? " (" + fmtBytes(max) + " max)." : "."));
+  const stored = rand16() + extOf(file);
+  const f = new FormData();
+  f.append("host", host); f.append("ttl", String(ttl)); f.append("json", "1");
+  f.append("idToken", await auth.currentUser.getIdToken());
+  f.append("fileToUpload", file, stored);
+  onProgress && onProgress(0);
+  const text = await postProxy(f, onProgress, signal);
+  let j = null; try { j = JSON.parse(text); } catch (_) { /* not JSON */ }
+  const url = j && String(j.url || "");
+  if (!url || !HOST_RE.test(url)) throw new Error("The file host didn't accept that file: " + text.slice(0, 120));
+  return { url, name: file.name || stored, size: file.size, mime: file.type || "application/octet-stream", kind: kindOf(file.type), expiresAt: Date.now() + (+j.expiresIn || ttl) * 1000 };
+}
+export const relayMax = () => relayLimit();
+
+// file.io and tmpfile.link answer browsers directly (CORS is allowed), so big files don't have to squeeze through this site's small upload limit.
+const DIRECT = {
+  fileio: { url: "https://file.io/", fields: (f, ttl) => { f.append("expires", Math.round(ttl / 86400) + "d"); f.append("autoDelete", "false"); f.append("maxDownloads", "1000"); }, file: "file" },
+  tmpfile: { url: "https://tmpfile.link/api/upload", fields: () => {}, file: "file" }
+};
+const pickUrl = text => {
+  let j = null; try { j = JSON.parse(text); } catch (_) { /* not JSON */ }
+  if (j && typeof j === "object") {
+    for (const k of ["link", "downloadLink", "url", "download_url"]) if (typeof j[k] === "string" && j[k]) return j[k];
+    if (j.data && typeof j.data === "object") for (const k of ["link", "downloadLink", "url"]) if (typeof j.data[k] === "string" && j.data[k]) return j.data[k];
+    if (j.success === false) throw Object.assign(new Error(String(j.message || j.error || "The file host refused the file.")), { http: 400 });
+  }
+  const m = /https:\/\/\S+/.exec(text);
+  return m ? m[0].replace(/["'<>.,;]+$/, "") : "";
+};
+/** Straight from the browser to fileio / tmpfile. A network / CORS failure has no `http` code, so the caller may fall back to the relay. */
+export function uploadDirectHost(host, file, ttl, onProgress, signal) {
+  const d = DIRECT[host];
+  if (!d) return Promise.reject(new Error("No direct upload for " + host));
+  return new Promise((resolve, reject) => {
+    const f = new FormData(); d.fields(f, ttl); f.append(d.file, file, file.name || "file");
+    const x = new XMLHttpRequest();
+    x.open("POST", d.url);
+    x.upload.onprogress = e => { if (e.lengthComputable && onProgress) onProgress(e.loaded / e.total); };
+    x.onload = () => {
+      const text = x.responseText || "";
+      if (x.status < 200 || x.status >= 300) return reject(Object.assign(new Error(text.slice(0, 200) || "The file host answered " + x.status + "."), { http: x.status }));
+      let url = ""; try { url = pickUrl(text); } catch (e) { return reject(e); }
+      if (!HOST_RE.test(url)) return reject(Object.assign(new Error("The file host didn't return a usable link: " + text.slice(0, 120)), { http: 502 }));
+      resolve({ url, name: file.name || "file", size: file.size, mime: file.type || "application/octet-stream", kind: kindOf(file.type), expiresAt: Date.now() + ttl * 1000 });
+    };
+    x.onerror = () => reject(new Error("Couldn't reach " + new URL(d.url).host + " from the browser."));
+    if (signal) signal.addEventListener("abort", () => { x.abort(); reject(Object.assign(new Error("Cancelled"), { aborted: true })); }, { once: true });
+    onProgress && onProgress(0);
+    x.send(f);
+  });
 }
