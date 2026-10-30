@@ -6,7 +6,7 @@ const API = "https://litterbox.catbox.moe/resources/internals/api.php";
 export const RETENTION = "72h";
 export const RETENTION_MS = 72 * 3600 * 1000;
 export const MAX_BYTES = 1000 * 1024 * 1024;           // Litterbox's limit is 1 GB
-const HOST_RE = /^https:\/\/(?:litter\.catbox\.moe|oshi\.at|tmpfile\.link|(?:www\.)?file\.io)\/[\w.\-\/%~+]+$/i;      // every file host we accept links from (see hosts.js)
+const HOST_RE = /^https:\/\/(?:litter\.catbox\.moe|files\.catbox\.moe|oshi\.at|tmpfile\.link|(?:www\.)?file\.io|0x0\.st|tempfile\.org)\/[\w.\-\/%~+]+$/i;      // every file host we accept links from (see hosts.js)
 
 const rand16 = () => {
   const a = crypto.getRandomValues(new Uint8Array(16)), c = "abcdefghijklmnopqrstuvwxyz0123456789";
@@ -140,12 +140,14 @@ export const relayMax = () => relayLimit();
 // file.io and tmpfile.link answer browsers directly (CORS is allowed), so big files don't have to squeeze through this site's small upload limit.
 const DIRECT = {
   fileio: { url: "https://file.io/", fields: (f, ttl) => { f.append("expires", Math.round(ttl / 86400) + "d"); f.append("autoDelete", "false"); f.append("maxDownloads", "1000"); }, file: "file" },
-  tmpfile: { url: "https://tmpfile.link/api/upload", fields: () => {}, file: "file" }
+  tmpfile: { url: "https://tmpfile.link/api/upload", fields: () => {}, file: "file" },
+  catbox: { url: "https://catbox.moe/user/api.php", fields: f => { f.append("reqtype", "fileupload"); }, file: "fileToUpload" }
 };
 const pickUrl = text => {
   let j = null; try { j = JSON.parse(text); } catch (_) { /* not JSON */ }
   if (j && typeof j === "object") {
     for (const k of ["link", "downloadLink", "url", "download_url"]) if (typeof j[k] === "string" && j[k]) return j[k];
+    if (Array.isArray(j.files) && j.files[0] && typeof j.files[0].url === "string") return j.files[0].url;
     if (j.data && typeof j.data === "object") for (const k of ["link", "downloadLink", "url"]) if (typeof j.data[k] === "string" && j.data[k]) return j.data[k];
     if (j.success === false) throw Object.assign(new Error(String(j.message || j.error || "The file host refused the file.")), { http: 400 });
   }

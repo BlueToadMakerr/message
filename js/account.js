@@ -159,7 +159,7 @@ function paintHosts() {
     const num = document.createElement("span"); num.className = "host-num"; num.textContent = s.mode === "priority" ? String(i + 1) : "•";
     const info = document.createElement("div"); info.className = "host-info";
     const nm = document.createElement("strong"); nm.textContent = h.name;
-    const sm = document.createElement("small"); sm.textContent = `Up to ${fmtLimit(h.maxBytes)} · keeps files ${h.range ? fmtTtl(h.range[0]) + " to " + fmtTtl(h.range[1]) : h.expiries.length > 1 ? "up to " + fmtTtl(maxTtl(h)) + " (" + h.expiries.map(fmtTtl).join(", ") + ")" : fmtTtl(maxTtl(h))}`;
+    const sm = document.createElement("small"); sm.textContent = `Up to ${fmtLimit(h.maxBytes)} · keeps files ${h.keeps ? h.keeps : h.range ? fmtTtl(h.range[0]) + " to " + fmtTtl(h.range[1]) : h.expiries.length > 1 ? "up to " + fmtTtl(maxTtl(h)) + " (" + h.expiries.map(fmtTtl).join(", ") + ")" : fmtTtl(maxTtl(h))}`;
     info.append(nm, sm);
     const mv = (d) => () => { const o = s.order.slice(); const j = i + d; if (j < 0 || j >= o.length) return; [o[i], o[j]] = [o[j], o[i]]; save({ ...s, order: o }); };
     const up = document.createElement("button"); up.type = "button"; up.className = "icon-btn"; up.textContent = "↑"; up.disabled = i === 0; up.setAttribute("aria-label", "Move " + h.name + " up"); up.onclick = mv(-1);
@@ -180,6 +180,20 @@ $("hostTtl").onchange = () => setHostSettings({ ...getHostSettings(), ttl: +$("h
 $("hostReset").onclick = () => { resetHostSettings(); paintHosts(); toast("File hosting settings reset.", "success", 2000); };
 paintHosts();
 
+// ---------- feature suggestions: opens the user's email app, addressed to the developer ----------
+const SUGGEST_TO = "bluetmaker@gmail.com";
+$("suggestSend").onclick = () => {
+  const text = $("suggestText").value.trim();
+  if (!text) return toast("Write your idea first.", "info", 2000);
+  const href = `mailto:${SUGGEST_TO}?subject=${encodeURIComponent("QuickMessage feature suggestion")}&body=${encodeURIComponent(text)}`;
+  try { const a = document.createElement("a"); a.href = href; a.target = "_top"; a.rel = "noopener"; document.body.append(a); a.click(); a.remove(); } catch (_) { /* ignore */ }
+  toast("Opening your email app… If nothing opens, use Copy text and send it to " + SUGGEST_TO, "info", 5000);
+};
+$("suggestCopy").onclick = async () => {
+  const text = $("suggestText").value.trim();
+  if (!text) return toast("Write your idea first.", "info", 2000);
+  try { await navigator.clipboard.writeText(text); toast("Copied. Send it to " + SUGGEST_TO, "success", 3500); } catch (_) { toast("Couldn't copy. Select the text and copy it yourself.", "error"); }
+};
 $("tourBtn").onclick = () => showTour({ uid: user.uid });
 $("emailAddToggle").addEventListener("change", async e => {
   try { await update(ref(db, `accsettings/${user.uid}/settings`), { emailAdd: e.target.checked }); invalidateProfile(user.uid); toast(e.target.checked ? "People can add you by email." : "People need your UID to add you.", "success", 2500); }

@@ -395,7 +395,7 @@ function appendLive(key, msg) {
   msgData.set(key, msg);
   const el = buildMessage(key, msg);
   messagesDiv.insertBefore(el, typingRow);
-  latestKey = key;
+  if (msg.type !== "event") latestKey = key;          // system lines (call started, someone joined…) are never marked as read: the read marker only ever points at a real message
   return el;
 }
 
@@ -432,7 +432,7 @@ function onRemoved(snap) {
   msgData.delete(snap.key);
   document.getElementById("msg-" + snap.key)?.remove();
   if (latestKey === snap.key) {
-    const msgs = messagesDiv.querySelectorAll(".msg");
+    const msgs = [...messagesDiv.querySelectorAll(".msg")].filter(e => msgData.get(e.dataset.key)?.type !== "event");
     latestKey = msgs.length ? msgs[msgs.length - 1].dataset.key : null;
   }
 }

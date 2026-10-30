@@ -6,7 +6,7 @@ $config = require __DIR__ . '/config.php';
 $caller = qm_caller($config, (string)($_GET['t'] ?? ''));
 qm_rate('ff:' . $caller['uid'], 300, 600);
 $u = (string)($_GET['u'] ?? '');
-if (strlen($u) > 300 || !preg_match('#^https://(?:litter\.catbox\.moe|oshi\.at|tmpfile\.link|(?:www\.)?file\.io)/[\w.\-/%~+]+$#i', $u)) qm_out(400, ['error' => 'Only files from the supported file hosts']);
+if (strlen($u) > 300 || !preg_match('#^https://(?:litter\.catbox\.moe|files\.catbox\.moe|oshi\.at|tmpfile\.link|(?:www\.)?file\.io|0x0\.st|tempfile\.org)/[\w.\-/%~+]+$#i', $u)) qm_out(400, ['error' => 'Only files from the supported file hosts']);
 header('Content-Type: application/octet-stream');
 header('Cache-Control: private, max-age=3600');
 $ch = curl_init($u);

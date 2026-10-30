@@ -4,7 +4,7 @@
 // browsers to read their answers directly); it only talks to the addresses listed in upload.php.
 import { uploadToLitterbox, uploadViaRelay, uploadDirectHost, fmtBytes } from "./litter.js";
 
-const H = 3600, D = 86400, MB = 1024 * 1024, GB = 1024 * MB;
+const H = 3600, D = 86400, MB = 1024 * 1024, GB = 1024 * MB, PERM = 3650 * D;     // PERM: "never expires" (10 years as a number)
 
 /** `expiries`: the retention times (seconds) the host offers, or `range: [min, max]` when any time in between works. `direct`: the browser can upload without this site's relay. */
 export const HOSTS = {
@@ -29,15 +29,31 @@ export const HOSTS = {
     rules: ["Up to 2 GB per file on the free tier, no account needed. Works straight from the browser.", "Normally a file is deleted after its first download. QuickMessage switches that off, and files last until they expire (1, 7 or 14 days).", "The link may open a download page instead of the file itself, so pictures and videos might not preview inside the chat (not verified).", "Uploads are scanned; no malware, copyright violations or abuse."]
   }
 };
+HOSTS.catbox = {
+  id: "catbox", name: "Catbox", site: "https://catbox.moe", maxBytes: 200 * MB, expiries: [PERM], direct: true, keeps: "no expiry (permanent)",
+  urlRe: /^https:\/\/files\.catbox\.moe\/[\w.\-]+$/i,
+  rules: ["Up to 200 MB per file, no account needed.", "Files stay online with no expiry (not guaranteed). The time you choose above can't shorten it, so only switch this on if you are fine with a file staying public.", "Anyone with the link can open it. No illegal content, malware or abuse; uploads can be removed.", "Not verified from the browser: if it can't be reached directly, the server relay is used."]
+};
+HOSTS.zerox = {
+  id: "zerox", name: "0x0.st", site: "https://0x0.st", maxBytes: 512 * MB, range: [1 * H, 365 * D], direct: false, keeps: "30 days to 1 year (smaller files last longer)",
+  maxFor: size => Math.round(Math.max(30 * D, Math.min(365 * D, 30 * D + (30 * D - 365 * D) * Math.pow(size / (512 * MB) - 1, 3)))),
+  urlRe: /^https:\/\/0x0\.st\/[\w.\-]+$/i,
+  rules: ["Up to 512 MB per file, no account needed.", "Files are kept 30 to 365 days depending on size: the smaller the file, the longer it stays. You can ask for a shorter time.", "A hobby service: it is sometimes blocked by networks and can be strict about abuse. No illegal content or malware.", "Needs this site's server as a go-between, so the file must fit the server's upload limit."]
+};
+HOSTS.tempfile = {
+  id: "tempfile", name: "tempfile.org", site: "https://tempfile.org", maxBytes: 100 * MB, range: [1 * H, 48 * H], direct: false,
+  urlRe: /^https:\/\/tempfile\.org\/[\w\-]+\/?$/i,
+  rules: ["Up to 100 MB per file, no account needed.", "You can choose 1 to 48 hours; files are deleted after that.", "About 200 uploads per hour per address.", "The link opens a download page rather than the file itself, so pictures and videos won't preview inside the chat.", "Needs this site's server as a go-between, so the file must fit the server's upload limit."]
+};
 export const HOST_IDS = Object.keys(HOSTS);
 /** Is this a link to one of our file hosts? (what a message may point to) */
 export const isHostedUrl = u => typeof u === "string" && u.length <= 300 && HOST_IDS.some(id => HOSTS[id].urlRe.test(u));
 
 /** Longest time the host keeps a file (seconds). */
-export const maxTtl = h => h.range ? h.range[1] : Math.max(...h.expiries);
+export const maxTtl = (h, size = 0) => h.maxFor ? h.maxFor(size) : h.range ? h.range[1] : Math.max(...h.expiries);
 /** The time (seconds) the host will really use for a wish of `want` seconds (0 = as long as possible): the closest one it offers; never longer than it can. */
-export function ttlFor(h, want) {
-  const max = maxTtl(h);
+export function ttlFor(h, want, size = 0) {
+  const max = maxTtl(h, size);
   if (!want || want >= max) return max;
   if (h.range) return Math.max(h.range[0], Math.min(max, want));
   return h.expiries.reduce((best, e) => Math.abs(e - want) < Math.abs(best - want) ? e : best, h.expiries[0]);
@@ -45,6 +61,7 @@ export function ttlFor(h, want) {
 /** "1 GB", "100 MB" for a host's size limit. */
 export const fmtLimit = n => n >= 1000 * MB ? (Math.round(n / GB * 10) / 10 || 1) + " GB" : Math.round(n / MB) + " MB";
 export function fmtTtl(sec) {
+  if (sec >= PERM) return "no expiry";
   if (sec >= 2 * D && sec % D === 0) return sec / D + " days";
   if (sec >= D && sec % D === 0) return sec / D + " day";
   if (sec % H === 0) return sec / H + (sec / H === 1 ? " hour" : " hours");
@@ -54,7 +71,7 @@ export function fmtTtl(sec) {
 // ------------------------------------------------------------------ settings (this device)
 const KEY = "qm-hosts";
 export const EXPIRY_CHOICES = [[0, "As long as each service allows"], [1 * H, "1 hour"], [12 * H, "12 hours"], [D, "1 day"], [3 * D, "3 days"], [7 * D, "7 days"], [14 * D, "14 days"], [30 * D, "30 days"], [90 * D, "90 days"]];
-const DEFAULTS = () => ({ mode: "priority", order: HOST_IDS.slice(), enabled: { litterbox: true, oshi: true, tmpfile: true, fileio: false }, ttl: 0 });
+const DEFAULTS = () => ({ mode: "priority", order: HOST_IDS.slice(), enabled: { litterbox: true, oshi: true, tmpfile: true, fileio: false, catbox: false, zerox: false, tempfile: false }, ttl: 0 });
 export function getHostSettings() {
   let s = null;
   try { s = JSON.parse(localStorage.getItem(KEY) || "null"); } catch (_) { s = null; }
@@ -90,13 +107,13 @@ export async function uploadToHosts(file, { onProgress, signal, relayMax = 0, ch
   let list = eligibleHosts(file.size, relayMax, s);
   if (!list.length) throw new Error(whyNone(file.size, relayMax, s));
   if (s.mode === "ask" && choose) {
-    const first = await choose(list.map(h => ({ host: h, ttl: ttlFor(h, s.ttl) })));
+    const first = await choose(list.map(h => ({ host: h, ttl: ttlFor(h, s.ttl, file.size) })));
     if (!first) throw Object.assign(new Error("Cancelled"), { aborted: true });
     list = [first, ...list.filter(h => h !== first)];
   }
   let lastErr = null;
   for (let i = 0; i < list.length; i++) {
-    const h = list[i], ttl = ttlFor(h, s.ttl);
+    const h = list[i], ttl = ttlFor(h, s.ttl, file.size);
     for (let attempt = 0; attempt < 2; attempt++) {               // one more try after a short pause (rate limits / busy servers)
       try {
         let r;

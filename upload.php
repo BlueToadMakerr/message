@@ -49,12 +49,18 @@ $hosts = [
   'oshi'      => ['url' => 'https://oshi.at/', 'range' => [1 * $H, 90 * $D]],
   'tmpfile'   => ['url' => 'https://tmpfile.link/api/upload', 'times' => [7 * $D]],
   'fileio'    => ['url' => 'https://file.io/', 'times' => [1 * $D, 7 * $D, 14 * $D]],
+  'catbox'    => ['url' => 'https://catbox.moe/user/api.php', 'times' => [3650 * $D]],          // never expires
+  'zerox'     => ['url' => 'https://0x0.st', 'range' => [1 * $H, 365 * $D], 'bysize' => true],
+  'tempfile'  => ['url' => 'https://tempfile.org/api/upload/local', 'range' => [1 * $H, 48 * $H]],
 ];
 $hostId = (string)($_POST['host'] ?? 'litterbox');
 if (!isset($hosts[$hostId])) fail(400, 'Unknown file host.');
 $h = $hosts[$hostId];
 $want = max(0, (int)($_POST['ttl'] ?? 0));
-if (isset($h['range'])) { $max = $h['range'][1]; $ttl = ($want <= 0 || $want >= $max) ? $max : max($h['range'][0], min($max, $want)); }
+if (!empty($h['bysize'])) {     // 0x0.st: the smaller the file, the longer it is kept (30..365 days, 512 MiB = shortest)
+  $max = (int)round(max(30 * $D, min(365 * $D, 30 * $D + (30 * $D - 365 * $D) * pow(((float)$f['size']) / (512 * 1048576) - 1, 3))));
+  $ttl = ($want <= 0 || $want >= $max) ? $max : max(1 * $H, $want);
+} elseif (isset($h['range'])) { $max = $h['range'][1]; $ttl = ($want <= 0 || $want >= $max) ? $max : max($h['range'][0], min($max, $want)); }
 else {
   $max = max($h['times']); $ttl = $max;
   if ($want > 0 && $want < $max) { $ttl = $h['times'][0]; foreach ($h['times'] as $t) if (abs($t - $want) < abs($ttl - $want)) $ttl = $t; }
@@ -68,6 +74,12 @@ switch ($hostId) {
     $post = ['f' => $cf, 'expire' => (string)intdiv($ttl, 60), 'autodestroy' => '0', 'shorturl' => '0']; break;
   case 'tmpfile':
     $post = ['file' => $cf]; break;
+  case 'catbox':
+    $post = ['reqtype' => 'fileupload', 'fileToUpload' => $cf]; break;
+  case 'zerox':
+    $post = ['file' => $cf]; if ($ttl < $max) $post['expires'] = (string)max(1, (int)ceil($ttl / 3600)); break;
+  case 'tempfile':
+    $post = ['files' => $cf, 'expiryHours' => (string)max(1, min(48, intdiv($ttl, 3600)))]; break;
   case 'fileio':
     $post = ['file' => $cf, 'expires' => (string)intdiv($ttl, 86400) . 'd', 'autoDelete' => 'false', 'maxDownloads' => '1000']; break;
 }
@@ -83,13 +95,14 @@ if ($code < 200 || $code >= 300) fail($code === 429 ? 429 : 502, $out !== '' ? s
 $url = '';
 $j = json_decode($out, true);
 if (is_array($j)) {
-  foreach (['link', 'downloadLink', 'url', 'download_url'] as $k) if (!empty($j[$k]) && is_string($j[$k])) { $url = $j[$k]; break; }
+  if (isset($j['files'][0]['url']) && is_string($j['files'][0]['url'])) $url = $j['files'][0]['url'];            // tempfile.org
+  if ($url === '') foreach (['link', 'downloadLink', 'url', 'download_url'] as $k) if (!empty($j[$k]) && is_string($j[$k])) { $url = $j[$k]; break; }
   if ($url === '' && isset($j['data']) && is_array($j['data'])) foreach (['link', 'downloadLink', 'url'] as $k) if (!empty($j['data'][$k]) && is_string($j['data'][$k])) { $url = $j['data'][$k]; break; }
   if ($url === '' && isset($j['success']) && $j['success'] === false) fail(502, (string)($j['message'] ?? $j['error'] ?? 'The file host refused the file.'));
 } elseif (preg_match('/^DL:\s*(https:\/\/\S+)/mi', $out, $m)) $url = $m[1];       // oshi.at
 elseif (preg_match('#https://\S+#', $out, $m)) $url = $m[0];                    // Litterbox: the whole answer is the link
 $url = rtrim($url, " \t\r\n\"'<>.,;");
-$domains = ['litter.catbox.moe', 'oshi.at', 'tmpfile.link', 'file.io', 'www.file.io'];
+$domains = ['litter.catbox.moe', 'files.catbox.moe', 'oshi.at', 'tmpfile.link', 'file.io', 'www.file.io', '0x0.st', 'tempfile.org'];
 $host = strtolower((string)parse_url($url, PHP_URL_HOST));
 if ($url === '' || strpos($url, 'https://') !== 0 || !in_array($host, $domains, true) || strlen($url) > 300) fail(502, 'The file host did not return a usable link: ' . substr($out, 0, 160));
 if (($_POST['json'] ?? '') === '1') { header('Content-Type: application/json'); echo json_encode(['url' => $url, 'expiresIn' => $ttl, 'host' => $hostId]); }
