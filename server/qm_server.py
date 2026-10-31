@@ -353,7 +353,7 @@ def lite_chats(uid):
         others = [display_name(u) for u in c["participants"] if u != uid]
         name = (c.get("chatData") or {}).get("name") or ", ".join(others) or "Chat"
         enc = bool((c.get("chatData") or {}).get("encrypted"))
-        out.append({"id": chat, "name": name, "ts": last.get("timestamp", 0), "enc": enc})       # no last message: the compatibility client loads the list once and keeps it light
+        out.append({"id": chat, "name": name, "ts": last.get("timestamp", 0), "mine": last.get("fromUid") == uid, "enc": enc})       # no last message: the compatibility client loads the list once and keeps it light
     out.sort(key=lambda x: -x["ts"]); return out
 
 def lite_text(m):

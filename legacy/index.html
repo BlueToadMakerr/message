@@ -41,10 +41,11 @@ button{font-size:18px;padding:6px 14px;margin:3px 3px 3px 0}
 var BASE = location.href.replace(/legacy\/[^\/]*(\?.*)?$/, '').replace(/\/$/, '');
 var token = '', me = '', chat = null, chatName = '', lastKey = '', timer = null, busy = false;
 var mode = '', server = '', dbUrl = '';      // mode: 'private' (a QuickMessage Python server) or 'firebase' (the proxy.php worker next to the hosted site)
-try { token = localStorage.getItem('qm-ltoken') || ''; mode = localStorage.getItem('qm-lmode') || ''; server = localStorage.getItem('qm-lserver') || ''; dbUrl = localStorage.getItem('qm-db-url') || ''; } catch (e) {}      // qm-db-url: the database picked in the normal app on this same site
+try { token = localStorage.getItem('qm-ltoken') || ''; mode = localStorage.getItem('qm-lmode') || ''; server = localStorage.getItem('qm-lserver') || ''; dbUrl = localStorage.getItem('qm-ldb') || ''; } catch (e) {}
 if (mode !== 'firebase' && mode !== 'private') mode = '';      // '' = not chosen yet: detected below
-function base() { return (server || BASE).replace(/\/+$/, ''); }
-function proxyUrl() { return /\.php$/i.test(server) ? server : base() + '/proxy.php'; }      // blank address = proxy.php in the site's root
+function base() { return (mode === 'private' && server ? server : BASE).replace(/\/+$/, ''); }      // Firebase mode always uses proxy.php in the root of the site this page came from
+function proxyUrl() { return BASE.replace(/\/+$/, '') + '/proxy.php'; }
+function cleanDb(u) { u = String(u || '').replace(/^\s+|\s+$/g, '').replace(/\/+$/, ''); if (!u) return ''; if (!/^https:\/\/[a-z0-9-]+(\.[a-z0-9-]+)*\.(firebaseio\.com|firebasedatabase\.app)$/i.test(u)) return null; return u.toLowerCase(); }
 function cleanUrl(u) {
   u = String(u || '').replace(/^\s+|\s+$/g, '');
   if (!u) return '';
@@ -98,15 +99,17 @@ function loginView() {
     '<div class="box"><b>Server</b><br>' +
     '<label><input type="radio" name="md" id="md1"' + (mode === 'private' ? ' checked="checked"' : '') + '> Private server</label> ' +
     '<label><input type="radio" name="md" id="md2"' + (mode === 'firebase' ? ' checked="checked"' : '') + '> Firebase (through proxy.php)</label><br>' +
-    'Address<br><input id="sv" type="text" autocapitalize="off" value="' + esc(server) + '"><br>' +
-    '<button onclick="saveServer()">Save</button><div class="note">Private server: the address of your QuickMessage server, e.g. http://192.168.1.20:8080 (empty = the server this page came from). ' +
-    'Firebase: the address of the proxy, e.g. https://msg.infinityfreeapp.com/proxy.php (empty = proxy.php in the root of this site).</div></div>');
+    'Private server address<br><input id="sv" type="text" autocapitalize="off" value="' + esc(server) + '"><div class="note">e.g. http://192.168.1.20:8080 (empty = the server this page came from)</div>' +
+    'Firebase database address<br><input id="dbu" type="text" autocapitalize="off" value="' + esc(dbUrl) + '"><div class="note">e.g. https://your-project-default-rtdb.firebaseio.com (empty = the default database). Firebase always goes through proxy.php on this site.</div>' +
+    '<button onclick="saveServer()">Save</button></div>');
 }
 function saveServer() {
-  server = cleanUrl(document.getElementById('sv').value);
+  var d = cleanDb(document.getElementById('dbu').value);
+  if (d === null) { setErr('That is not a Firebase database address (it should look like https://name-default-rtdb.firebaseio.com).'); return; }
+  server = cleanUrl(document.getElementById('sv').value); dbUrl = d;
   mode = document.getElementById('md2').checked ? 'firebase' : 'private';
-  try { localStorage.setItem('qm-lmode', mode); localStorage.setItem('qm-lserver', server); localStorage.removeItem('qm-ltoken'); } catch (e) {}
-  token = ''; setErr('Saved. Now using ' + (mode === 'firebase' ? 'Firebase' : 'the private server') + ' at ' + base() + '.'); loginView();
+  try { localStorage.setItem('qm-lmode', mode); localStorage.setItem('qm-lserver', server); localStorage.setItem('qm-ldb', dbUrl); localStorage.removeItem('qm-ltoken'); } catch (e) {}
+  token = ''; chatsCache = null; setErr('Saved. Now using ' + (mode === 'firebase' ? 'Firebase' + (dbUrl ? ' (' + dbUrl + ')' : ' (default database)') : 'the private server at ' + base()) + '.'); loginView();
 }
 function doAuth(kind) {
   setErr('');
@@ -116,7 +119,7 @@ function doAuth(kind) {
     listView();
   });
 }
-function logout() { token = ''; try { localStorage.removeItem('qm-ltoken'); } catch (e) {} loginView(); }
+function logout() { token = ''; chatsCache = null; try { localStorage.removeItem('qm-ltoken'); } catch (e) {} loginView(); }
 
 var more = false, seen = {}, firstKey = '', sendN = 0, cdT = {}, polling = false;
 function near() { try { var d = document.documentElement, b = document.body; return (window.pageYOffset || d.scrollTop || 0) + (window.innerHeight || d.clientHeight || 0) >= Math.max(d.scrollHeight, b.scrollHeight) - 120; } catch (e) { return true; } }
@@ -133,36 +136,53 @@ function cool(id, label, secs) {
   }, 1000);
 }
 
-function listView() {
+var chatsCache = null, openedAt = {};
+try { openedAt = parse(localStorage.getItem('qm-lopen') || '{}') || {}; } catch (e) {}
+function markOpened(id) { openedAt[id] = (new Date()).getTime(); try { localStorage.setItem('qm-lopen', str(openedAt)); } catch (e) {} }
+/** Order: chats with a message from someone else that is newer than your last visit come first (newest first); the rest follow, the most recently opened first. */
+function isNew(c) { return !c.mine && c.ts > (openedAt[c.id] || 0); }
+function byOrder(a, b) {
+  var na = isNew(a), nb = isNew(b);
+  if (na !== nb) return na ? -1 : 1;
+  if (na) return b.ts - a.ts;
+  return ((openedAt[b.id] || 0) - (openedAt[a.id] || 0)) || (b.ts - a.ts);
+}
+/** The chat list is fetched once and kept: going back from a chat only redraws it from memory. Only "Reload chats" (or reloading the page) fetches it again. */
+function listView(force) {
   stop(); chat = null; setErr('');
+  if (chatsCache && force !== true) { drawList(); return; }
   show('<div class="box">Loading your chats...</div>');
   api('lite/chats', null, function (st, j) {
-    if (st !== 200) { setErr(j.error || 'Could not load chats.'); show('<div class="box"><button onclick="listView()">Try again</button> <button onclick="logout()">Log out</button></div>'); return; }
-    me = j.me; var h = '<div class="box">Signed in as <b>' + esc(j.me) + '</b> &nbsp; <button class="sm" onclick="logout()">Log out</button> <button class="sm" id="rl" onclick="listView()">Reload chats</button></div>';
-    h += '<div class="box"><b>New chat</b><br><input id="ne" type="text" autocapitalize="off" value="" > <button onclick="newChat()">Start</button><div class="note">Type the other person\'s account email.</div></div>';
-    var i, c; h += '<div class="box">';
-    if (!j.chats.length) h += 'No chats yet.';
-    for (i = 0; i < j.chats.length; i++) {
-      c = j.chats[i];
-      h += '<div class="row" onclick="openChat(\'' + c.id + '\',\'' + esc(c.name).replace(/'/g, '') + '\')"><b>' + esc(c.name) + (c.enc ? ' (encrypted)' : '') + '</b></div>';
-    }
-    h += '<div class="note">The chat list loads once. Use "Reload chats" to update it.</div></div>';
-    show(h);
+    if (st !== 200) { setErr(j.error || 'Could not load chats.'); show('<div class="box"><button onclick="listView(true)">Try again</button> <button onclick="logout()">Log out</button></div>'); return; }
+    chatsCache = j; drawList();
   });
+}
+function drawList() {
+  var j = chatsCache; me = j.me; j.chats.sort(byOrder);
+  var h = '<div class="box">Signed in as <b>' + esc(j.me) + '</b> &nbsp; <button class="sm" onclick="logout()">Log out</button> <button class="sm" id="rl" onclick="listView(true)">Reload chats</button></div>';
+  h += '<div class="box"><b>New chat</b><br><input id="ne" type="text" autocapitalize="off" value="" > <button onclick="newChat()">Start</button><div class="note">Type the other person\'s account email.</div></div>';
+  var i, c; h += '<div class="box">';
+  if (!j.chats.length) h += 'No chats yet.';
+  for (i = 0; i < j.chats.length; i++) {
+    c = j.chats[i];
+    h += '<div class="row" onclick="openChat(\'' + c.id + '\',\'' + esc(c.name).replace(/'/g, '') + '\')"><b>' + esc(c.name) + (c.enc ? ' (encrypted)' : '') + (isNew(c) ? ' <span class="act">- new messages</span>' : '') + '</b></div>';
+  }
+  h += '<div class="note">The chat list is loaded once and kept. Use "Reload chats" to update it.</div></div>';
+  show(h);
 }
 function newChat() {
   var e = document.getElementById('ne').value;
   if (!e) return;
   setErr('Creating the chat...');
-  api('lite/newchat', { email: e }, function (st, j) { if (st !== 200) { setErr(j.error || 'Could not start the chat.'); return; } setErr(''); listView(); });
+  api('lite/newchat', { email: e }, function (st, j) { if (st !== 200) { setErr(j.error || 'Could not start the chat.'); return; } setErr(''); listView(true); });
 }
 function msgHtml(m) {
   var act = m.me ? '<div class="act" id="a_' + m.key + '"><a onclick="askDel(\'' + m.key + '\')">Delete</a></div>' : '';
   return '<div class="msg' + (m.me ? ' me' : '') + '" id="m_' + m.key + '"><div class="who">' + esc(m.me ? 'You' : m.name) + '</div><span id="t_' + m.key + '">' + esc(m.text).replace(/\n/g, '<br>') + '</span>' + act + '</div>';
 }
 function openChat(id, name) {
-  stop(); chat = id; chatName = name; lastKey = ''; firstKey = ''; seen = {}; more = false; setErr('');
-  show('<div class="box"><button class="sm" onclick="listView()">&laquo; Chats</button> <b>' + esc(name) + '</b> &nbsp; <button class="sm" id="rf" onclick="manualRefresh()">Refresh</button>' +
+  markOpened(id); stop(); chat = id; chatName = name; lastKey = ''; firstKey = ''; seen = {}; more = false; setErr('');
+  show('<div class="box"><button class="sm" onclick="listView(false)">&laquo; Chats</button> <b>' + esc(name) + '</b> &nbsp; <button class="sm" id="rf" onclick="manualRefresh()">Refresh</button>' +
     '<div class="note">Updates by itself every 15 seconds.</div></div><div id="older"></div><div id="ms"><div class="note">Loading messages...</div></div>' +
     '<div class="box"><textarea id="tx" rows="2"></textarea><br><button id="sb" onclick="send()">Send</button><span class="note"> Text only. Encrypted chats can\'t be read here.</span></div>');
   poll(true);
@@ -174,6 +194,7 @@ function olderBtn() {
 function manualRefresh() { cool('rf', 'Refresh', 5); stop(); poll(false); }
 function poll(first) {
   if (!chat || polling) return;
+  if (!first && document.hidden === true) { stop(); timer = setTimeout(function () { poll(false); }, 15000); return; }      // nobody is looking: don't download anything
   polling = true; var id = chat;
   api('lite/messages?chat=' + encodeURIComponent(id) + '&after=' + encodeURIComponent(lastKey), null, function (st, j) {
     polling = false;
@@ -250,7 +271,7 @@ function doDel(key) {
     else { setErr((j && j.error) || 'Could not delete the message.'); cancelDel(key); }
   });
 }
-function start() { if (token) listView(); else loginView(); }
+function start() { if (token) listView(false); else loginView(); }
 if (mode) start();
 else {      // first visit: a QuickMessage Python server answers /api/ping; the Firebase website does not
   mode = 'private';

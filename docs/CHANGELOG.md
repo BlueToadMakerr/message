@@ -14,6 +14,8 @@ Newest first. Older rounds (1–43) are kept below exactly as they were written.
 
 - Compatibility client made calmer and clearer: a "Working..." bar shows while anything is loading (and says so when the server is slow); your message appears at once as grey "sending..." and turns normal when stored (failed ones offer Try again / Remove); **Delete** on your own messages turns the message red to confirm, orange while deleting, then removes it; the chat list loads once (no last message, "Reload chats" button); messages refresh by themselves every 15 seconds plus a **Refresh** button that waits 5 seconds between uses; **Load older messages** at the top of a chat. New `lite/delete` route and `before` / `more` on `lite/messages` in both the Python server and `proxy.php`. Messages deleted by someone else show until the next full open of the chat.
 
+- Compatibility client, lighter on the database: the chat list is fetched once and kept in memory (going back from a chat never refetches; only "Reload chats" or reloading the page does). Order: chats with a new message from someone else come first (newest first), then the rest by the chat you opened most recently. Only the time and sender of the last message are read for this, never its content; no link previews and no file/media data are fetched. The Firebase mode now always uses `proxy.php` in the root of the site (not changeable) and has a **Firebase database address** field (empty = the default database). `proxy.php` caches names and chat membership for 10 minutes, and the page skips its 15-second refresh while the tab is hidden.
+
 **Suggestions**
 - Account → Suggest a feature now also has a **Suggest on GitHub** link (https://github.com/BlueToadMakerr/message) next to the email option.
 

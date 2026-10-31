@@ -77,14 +77,28 @@ function lt_push_id(): string {
     for ($i = 0; $i < 12; $i++) $s .= $c[random_int(0, 63)];
     return '-' . $s;
 }
+/** Tiny file cache (names, chat membership) so a chat that refreshes every 15 s does not re-read the same small things from the database each time. */
+function lt_cache(string $k, ?callable $make = null, int $ttl = 600): mixed {
+    global $db;
+    $f = sys_get_temp_dir() . '/qm_lt_' . md5($db . '|' . $k) . '.json';
+    if (is_readable($f) && filemtime($f) > time() - $ttl) { $c = json_decode((string)@file_get_contents($f), true); if (is_array($c) && array_key_exists('v', $c)) return $c['v']; }
+    if (!$make) return null;
+    $v = $make(); if ($v !== null) { @file_put_contents($f, json_encode(['v' => $v]), LOCK_EX); @chmod($f, 0600); }
+    return $v;
+}
 function lt_name(string $uid): string {
+    return (string)lt_cache('n:' . $uid, function () use ($uid) { return lt_name_raw($uid); });
+}
+function lt_name_raw(string $uid): string {
     $n = lt_get('accsettings/' . rawurlencode($uid) . '/settings/displayName');
     return is_string($n) && trim($n) !== '' ? $n : 'Unknown user';
 }
 function lt_member(string $chat, string $uid): bool {
     if (!preg_match('/^[A-Za-z0-9_-]{1,64}$/', $chat)) return false;
-    $p = lt_get('privateChats/' . $chat . '/participants');
-    return is_array($p) && !empty($p[$uid]);
+    return (bool)lt_cache('m:' . $chat . ':' . $uid, function () use ($chat, $uid) {
+        $p = lt_get('privateChats/' . $chat . '/participants');
+        return is_array($p) && !empty($p[$uid]) ? true : null;          // only "yes" is remembered
+    });
 }
 
 // ---------------------------------------------------------------- accounts
@@ -115,13 +129,13 @@ $uid = lt_uid();
 if (!$uid) qm_out(401, ['error' => 'Not signed in', 'code' => 'auth/expired']);
 
 if ($route === 'lite/chats') {
-    // Loaded once by the page, and kept small: no last message (that would be one more request per chat).
+    // Loaded once by the page. Only the time/sender of the last message is read (for ordering), never its content.
     $list = lt_get('chatList/' . rawurlencode($uid));
     $ids = is_array($list) ? array_slice(array_keys($list), 0, 40) : [];
     $req = [];
     foreach ($ids as $c) {
         if (!preg_match('/^[A-Za-z0-9_-]{1,64}$/', (string)$c)) continue;
-        $req["p$c"] = "privateChats/$c/participants.json"; $req["d$c"] = "privateChats/$c/chatData.json";
+        $req["p$c"] = "privateChats/$c/participants.json"; $req["d$c"] = "privateChats/$c/chatData.json"; $req["t$c"] = "privateChats/$c/lastMessage/timestamp.json"; $req["f$c"] = "privateChats/$c/lastMessage/fromUid.json";
     }
     $r = $req ? lt_multi($req) : [];
     $names = [];
@@ -130,15 +144,15 @@ if ($route === 'lite/chats') {
         if (!is_array($p) || empty($p[$uid])) continue;
         foreach (array_keys($p) as $u) if ($u !== $uid && !isset($names[$u])) $names[$u] = null;
     }
-    $nm = []; foreach (array_keys($names) as $u) $nm["u$u"] = 'accsettings/' . rawurlencode((string)$u) . '/settings/displayName.json';
-    $nr = $nm ? lt_multi($nm) : [];
+    $nr = []; foreach (array_keys($names) as $u) $nr["u$u"] = lt_name((string)$u);          // cached for a few minutes
     $chats = [];
     foreach ($ids as $c) {
         $p = $r["p$c"] ?? null; if (!is_array($p) || empty($p[$uid])) continue;
         $cd = is_array($r["d$c"] ?? null) ? $r["d$c"] : [];
         $others = []; foreach (array_keys($p) as $u) if ($u !== $uid) $others[] = is_string($nr["u$u"] ?? null) ? $nr["u$u"] : 'Unknown user';
         $custom = $cd['name'] ?? null;
-        $chats[] = ['id' => $c, 'name' => is_string($custom) && $custom !== '' ? $custom : (implode(', ', $others) ?: 'Chat'), 'enc' => !empty($cd['encrypted'])];
+        $chats[] = ['id' => $c, 'name' => is_string($custom) && $custom !== '' ? $custom : (implode(', ', $others) ?: 'Chat'), 'enc' => !empty($cd['encrypted']),
+                    'ts' => is_numeric($r["t$c"] ?? null) ? (int)$r["t$c"] : 0, 'mine' => ($r["f$c"] ?? null) === $uid];          // only the time and sender of the last message, never its text
     }
     qm_out(200, ['me' => lt_name($uid), 'chats' => $chats]);
 }

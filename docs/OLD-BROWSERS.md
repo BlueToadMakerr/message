@@ -12,10 +12,10 @@ The real app needs a modern browser (ES modules, promises, fetch, top-level awai
 ## Two ways to connect
 Old browsers cannot speak today's HTTPS, so the compatibility client has a **Server** box on its login page:
 - **Private server** — the address of your [private Python server](SERVER-PRIVATE.md), e.g. `http://192.168.1.20:8080` (plain HTTP works). On the Wii open that address: it detects the browser and opens the compatibility version by itself, using that server.
-- **Firebase (through proxy.php)** — the proxy address, e.g. `https://msg.infinityfreeapp.com/proxy.php`; leave it **blank** to use `proxy.php` in the root of the site the page came from. `proxy.php` is a small PHP worker that behaves like a private server but stores everything in your Firebase database. You log in with the **email and password** of a Firebase account (no Google sign-in): either create one on the compatibility page, or add a password to your existing account in the normal app. The host must be reachable by the old browser (many free hosts force HTTPS, which a Wii cannot do; then use a private server, or put a plain-HTTP relay in front).
+- **Firebase (through proxy.php)** — it always uses `proxy.php` in the root of the site the page came from (not changeable). The **Firebase database address** box is the real database URL (e.g. `https://your-project-default-rtdb.firebaseio.com`); leave it empty for the default database. `proxy.php` is a small PHP worker that behaves like a private server but stores everything in your Firebase database. You log in with the **email and password** of a Firebase account (no Google sign-in): either create one on the compatibility page, or add a password to your existing account in the normal app. The host must be reachable by the old browser (many free hosts force HTTPS, which a Wii cannot do; then use a private server, or put a plain-HTTP relay in front).
 The choice is remembered on the device. On a first visit the page guesses: a QuickMessage Python server answers `/api/ping`, a plain website does not.
 
-The database is the same one the normal page uses (the default, or the one picked in the normal app on that site); there is no separate setting. `proxy.php` details: it uses the service account in `secrets.php`, checks chat membership itself, makes new chats **unencrypted**, never reads or writes encrypted chats, and a new-chat-by-email only works for verified accounts that allow being added by email (same rule as the app). Notifications for messages sent from here are sent by the Cloud Function as usual.
+`proxy.php` details: it uses the service account in `secrets.php`, checks chat membership itself, makes new chats **unencrypted**, never reads or writes encrypted chats, and a new-chat-by-email only works for verified accounts that allow being added by email (same rule as the app). Notifications for messages sent from here are sent by the Cloud Function as usual.
 
 ## Switching
 - Automatic: `js/legacy.js` (first script on `index.html`) tests for promises, fetch, URLSearchParams and `<script nomodule>` support. A browser that fails goes to `legacy/`. A browser that passes but whose scripts fail to start gets a "use the compatibility version" bar after 12 seconds.
@@ -23,6 +23,8 @@ The database is the same one the normal page uses (the default, or the one picke
 - On the Firebase version, a very old browser is sent to `legacy/` as well and uses `proxy.php` (see above).
 
 ## Behaviour
+Chat order: chats with a newer message from someone else first, then by last opened; the list is never refetched on its own. Link previews, images and file contents are never fetched (they show as `[image]` / `[file: name]`). One limit: messages sent long ago with media stored inline in the message itself (before media moved to its own node) are still downloaded with the message by the database, which can't skip a field.
+
 Because the proxy path is slow, the client avoids requests: the chat list loads once, the open chat refreshes every 15 s (button: every 5 s at most), the newest 30 messages load first and **Load older messages** fetches 30 more. Sent messages show as "sending..." first; **Delete** (own messages only) asks, then deletes.
 
 ## Status
