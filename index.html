@@ -7,8 +7,8 @@
   <meta name="theme-color" content="#4f46e5">
   <link rel="icon" href="icons/icon.svg" type="image/svg+xml">
   <link rel="apple-touch-icon" href="icons/icon-192.png">
+  <script src="js/legacy.js"></script>
   <link rel="stylesheet" href="style.css">
-  <script src="js/challenge.js"></script>
   <script src="js/themeboot.js"></script>
 </head>
 <body>
@@ -22,7 +22,7 @@
   <header class="topbar">
     <h1 class="brand"><span class="logo" data-icon="chat" data-size="18"></span><span class="brand-name"> QuickMessage</span></h1>
     <div class="topbar-actions hidden" id="topActions">
-      <button id="downloadBtn" class="btn small hidden" type="button" aria-haspopup="menu" aria-expanded="false"><span data-icon="download" data-size="16"></span><span class="btn-label"> Download</span></button>
+      <button id="downloadBtn" data-nopriv class="btn small hidden" type="button" aria-haspopup="menu" aria-expanded="false"><span data-icon="download" data-size="16"></span><span class="btn-label"> Download</span></button>
       <button id="toggleNotifBtn" class="icon-btn hidden" type="button" aria-label="Notifications" title="Notifications"></button>
       <a href="account.html" id="accountLink" class="icon-btn" aria-label="Account" title="Account"></a>
     </div>
@@ -39,8 +39,8 @@
           <p class="muted" style="margin:.25rem 0 0">A simple, lightweight private chat. Log in or create an account to start.</p>
         </div>
         <p class="ai-note"><strong>Made with AI.</strong> This entire app, from its design to its code, was created with AI (Anthropic's Claude). It's an independent project and may have bugs, so don't rely on it for anything critical.</p>
-        <button id="googleBtn" class="btn block" type="button">Continue with Google</button>
-        <div class="divider">or</div>
+        <button id="googleBtn" class="btn block" type="button" data-nopriv>Continue with Google</button>
+        <div class="divider" data-nopriv>or</div>
         <form id="authForm" class="stack" novalidate>
           <div>
             <label class="lbl" for="email">Email</label>
@@ -54,9 +54,9 @@
             <button id="loginBtn" class="btn primary grow" type="submit">Log in</button>
             <button id="signupBtn" class="btn grow" type="button">Sign up</button>
           </div>
-          <button id="forgotBtn" class="link-btn" type="button" style="align-self:center">Forgot password?</button>
+          <button id="forgotBtn" data-nopriv class="link-btn" type="button" style="align-self:center">Forgot password?</button>
         </form>
-        <details id="dbOpt" class="db-opt">
+        <details id="dbOpt" class="db-opt" data-nopriv>
           <summary>Advanced</summary>
           <div class="stack" style="margin-top:.5rem">
             <label class="lbl" for="dbUrl">Firebase database URL</label>

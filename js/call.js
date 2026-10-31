@@ -24,7 +24,7 @@ import { RTC_CONFIG } from "./call/rtc-config.js";
 import { gridSizes, spotlightSizes } from "./call/layout.js";
 import { Tile } from "./call/tile.js";
 import { deviceLabel } from "./call/device.js";
-import { watchRing, startRing, setRingStatus, clearRing, declineRing } from "./call/ring.js";
+import { watchRing, startRing, clearRing, declineRing } from "./call/ring.js";
 
 hydrateIcons();
 
@@ -1126,19 +1126,15 @@ async function ringUser(uid) {
   let ringId = null;
   try {
     ringId = await startRing(chatId, S.me, uid);
-    let result = null;
-    // Tried up to 3 times: a network blip, or a host "browser check" page instead of our server's answer (the fetch wrapper in js/challenge.js solves that and
-    // repeats the request itself; the retry covers whatever is left), must not show up as "Notification failed".
-    for (let attempt = 0; attempt < 3 && !result; attempt++) {
-      try {
-        const idToken = await auth.currentUser.getIdToken(attempt > 0);
-        const r = await fetch("call-notify.php", { method: "POST", body: new URLSearchParams({ chatId, targetUid: uid, sessionId: ringId, idToken }) });
-        result = await r.json().catch(() => null);
-      } catch (err) { dbg("notify failed", err); }
-      if (!result && attempt < 2) await new Promise(res => setTimeout(res, 700 * (attempt + 1)));
-    }
-    const status = result?.status === "sent" ? "sent" : result?.status === "no_token" ? "no_token" : "failed";
-    setRingStatus(chatId, uid, status);
+    // The push is sent by a Firebase Cloud Function the moment the ring is written (functions/index.js); it reports back in notifyStatus.
+    // Nothing here touches the website's host, so it works the same from an offline copy of the site.
+    const status = await new Promise(res => {
+      let off = () => {}, t = setTimeout(() => { off(); res("failed"); }, 15000);
+      off = onValue(ref(db, `calls/${chatId}/ringing/${uid}/notifyStatus`), s => {
+        const v = s.val();
+        if (v === "sent" || v === "no_token" || v === "failed") { clearTimeout(t); off(); res(v); }
+      });
+    });
     say(status === "sent" ? "Notification sent" : status === "no_token" ? "No notification device" : "Notification failed");
     if (status === "sent") toast("Ringing " + (uid === S.me ? "your other devices" : profileOf(uid).displayName), "success");
     else if (status === "no_token") toast("They haven't enabled notifications on any device — they'll only see the ring if the call page is open.", "info", 5000);

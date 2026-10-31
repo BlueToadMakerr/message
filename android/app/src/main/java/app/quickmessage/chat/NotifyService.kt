@@ -357,16 +357,14 @@ class NotifyService : Service() {
             if (!MainActivity.visible) {
                 try {
                     val me = store.uid ?: return
-                    val list = fb.get("chatList/$me") as? JSONObject
-                    (fb.get("live/$me/rings") as? JSONObject)?.let { r -> r.keys().forEach { k -> r.optJSONObject(k)?.let { ring(k, it) } } }
-                    list?.keys()?.asSequence()?.take(MAX_CHATS)?.toList()?.forEach { chatId ->
-                        if (!running) return
-                        try { (fb.get("privateChats/$chatId/lastMessage") as? JSONObject)?.let { consider(chatId, it, first) } } catch (_: Exception) {}
-                    }
+                    // ONE small request for everything (rings + one "newest message" marker per chat) instead of one request per chat
+                    val live = fb.get("live/$me") as? JSONObject
+                    live?.optJSONObject("rings")?.let { r -> r.keys().forEach { k -> r.optJSONObject(k)?.let { ring(k, it) } } }
+                    live?.optJSONObject("pings")?.let { pg -> pg.keys().forEach { k -> pg.optJSONObject(k)?.let { ping(k, it, first) } } }
                     first = false
                 } catch (_: Exception) {}
             }
-            if (!nap(if (inCall) 30_000L else 15_000L)) return
+            if (!nap(if (inCall) 120_000L else 60_000L)) return
         }
     }
 
@@ -485,9 +483,30 @@ class NotifyService : Service() {
             synchronized(list) { list.mapNotNull { it.from } }.distinct().forEach { ensurePerson(it) }
         } catch (_: Exception) {}
         val id = m.optString("id")
+        // a photo is shown big in the notification (decoded here: from the media node, or decrypted when the chat is encrypted)
+        if (textOf(chatId, m, preview = true) == "📷 Photo") { val bmp = try { loadImage(chatId, id) } catch (_: Exception) { null }; if (bmp != null) imgBmp[chatId] = bmp else imgBmp.remove(chatId) } else imgBmp.remove(chatId)
         if (list.none { it.id == id }) list.add(Msg(id, textOf(chatId, m, preview = true), m.optLong("timestamp", System.currentTimeMillis()), from))
         while (list.size > 8) list.removeAt(0)
         postMessages(chatId)
+    }
+
+    private val imgBmp = ConcurrentHashMap<String, android.graphics.Bitmap>()
+
+    private fun loadImage(chatId: String, id: String): android.graphics.Bitmap? {
+        val rec = fb.get("privateChats/$chatId/messages/$id") as? JSONObject ?: return null
+        var content = rec.optString("content")
+        if (rec.optBoolean("big")) content = (fb.get("privateChats/$chatId/media/$id") as? String) ?: return null
+        if (rec.optBoolean("enc")) { val key = Crypt.chatKey(fb, store, chatId) ?: return null; content = Crypt.decrypt(key, chatId, content) ?: return null }
+        val bytes: ByteArray = when {
+            content.startsWith("data:") -> android.util.Base64.decode(content.substringAfter("base64,"), android.util.Base64.DEFAULT)
+            content.startsWith("https://") -> java.net.URL(content).openStream().use { it.readBytes() }
+            else -> return null
+        }
+        val o = android.graphics.BitmapFactory.Options().apply { inJustDecodeBounds = true }
+        android.graphics.BitmapFactory.decodeByteArray(bytes, 0, bytes.size, o)
+        var sample = 1
+        while (o.outWidth / sample > 1200) sample *= 2
+        return android.graphics.BitmapFactory.decodeByteArray(bytes, 0, bytes.size, android.graphics.BitmapFactory.Options().apply { inSampleSize = sample })
     }
 
     /** chat -> id of the newest message already marked as read (the "Mark as read" button is hidden for it). */
@@ -514,6 +533,12 @@ class NotifyService : Service() {
         } else {
             val who = last?.from?.let { nameOf(it) } ?: "New message"
             b.setContentTitle(if (title.isNotBlank()) "$who · $title" else who).setContentText(lastText).setStyle(Notification.BigTextStyle().bigText(lastText))
+        }
+        imgBmp[chatId]?.let { bmp ->
+            if (lastText == "📷 Photo") {
+                val who = last?.from?.let { nameOf(it) } ?: "New photo"
+                b.setStyle(Notification.BigPictureStyle().bigPicture(bmp).setSummaryText(lastText)).setContentTitle(if (title.isNotBlank()) "$who · $title" else who).setContentText(lastText)
+            }
         }
         if (Build.VERSION.SDK_INT >= 30) bubbleFor(chatId, chatLabel[chatId] ?: title.ifBlank { last?.from?.let { nameOf(it) } ?: "Chat" })?.let { (sid, meta) -> b.setShortcutId(sid); b.setBubbleMetadata(meta) }
         // reply straight from the notification (not in encrypted chats: this app can't encrypt from the background)

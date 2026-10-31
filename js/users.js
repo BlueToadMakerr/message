@@ -16,10 +16,26 @@ function normalize(uid, raw) {
   };
 }
 
+// A profile is also kept on this device for a while (localStorage), so opening the app doesn't download every contact's settings again.
+const PROFILE_TTL = 15 * 60 * 1000;
+const cacheKey = uid => "qm-prof-" + uid;
+function cachedRaw(uid) {
+  try { const c = JSON.parse(localStorage.getItem(cacheKey(uid)) || "null"); if (c && Date.now() - c.at < PROFILE_TTL) return { raw: c.raw }; } catch (_) { /* ignore */ }
+  return null;
+}
+function storeRaw(uid, raw) {
+  try {
+    const slim = raw ? { displayName: raw.displayName, pfp: raw.pfp, theme: raw.theme, emailAdd: raw.emailAdd } : null;
+    const text = JSON.stringify({ at: Date.now(), raw: slim });
+    if (text.length < 120000) localStorage.setItem(cacheKey(uid), text);
+  } catch (_) { /* storage full: no caching */ }
+}
+
 export function getProfile(uid) {
   if (!pending.has(uid)) {
-    const p = get(ref(db, `accsettings/${uid}/settings`))
-      .then(s => normalize(uid, s.val()))
+    const hit = cachedRaw(uid);
+    const p = (hit ? Promise.resolve(hit.raw) : get(ref(db, `accsettings/${uid}/settings`)).then(s => { const v = s.val(); storeRaw(uid, v); return v; }))
+      .then(raw => normalize(uid, raw))
       .catch(() => normalize(uid, null))
       .then(profile => { resolved.set(uid, profile); return profile; });
     pending.set(uid, p);
@@ -30,6 +46,7 @@ export function getProfile(uid) {
 export const peekProfile = uid => resolved.get(uid) || null;
 
 export function invalidateProfile(uid) {
+  try { localStorage.removeItem(cacheKey(uid)); } catch (_) { /* ignore */ }
   pending.delete(uid);
   resolved.delete(uid);
 }

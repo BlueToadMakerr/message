@@ -24,6 +24,7 @@ import { PRESETS, RES, getScreenPrefs, setScreenPrefs, resetScreenPrefs, DEFAULT
 import { previewsOn, setPreviews } from "./linkpreview.js";
 import { refreshVerified, resendVerification } from "./verify.js";
 import { showTour } from "./onboarding.js";
+import { SITE_VERSION, API_VERSION, checkSiteVersion, lastCheck } from "./version.js";
 import { HOSTS, getHostSettings, setHostSettings, resetHostSettings, EXPIRY_CHOICES, maxTtl, fmtTtl, fmtLimit } from "./hosts.js";
 
 hydrateIcons();
@@ -208,6 +209,23 @@ if (window.QMApp) {
   $("notifBtnCard").classList.remove("hidden");
   try { $("notifBtn").value = localStorage.getItem("qm-notif-btn") || "screen"; } catch (_) { /* ignore */ }
   $("notifBtn").onchange = e => { try { localStorage.setItem("qm-notif-btn", e.target.value); } catch (_) { /* ignore */ } toast("Saved. It applies on your next call.", "success", 2200); };
+}
+
+// ---------- compatibility mode (private server) ----------
+{
+  const get_ = k => { try { return localStorage.getItem(k); } catch (_) { return null; } };
+  const set_ = (k, v) => { try { v == null ? localStorage.removeItem(k) : localStorage.setItem(k, v); } catch (_) { /* ignore */ } };
+  $("legacyToggle").checked = get_("qm-legacy") === "1";
+  $("legacyAuto").checked = get_("qm-legacy-auto") !== "off";
+  $("legacyToggle").onchange = e => { set_("qm-legacy", e.target.checked ? "1" : null); toast(e.target.checked ? "On. The simple version opens next time you open QuickMessage." : "Off.", "success", 3000); };
+  $("legacyAuto").onchange = e => set_("qm-legacy-auto", e.target.checked ? null : "off");
+}
+
+// ---------- site version ----------
+{
+  const t = $("verText"), l = lastCheck();
+  t.textContent = `Site version ${SITE_VERSION} (plugin API v${API_VERSION})` + (l && l.ok && l.newer ? ` \u2014 version ${l.latest} is available, reload to update.` : "");
+  checkSiteVersion().then(r => { if (r.ok && r.newer) t.textContent = `Site version ${SITE_VERSION} \u2014 version ${r.latest} is available, reload to update.`; });
 }
 
 // ---------- developer mode ----------

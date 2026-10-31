@@ -9,6 +9,8 @@ window.__qmToast = localToast;       // embedded pages route their toasts here (
 import { getProfile } from "./users.js";
 import { watchDeclines } from "./declines.js";
 import { iosUploads, iosUploadFailed } from "./ios-notify.js";     // iPhone app: defines window.__qmIosCall (pauses the background-keepalive during calls)
+import { plugins as pluginHost } from "./plugins.js";    // Developer-mode plugins (sandboxed): see plugin-docs.html
+import { watchSiteVersion } from "./version.js";
 import "./viewer.js";                 // registers window.__qmOpenImage: images from every frame open full-screen here
 
 const $ = id => document.getElementById(id);
@@ -185,6 +187,7 @@ function render(view) {
   const want = view.pane === "account" ? "account.html" : view.pane === "chat" && view.chat && /^[\w-]{1,64}$/.test(view.chat) ? chatUrl(view.chat) : null;
   st.chatId = want && view.pane === "chat" ? view.chat : null;
   st.pane = want ? view.pane : null;
+  pluginHost.setContext({ chatId: st.chatId });
   const cur = detail.dataset.src || "";
   if (want !== cur && (want || cur)) {
     // A chat that is still uploading is not closed: its page is parked (hidden) so the upload and the final send carry on, and it comes back as it was.
@@ -422,6 +425,7 @@ function wire() {
 // ------------------------------------------------------------------ public API
 export const QM = (window.QM = {
   declined: (chatId, by) => { try { els().callFrame.contentWindow.__qmDeclined?.(chatId, by); } catch (_) { /* ignore */ } },
+  plugins: pluginHost,
   setUploads, uploads: () => new Map(upl), activeUploads, showUploadsPopup,
   openChat, openPane, closeDetail, androidBack, openCall, minimizeCall, callEnded, setCallState, frameReady, frameEscaped,
   isSplit: () => split.matches,
@@ -484,7 +488,8 @@ let wired = false;
 export function initShell(userId) {
   if (nested) return;
   uid = userId;
-  if (!wired) { wired = true; wire(); }
+  getProfile(userId).then(p => pluginHost.setContext({ uid: userId, name: p.displayName || "" })).catch(() => {});
+  if (!wired) { wired = true; wire(); watchSiteVersion(); }
   { const v = viewFromUrl(); depth = 0; history.replaceState({ qm: 1, d: 0, v }, "", location.href); render(v); }
   const q = new URLSearchParams(location.search);
   // A call link / notification carries a one-shot timestamp. It must be fresh AND come from a real navigation, so

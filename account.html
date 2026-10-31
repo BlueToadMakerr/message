@@ -8,7 +8,6 @@
   <link rel="icon" href="icons/icon.svg" type="image/svg+xml">
   <link rel="apple-touch-icon" href="icons/icon-192.png">
   <link rel="stylesheet" href="style.css">
-  <script src="js/challenge.js"></script>
   <script src="js/themeboot.js"></script>
 </head>
 <body>
@@ -84,7 +83,7 @@
         </div>
       </section>
 
-      <section class="card">
+      <section class="card" data-nopriv>
         <h2>Email &amp; sign-in</h2>
         <p id="verifyRow" class="muted" style="margin-top:0"></p>
         <div id="providersList" class="stack"></div>
@@ -118,11 +117,11 @@
 
       <section class="card">
         <h2>Privacy</h2>
-        <label class="switch-row"><input type="checkbox" id="emailAddToggle"> <span><strong>Let people add me by email</strong><br><small class="muted">Your email is never shown to anyone. When this is off, people need your UID to add you.</small></span></label>
-        <label class="switch-row" style="margin-top:.8rem"><input type="checkbox" id="previewToggle"> <span><strong>Link previews</strong><br><small class="muted">Shows what links in messages are (title, picture, video). Fetching a preview asks this site's server to open the link; nothing is stored.</small></span></label>
+        <label class="switch-row" data-nopriv><input type="checkbox" id="emailAddToggle"> <span><strong>Let people add me by email</strong><br><small class="muted">Your email is never shown to anyone. When this is off, people need your UID to add you.</small></span></label>
+        <label class="switch-row" data-nopriv style="margin-top:.8rem"><input type="checkbox" id="previewToggle"> <span><strong>Link previews</strong><br><small class="muted">Shows what links in messages are (title, picture, video). Fetching a preview asks this site's server to open the link; nothing is stored.</small></span></label>
       </section>
 
-      <section class="card" id="hostsCard">
+      <section class="card" id="hostsCard" data-nopriv>
         <h2>File hosting</h2>
         <p class="muted" style="margin-top:0">Photos and short clips are sent inside the chat. Anything bigger, and any other kind of file, is uploaded to a free file hosting service and the chat gets a link. Choose which services may be used and in what order. These choices are saved on this device.</p>
         <label class="lbl" for="hostMode">When a file needs a service</label>
@@ -203,11 +202,19 @@
         <select id="notifBtn" class="field"><option value="screen">Share screen</option><option value="deafen">Deafen</option></select>
       </section>
 
+      <section class="card pm-only" id="compatCard">
+        <h2>Compatibility mode</h2>
+        <p class="muted" style="margin-top:0">A small text-only chat for very old browsers (down to a Nintendo Wii). It can send and read plain text in chats that are not end-to-end encrypted. Needs the private server.</p>
+        <label class="switch-row"><input type="checkbox" id="legacyToggle"> <span><strong>Use compatibility mode on this device</strong><br><small class="muted">Opens the simple version every time. Add <code>?legacy=0</code> to the address to get back.</small></span></label>
+        <label class="switch-row" style="margin-top:.7rem"><input type="checkbox" id="legacyAuto"> <span><strong>Switch automatically on very old browsers</strong></span></label>
+      </section>
+
       <section class="card">
         <h2>Developer</h2>
         <label class="switch-row"><input type="checkbox" id="devToggle"> <span><strong>Developer mode</strong><br><small class="muted">Adds small <code>{ }</code> buttons (chat list, chats, messages, calls) that open raw, copyable information: what is loaded, call frame rate, connection and WebRTC details, raw message data. Nothing changes on screen otherwise. Saved on this device.</small></span></label>
         <div class="row wrap" style="margin-top:.7rem;align-items:center"><label class="lbl" style="margin:0">Live views: update speed and graph length</label><span id="devRateHost"></span></div>
-        <div class="row wrap" style="margin-top:.7rem"><button id="devAccountBtn" class="dev-btn" type="button">{ } Account info</button></div>
+        <div class="row wrap" style="margin-top:.7rem"><button id="devAccountBtn" class="dev-btn" type="button">{ } Account info</button> <a class="btn small" href="plugins.html" id="pluginsLink">Plugins</a> <a class="btn small" href="plugin-docs.html">Plugin docs</a></div>
+        <p class="muted" id="verText" style="margin:.7rem 0 0"></p>
       </section>
 
       <section class="card">
@@ -236,12 +243,12 @@
           <input id="newPassword" class="field" type="password" autocomplete="new-password" placeholder="New password (6+ characters)" minlength="6" required>
           <div class="row wrap">
             <button id="changePassBtn" class="btn primary" type="submit">Change password</button>
-            <button id="resetBtn" class="btn" type="button">Email me a reset link</button>
+            <button id="resetBtn" data-nopriv class="btn" type="button">Email me a reset link</button>
           </div>
         </form>
       </section>
 
-      <section id="appCard" class="card">
+      <section id="appCard" class="card" data-nopriv>
         <h2 id="appTitle">Site updates</h2>
         <p id="appText" class="muted" style="margin-top:0">Not seeing the newest version after an update? This downloads a fresh copy of every page and script and then reloads QuickMessage. You stay signed in.</p>
         <button id="refreshCacheBtn" class="btn" type="button">Refresh site</button>

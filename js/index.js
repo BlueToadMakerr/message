@@ -9,9 +9,15 @@ import {
 import {
   ref, push, set, get, update, remove, onChildAdded, onChildRemoved, onValue
 } from "./sdk.js";
-import {
-  getMessaging, getToken, deleteToken, onMessage, isSupported
-} from "https://www.gstatic.com/firebasejs/11.0.1/firebase-messaging.js";
+import { PRIVATE } from "./mode.js";
+// Firebase Cloud Messaging is loaded only when it is used (and never in private-server mode, which has no Google services).
+let fmP = null;
+const fm = () => fmP ||= PRIVATE ? Promise.reject(new Error("no FCM")) : import("https://www.gstatic.com/firebasejs/11.0.1/firebase-messaging.js");
+const isSupported = () => fm().then(m => m.isSupported()).catch(() => false);
+const getMessaging = async a => (await fm()).getMessaging(a);
+const getToken = async (...a) => (await fm()).getToken(...a);
+const deleteToken = async (...a) => (await fm()).deleteToken(...a);
+const onMessage = (m, cb) => { fm().then(x => x.onMessage(m, cb)).catch(() => {}); return () => {}; };
 import {
   toast, avatarEl, icon, hydrateIcons, formatListTime, authErrorMessage, wireDialog, promptDialog, confirmDialog
 } from "./ui.js";
@@ -27,6 +33,7 @@ import { openPreview } from "./msgcrypto.js";
 import { requireVerified, isVerified, refreshVerified, resendVerification, watchVerified } from "./verify.js";
 import { resolveRecipient } from "./recipient.js";
 
+window.__qmBooted = true;      // js/legacy.js: the app's scripts did start
 hydrateIcons();
 
 // ---------- elements ----------
@@ -144,9 +151,10 @@ function loadChats(uid) {
   listTimers.push(setTimeout(() => { if (listState === "loading") { listState = "slow"; schedule(); } }, 5000));
   listTimers.push(setTimeout(() => { if (listState === "loading" || listState === "slow") fail(new Error("timeout")); }, 20000));
   listTimers.push(setTimeout(() => { settleOverride = true; schedule(); }, 25000));
-  get(listRef).then(() => { listState = "ready"; schedule(); }, fail);
+  // the listener first: the get() that follows is then answered from what the listener already downloaded (one download, not two)
   globalUnsubs.push(onChildAdded(listRef, snap => attachChat(uid, snap.key), fail));
   globalUnsubs.push(onChildRemoved(listRef, snap => detachChat(snap.key)));
+  get(listRef).then(() => { listState = "ready"; schedule(); }, fail);
 }
 
 async function attachChat(uid, chatId) {
@@ -177,15 +185,16 @@ async function attachChat(uid, chatId) {
   });
 
   const listen = (path, cb) => s.off.push(onValue(ref(db, path), cb, () => {}));
-  listen(`privateChats/${chatId}/chatData/photo`, snap => { s.customPhoto = snap.val() || ""; schedule(); });
-  listen(`privateChats/${chatId}/chatData/encrypted`, snap => {
-    const on = snap.val() === true;
+  // name, photo and encryption flag are one listener on chatData (three listeners used to ask the server three times)
+  listen(`privateChats/${chatId}/chatData`, snap => {
+    const d = snap.val() || {};
+    s.customPhoto = d.photo || ""; s.customName = d.name || "";
+    const on = d.encrypted === true;
     if (on && !s.keysChecked && E2E.ready()) { s.keysChecked = true; E2E.ensureMemberKeys(chatId, s.participants || []).catch(() => {}); }
     s.encrypted = on; checkKey(s);
-    if (on) schedule();
+    schedule();
   });
   listen(`privateChats/${chatId}/keys`, snap => { s.keys = snap.val() || null; checkKey(s); });
-  listen(`privateChats/${chatId}/chatData/name`, snap => { s.customName = snap.val() || ""; schedule(); });
   listen(`privateChats/${chatId}/lastMessage`, snap => {
     s.settled = true;
     if (!snap.exists()) {
@@ -513,6 +522,7 @@ async function setupNotifications(uid) {
     };
     return;
   }
+  if (PRIVATE) { btn.classList.remove("hidden"); return setupLocalNotifications(btn); }
   const messaging = await getMsg();
   btn.classList.remove("hidden");
 
@@ -714,3 +724,38 @@ topActions.prepend(devButton("{ }", () => {
     );
   } });
 }, { title: "Developer info" }));
+
+
+// ---------- private-server mode: notifications made by this page itself (no push service). They appear while QuickMessage is open in a tab / window,
+// also in the background; when every tab is closed nothing can reach the device (a private server has no way to wake a browser).
+function setupLocalNotifications(btn) {
+  const flagKey = "qm-pnotif-" + currentUid;
+  const on = () => { try { return localStorage.getItem(flagKey) === "1" && Notification.permission === "granted"; } catch (_) { return false; } };
+  const paint = () => {
+    const denied = Notification.permission === "denied", active = on();
+    btn.innerHTML = icon(active ? "bell" : "bellOff", 20);
+    btn.title = denied ? "Notifications are blocked in your browser settings" : active ? "Turn off notifications (shown while QuickMessage is open)" : "Turn on notifications (shown while QuickMessage is open)";
+    btn.setAttribute("aria-label", btn.title); btn.classList.toggle("active", active); btn.disabled = denied;
+  };
+  if (!("Notification" in window)) { btn.classList.add("hidden"); return; }
+  btn.onclick = async () => {
+    if (on()) { try { localStorage.removeItem(flagKey); } catch (_) { /* ignore */ } toast("Notifications off."); paint(); return; }
+    const perm = Notification.permission === "default" ? await Notification.requestPermission() : Notification.permission;
+    if (perm === "granted") { try { localStorage.setItem(flagKey, "1"); } catch (_) { /* ignore */ } toast("Notifications on. They show while QuickMessage is open in a tab or window.", "success", 5000); }
+    paint();
+  };
+  paint();
+  const started = Date.now();
+  globalUnsubs.push(onChildAdded(ref(db, `live/${currentUid}/pings`), async snap => {
+    const p = snap.val() || {};
+    if (!on() || !p.ts || p.ts < started - 2000 || p.from === currentUid) return;
+    if (document.visibilityState === "visible" && QM && QM.state && QM.state.chatId === snap.key) return;       // you are looking at that chat
+    try {
+      const [last, prof] = await Promise.all([get(ref(db, `privateChats/${snap.key}/lastMessage`)), getProfile(p.from)]);
+      const m = last.val() || {};
+      const body = m.enc ? "\ud83d\udd12 New message" : (m.text || "New message");
+      const n = new Notification(prof.displayName || "New message", { body, tag: "chat_" + snap.key, icon: "icons/icon-192.png" });
+      n.onclick = () => { window.focus(); try { QM.openChat(snap.key); } catch (_) { /* ignore */ } n.close(); };
+    } catch (_) { /* ignore */ }
+  }));
+}

@@ -11,7 +11,8 @@ import { audioPlayer, videoPlayer } from "./player.js";
 
 const URL_RE = /https?:\/\/[^\s<>"']+/gi;
 const MAX_PER_MESSAGE = 2;
-export const previewsOn = () => { try { return localStorage.getItem("qm-previews") !== "off"; } catch (_) { return true; } };
+import { PRIVATE } from "./mode.js";
+export const previewsOn = () => { if (PRIVATE) return false; try { return localStorage.getItem("qm-previews") !== "off"; } catch (_) { return true; } };
 export const setPreviews = on => { try { localStorage.setItem("qm-previews", on ? "on" : "off"); } catch (_) { /* ignore */ } };
 
 const cache = new Map();             // url -> Promise<{data, retry}>   (this page only)

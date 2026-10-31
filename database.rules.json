@@ -104,7 +104,17 @@
             "wave":      { ".validate": "newData.isString() && newData.val().length <= 700" },
             "editedAt":  { ".validate": "newData.isNumber()" },
             "deliveredAt": { ".validate": "newData.isNumber() && (data.exists() ? newData.val() === data.val() : newData.val() === now)" },
-            "notifSent": { ".validate": "newData.isBoolean()" }
+            "notifSent": { ".validate": "newData.isBoolean()" },
+            "big":       { ".validate": "newData.isBoolean()" }
+          }
+        },
+
+        // Photo / clip / voice-note bodies, kept apart from the message so opening a chat only downloads the small records (js/mediacache.js).
+        // Any member may add one; only the sender of the message (or anyone, once the message is gone) may remove it.
+        "media": {
+          "$msgId": {
+            ".write": "auth != null && auth.token.email_verified === true && root.child('privateChats').child($chatId).child('participants').child(auth.uid).exists() && (!newData.exists() ? (root.child('privateChats').child($chatId).child('messages').child($msgId).child('fromUid').val() === auth.uid || !root.child('privateChats').child($chatId).child('messages').child($msgId).exists()) : !data.exists())",
+            ".validate": "newData.isString() && newData.val().length <= 15000000"
           }
         },
 

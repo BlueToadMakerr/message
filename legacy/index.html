@@ -1,0 +1,131 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<title>QuickMessage (compatibility mode)</title>
+<style type="text/css">
+body{margin:0;padding:8px;background:#f3f4f6;color:#111;font-family:Arial,Helvetica,sans-serif;font-size:18px}
+h1{font-size:24px;margin:0 0 6px 0}
+a{color:#4f46e5}
+table{border-collapse:collapse;width:100%}
+td{padding:0}
+.box{background:#fff;border:1px solid #bbb;padding:10px;margin-bottom:8px}
+.row{border-bottom:1px solid #ddd;padding:10px 4px;cursor:pointer}
+.row b{display:block}
+.row span{color:#666;font-size:15px}
+.msg{padding:6px 8px;margin:4px 0;border:1px solid #ccc;background:#fff}
+.me{background:#e0e7ff;border-color:#a5b4fc}
+.who{font-size:13px;color:#555}
+input,textarea{font-size:18px;width:95%;padding:6px;margin:3px 0}
+button{font-size:18px;padding:6px 14px;margin:3px 3px 3px 0}
+#err{color:#b91c1c}
+.note{font-size:14px;color:#555}
+</style>
+</head>
+<body>
+<h1>QuickMessage</h1>
+<div class="note">Compatibility mode for very old browsers (works with a private server). <a href="../index.html" onclick="try{localStorage.removeItem('qm-legacy')}catch(e){}">Open the normal version</a></div>
+<div id="err"></div>
+<div id="v"></div>
+<script type="text/javascript">
+// Plain ES3 on purpose: no modules, promises, fetch, flexbox, JSON object or arrow functions (runs on Opera 9 / Nintendo Wii, old IE, old Android).
+var BASE = location.href.replace(/legacy\/[^\/]*(\?.*)?$/, '').replace(/\/$/, '');
+var token = '', me = '', chat = null, chatName = '', lastKey = '', timer = null, busy = false;
+try { token = localStorage.getItem('qm-ltoken') || ''; } catch (e) {}
+
+function esc(s) { return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;'); }
+function parse(t) { try { if (window.JSON && JSON.parse) return JSON.parse(t); } catch (e) { return null; } try { return eval('(' + t + ')'); } catch (e2) { return null; } }
+function str(o) {
+  if (window.JSON && JSON.stringify) return JSON.stringify(o);
+  if (o === null || o === undefined) return 'null';
+  if (typeof o === 'number' || typeof o === 'boolean') return String(o);
+  if (typeof o === 'string') return '"' + o.replace(/\\/g, '\\\\').replace(/"/g, '\\"').replace(/\n/g, '\\n').replace(/\r/g, '') + '"';
+  var p = [], k; for (k in o) { if (o.hasOwnProperty(k)) p.push(str(k) + ':' + str(o[k])); } return '{' + p.join(',') + '}';
+}
+function api(name, body, cb) {
+  var x = window.XMLHttpRequest ? new XMLHttpRequest() : new ActiveXObject('Microsoft.XMLHTTP');
+  x.open(body === null ? 'GET' : 'POST', BASE + '/api/' + name + (name.indexOf('?') < 0 ? '?' : '&') + '_=' + (new Date()).getTime(), true);
+  if (token) x.setRequestHeader('Authorization', 'Bearer ' + token);
+  if (body !== null) x.setRequestHeader('Content-Type', 'application/json');
+  x.onreadystatechange = function () {
+    if (x.readyState !== 4) return;
+    var j = parse(x.responseText) || {};
+    if (x.status === 401 && token) { logout(); return; }
+    cb(x.status, j);
+  };
+  x.send(body === null ? null : str(body));
+}
+function setErr(t) { document.getElementById('err').innerHTML = esc(t || ''); }
+function show(h) { document.getElementById('v').innerHTML = h; }
+function stop() { if (timer) { clearTimeout(timer); timer = null; } }
+
+function loginView() {
+  stop(); chat = null;
+  show('<div class="box"><b>Log in or create an account</b><br>Email<br><input id="em" type="text" autocapitalize="off"><br>Password<br><input id="pw" type="password"><br>' +
+    '<button onclick="doAuth(\'login\')">Log in</button><button onclick="doAuth(\'signup\')">Sign up</button></div>');
+}
+function doAuth(kind) {
+  setErr('');
+  api('auth/' + kind, { email: document.getElementById('em').value, password: document.getElementById('pw').value }, function (st, j) {
+    if (st !== 200) { setErr(j.error || 'Could not log in.'); return; }
+    token = j.token; try { localStorage.setItem('qm-ltoken', token); } catch (e) {}
+    listView();
+  });
+}
+function logout() { token = ''; try { localStorage.removeItem('qm-ltoken'); } catch (e) {} loginView(); }
+
+function listView() {
+  stop(); chat = null; setErr('');
+  api('lite/chats', null, function (st, j) {
+    if (st !== 200) { setErr(j.error || 'Could not load chats.'); timer = setTimeout(listView, 5000); return; }
+    me = j.me; var h = '<div class="box">Signed in as <b>' + esc(j.me) + '</b> &nbsp; <button onclick="logout()">Log out</button></div>';
+    h += '<div class="box"><b>New chat</b><br><input id="ne" type="text" autocapitalize="off" value="" > <button onclick="newChat()">Start</button><div class="note">Type the other person\'s account email.</div></div>';
+    var i, c; h += '<div class="box">';
+    if (!j.chats.length) h += 'No chats yet.';
+    for (i = 0; i < j.chats.length; i++) {
+      c = j.chats[i];
+      h += '<div class="row" onclick="openChat(\'' + c.id + '\',\'' + esc(c.name).replace(/'/g, '') + '\')"><b>' + esc(c.name) + (c.enc ? ' (encrypted)' : '') + '</b><span>' + esc(c.last) + '</span></div>';
+    }
+    h += '</div>';
+    if (!document.getElementById('ne') || true) show(h);
+    timer = setTimeout(function () { if (!chat && document.getElementById('ne') && document.getElementById('ne').value === '') listView(); else if (!chat) timer = setTimeout(listView, 6000); }, 6000);
+  });
+}
+function newChat() {
+  var e = document.getElementById('ne').value;
+  api('lite/newchat', { email: e }, function (st, j) { if (st !== 200) { setErr(j.error || 'Could not start the chat.'); return; } listView(); });
+}
+function openChat(id, name) {
+  stop(); chat = id; chatName = name; lastKey = ''; setErr('');
+  show('<div class="box"><button onclick="listView()">&laquo; Back</button> <b>' + esc(name) + '</b></div><div id="ms"></div>' +
+    '<div class="box"><textarea id="tx" rows="2"></textarea><br><button onclick="send()">Send</button><span class="note"> Text only. Encrypted chats can\'t be read here.</span></div>');
+  poll(true);
+}
+function poll(first) {
+  if (!chat) return;
+  var id = chat;
+  api('lite/messages?chat=' + encodeURIComponent(id) + '&after=' + encodeURIComponent(lastKey), null, function (st, j) {
+    if (chat !== id) return;
+    if (st === 200 && j.messages) {
+      var i, m, h = '', box = document.getElementById('ms');
+      for (i = 0; i < j.messages.length; i++) {
+        m = j.messages[i]; lastKey = m.key;
+        h += '<div class="msg' + (m.me ? ' me' : '') + '"><div class="who">' + esc(m.me ? 'You' : m.name) + '</div>' + esc(m.text).replace(/\n/g, '<br>') + '</div>';
+      }
+      if (h && box) { box.innerHTML = box.innerHTML + h; try { window.scrollTo(0, 999999); } catch (e) {} }
+      if (first && !h && box) box.innerHTML = '<div class="note">No messages yet.</div>';
+    }
+    timer = setTimeout(function () { poll(false); }, 3000);
+  });
+}
+function send() {
+  var t = document.getElementById('tx'), v = t.value;
+  if (!v || !chat) return;
+  t.value = '';
+  api('lite/send', { chat: chat, text: v }, function (st, j) { if (!j.ok) setErr('Message not sent (encrypted chat?).'); else { stop(); poll(false); } });
+}
+if (token) listView(); else loginView();
+</script>
+<noscript>This page needs JavaScript.</noscript>
+</body>
+</html>

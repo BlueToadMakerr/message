@@ -6,11 +6,13 @@
 const V = "https://www.gstatic.com/firebasejs/11.0.1/";
 let host = null;
 try { if (window.top !== window) host = window.top.__qmSdk || null; } catch (_) { host = null; }
-const ns = host || {
+import { PRIVATE } from "./mode.js";
+// Private server mode (docs/SERVER-PRIVATE.md): the same functions, implemented against server/qm_server.py instead of Google's SDK.
+const ns = host || (PRIVATE ? await import("./private/sdk-private.js") : {
   app: await import(V + "firebase-app.js"),
   auth: await import(V + "firebase-auth.js"),
   db: await import(V + "firebase-database.js")
-};
+});
 if (!host) { try { window.__qmSdk = ns; } catch (_) { /* ignore */ } }
 
 // Listeners a frame registers on the shared SDK must die with that frame (an unloaded frame used to take its listeners down with

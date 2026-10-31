@@ -1,0 +1,174 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="system">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Plugin docs · QuickMessage</title>
+  <link rel="icon" href="icons/icon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="style.css">
+  <script src="js/themeboot.js"></script>
+</head>
+<body>
+<div class="shell">
+  <header class="topbar"><a href="plugins.html" class="icon-btn" aria-label="Back to plugins" data-icon="back"></a><h1 class="brand">Plugin docs</h1></header>
+  <main class="doc-page">
+<p>Plugins are small JavaScript programs you write (or import) to change how QuickMessage looks and behaves on <em>your</em> device. They only run while <strong>Developer mode</strong> is on (Account → Developer) and are stored in this browser only. They never touch other people's devices.</p>
+
+<h2 id="toc">Contents</h2>
+<ol>
+<li><a href="#quick">Your first plugin in 60 seconds</a></li>
+<li><a href="#how">How plugins run (and what they cannot do)</a></li>
+<li><a href="#perms">Permissions</a></li>
+<li><a href="#api">The <code>qm</code> API, method by method</a></li>
+<li><a href="#events">Events</a></li>
+<li><a href="#css">Styling: useful CSS hooks</a></li>
+<li><a href="#ex">Complete examples</a></li>
+<li><a href="#file">Plugin files, importing, exporting, sharing</a></li>
+<li><a href="#ver">Versions, outdated warnings and updates</a></li>
+<li><a href="#limits">Limits</a></li>
+<li><a href="#trouble">Troubleshooting</a></li>
+<li><a href="#changes">What changed (plugin API history)</a></li>
+</ol>
+
+<h2 id="quick">1. Your first plugin in 60 seconds</h2>
+<ol>
+<li>Account → Developer → turn on <strong>Developer mode</strong>, then open <strong>Plugins</strong>.</li>
+<li>Press <strong>New plugin</strong>, pick the <em>Hello (toast)</em> starting point, give it a name and press <strong>Save</strong>.</li>
+<li>Switch the plugin on. You should see a toast saying "Hello from my plugin!".</li>
+</ol>
+<pre>await qm.toast('Hello from my plugin! Site ' + qm.version, 'success');
+qm.on('chat-open', () =&gt; qm.toast('You opened a chat'));</pre>
+<p>Your code is the body of an <code>async</code> function, so you can use <code>await</code> at the top level and <code>return</code> early. The variable <code>qm</code> is the only door to the site.</p>
+
+<h2 id="how">2. How plugins run</h2>
+<ul>
+<li>Each enabled plugin runs in its own hidden <code>&lt;iframe sandbox="allow-scripts"&gt;</code>. Without <code>allow-same-origin</code> it cannot read the site, your login, your messages, cookies, <code>localStorage</code>, IndexedDB or Firebase.</li>
+<li>A Content-Security-Policy inside the frame blocks every network request unless the plugin declares the <code>network</code> permission (then only <code>https:</code>).</li>
+<li>Everything a plugin does goes through <code>qm.*</code> calls, which the site checks against the permissions you ticked. A call without the permission fails with an error you can catch.</li>
+<li>A plugin that throws on start is marked <em>crashed</em> and its error is shown on the Plugins page; other plugins and the site keep working.</li>
+<li>Plugins run in the app shell, so they work on every page (chat list, chat, account, call). They do not run on a standalone page opened outside the shell.</li>
+<li><strong>Be careful what you install.</strong> Sandboxing protects the site from a plugin, but a plugin you allow to <em>read messages</em> and <em>contact other websites</em> can send what it reads anywhere. Read code before enabling it. The Plugins page labels each permission with its risk.</li>
+</ul>
+
+<h2 id="perms">3. Permissions</h2>
+<table>
+<tr><th>Permission</th><th>Risk</th><th>Allows</th></tr>
+<tr><td><code>toast</code></td><td>low</td><td><code>qm.toast()</code></td></tr>
+<tr><td><code>style</code></td><td>low</td><td><code>qm.style.set / clear</code> (CSS injected into the site)</td></tr>
+<tr><td><code>panel</code></td><td>low</td><td><code>qm.panel.set / hide</code>, <code>panel-button</code> events</td></tr>
+<tr><td><code>me</code></td><td>medium</td><td><code>qm.me()</code> your account id and display name</td></tr>
+<tr><td><code>chat</code></td><td>medium</td><td><code>qm.chat.current()</code>, <code>qm.chat.insertText()</code>, events <code>chat-open</code> / <code>chat-close</code></td></tr>
+<tr><td><code>messages</code></td><td>high</td><td>event <code>message</code> with the text of messages that appear on your screen (already decrypted for display; locked ones are <code>null</code>)</td></tr>
+<tr><td><code>network</code></td><td>high</td><td>Use <code>qm.fetch</code> / <code>fetch</code> to https websites (the website must allow it with CORS)</td></tr>
+</table>
+<p><code>qm.storage</code>, <code>qm.log</code>, <code>qm.on</code> and <code>qm.version</code> need no permission.</p>
+
+<h2 id="api">4. The <code>qm</code> API</h2>
+<p>Every method that talks to the site returns a Promise.</p>
+<table>
+<tr><th>Call</th><th>Returns</th><th>Details</th></tr>
+<tr><td><code>qm.version</code></td><td>string</td><td>Site version, e.g. <code>"1.44.0"</code>.</td></tr>
+<tr><td><code>qm.apiVersion</code></td><td>number</td><td>Plugin API version (currently <code>1</code>).</td></tr>
+<tr><td><code>qm.on(event, fn)</code></td><td>function</td><td>Subscribe; returns an unsubscribe function. See <a href="#events">Events</a>.</td></tr>
+<tr><td><code>qm.off(event, fn)</code></td><td></td><td>Unsubscribe.</td></tr>
+<tr><td><code>qm.toast(text, kind?)</code></td><td></td><td>Needs <code>toast</code>. <code>kind</code>: <code>"info"</code> (default), <code>"success"</code>, <code>"error"</code>. Text is cut at 200 characters and prefixed with the plugin name.</td></tr>
+<tr><td><code>qm.me()</code></td><td><code>{uid, displayName}</code></td><td>Needs <code>me</code>.</td></tr>
+<tr><td><code>qm.style.set(css)</code></td><td></td><td>Needs <code>style</code>. Replaces this plugin's CSS (50,000 characters at most), applied to the shell and every frame, and re-applied when a frame reloads. Plain CSS, no <code>&lt;style&gt;</code> tags.</td></tr>
+<tr><td><code>qm.style.clear()</code></td><td></td><td>Removes this plugin's CSS.</td></tr>
+<tr><td><code>qm.storage.get(key)</code></td><td>any / null</td><td>Per-plugin storage in this browser (JSON values, 100 KB total). Deleted with the plugin.</td></tr>
+<tr><td><code>qm.storage.set(key, value)</code></td><td></td><td>Throws when the 100 KB limit is reached.</td></tr>
+<tr><td><code>qm.storage.remove(key)</code> / <code>qm.storage.all()</code></td><td></td><td></td></tr>
+<tr><td><code>qm.chat.current()</code></td><td><code>{chatId}</code> / null</td><td>Needs <code>chat</code>.</td></tr>
+<tr><td><code>qm.chat.insertText(text)</code></td><td></td><td>Needs <code>chat</code>. Appends to the message box of the open chat (2,000 characters at most). It never sends: the person still presses Send. Throws if no chat is open.</td></tr>
+<tr><td><code>qm.panel.set({title, lines, buttons})</code></td><td></td><td>Needs <code>panel</code>. A small floating card (bottom right). <code>lines</code>: up to 30 strings of plain text; <code>buttons</code>: up to 8 labels. A press fires the <code>panel-button</code> event. The card has its own close button.</td></tr>
+<tr><td><code>qm.panel.hide()</code></td><td></td><td>Removes the panel.</td></tr>
+<tr><td><code>qm.fetch(url, init?)</code></td><td>Response</td><td>Needs <code>network</code>. The normal <code>fetch</code>; subject to CORS.</td></tr>
+<tr><td><code>qm.log(...args)</code></td><td></td><td>Writes to the plugin log on the Plugins page (last 100 lines) and the browser console.</td></tr>
+</table>
+
+<h2 id="events">5. Events</h2>
+<table>
+<tr><th>Event</th><th>Needs</th><th>Data</th></tr>
+<tr><td><code>chat-open</code></td><td><code>chat</code></td><td><code>{chatId}</code> when a chat is opened in the shell.</td></tr>
+<tr><td><code>chat-close</code></td><td><code>chat</code></td><td><code>{chatId}</code> when it is closed or replaced.</td></tr>
+<tr><td><code>message</code></td><td><code>messages</code></td><td><code>{chatId, key, fromMe, text, type, time}</code>. Fired for every message that is drawn in an open chat (history included). <code>text</code> is <code>null</code> for files and for messages that can't be decrypted on this device.</td></tr>
+<tr><td><code>panel-button</code></td><td><code>panel</code></td><td><code>{label}</code> of the pressed button.</td></tr>
+</table>
+<p>Errors thrown in a handler are caught and written to the plugin log; they never break the chat.</p>
+
+<h2 id="css">6. CSS hooks</h2>
+<p>The site uses CSS variables for colours, so many looks need only a few lines: <code>--accent</code>, <code>--bg</code>, <code>--card</code>, <code>--text</code>, <code>--border</code>. Open Developer mode's <code>{ }</code> buttons or the browser's inspector to find class names (<code>.msg</code>, <code>.bubble</code>, <code>.chat-row</code>, <code>.topbar</code>…). Class names are not a stable API: use <code>minSite</code> and test after updates.</p>
+
+<h2 id="ex">7. Examples</h2>
+<h3>Message counter</h3>
+<pre>let n = Number(await qm.storage.get('count')) || 0;
+const show = () =&gt; qm.panel.set({ title: 'Messages seen', lines: ['Total: ' + n], buttons: ['Reset'] });
+show();
+qm.on('message', async () =&gt; { n++; await qm.storage.set('count', n); show(); });
+qm.on('panel-button', async () =&gt; { n = 0; await qm.storage.set('count', 0); show(); });</pre>
+<p>Permissions: <code>panel</code>, <code>messages</code>.</p>
+<h3>Quick reply buttons</h3>
+<pre>qm.on('chat-open', () =&gt; qm.panel.set({ title: 'Quick text', buttons: ['On my way', 'Call you later', 'Thanks!'] }));
+qm.on('chat-close', () =&gt; qm.panel.hide());
+qm.on('panel-button', b =&gt; qm.chat.insertText(b.label));</pre>
+<p>Permissions: <code>panel</code>, <code>chat</code>.</p>
+<h3>Square bubbles and a red accent</h3>
+<pre>await qm.style.set(`
+  :root { --accent: #e11d48; }
+  .bubble { border-radius: 4px !important; }
+`);</pre>
+<p>Permission: <code>style</code>.</p>
+<h3>Joke of the day (network)</h3>
+<pre>const r = await qm.fetch('https://official-joke-api.appspot.com/random_joke');
+const j = await r.json();
+qm.toast(j.setup + ' ' + j.punchline);</pre>
+<p>Permissions: <code>network</code>, <code>toast</code>.</p>
+
+<h2 id="file">8. Plugin files</h2>
+<p>Export writes a <code>.qmplugin.json</code> file:</p>
+<pre>{
+  "id": "p3k9x2ab",
+  "name": "Message counter",
+  "version": "1.2.0",
+  "apiVersion": 1,
+  "minSite": "1.44.0",
+  "updateUrl": "https://example.com/counter.json",
+  "description": "Counts messages",
+  "author": "You",
+  "permissions": ["panel", "messages"],
+  "code": "..."
+}</pre>
+<p>Importing a file with the same id (or same name and author) <em>replaces</em> the installed one and keeps it on/off as it was. A new plugin always arrives <strong>switched off</strong> so you can read its permissions and code first.</p>
+
+<h2 id="ver">9. Versions, outdated warnings, updates</h2>
+<ul>
+<li><strong>Site version</strong> (<code>qm.version</code>): shown in Account → Developer and on the Plugins page. The site checks <code>version.json</code> when it opens and every 30 minutes; if a newer version exists a bar offers <em>Reload</em>. From an offline copy the check simply can't reach the site; download a fresh copy when you want to update.</li>
+<li><strong>Plugin API version</strong> (<code>apiVersion</code>): bumped only when something a plugin relies on changes in a way that could break it. A plugin with a <em>lower</em> number than the site is shown as <strong>Outdated</strong> with a warning (it still runs). A plugin with a <em>higher</em> number, or a <code>minSite</code> newer than the site, is <strong>blocked</strong> with an explanation until you update the site.</li>
+<li>When Developer mode starts, a toast warns about every enabled plugin with a problem.</li>
+<li><strong>Plugin updates</strong>: if a plugin has an <code>updateUrl</code>, <em>Check update</em> downloads that JSON (<code>{"version": "1.3.0", "downloadUrl": "https://…"}</code>) and compares versions. It never installs anything by itself; import the new file to update.</li>
+<li>Version numbers are dotted numbers (<code>1.10.0</code> is newer than <code>1.9.2</code>).</li>
+</ul>
+
+<h2 id="limits">10. Limits</h2>
+<ul>
+<li>Code: 200,000 characters. Storage: 100 KB. CSS: 50,000 characters. Panel: 30 lines, 8 buttons.</li>
+<li>Plugins only run on this device while Developer mode is on. Turning it off stops all of them at once.</li>
+<li>No access to Firebase, your account's data, other people's devices, or sending messages on your behalf.</li>
+<li>Plugins are not available in "private server" legacy mode on very old browsers.</li>
+</ul>
+
+<h2 id="trouble">11. Troubleshooting</h2>
+<ul>
+<li><strong>Nothing happens</strong>: is Developer mode on and the plugin switched on? Look for a red "Crashed" line or the Log on the Plugins page.</li>
+<li><strong>"Needs the \"x\" permission"</strong>: tick that permission in the editor and save.</li>
+<li><strong>fetch fails</strong>: add <code>network</code>; the target site must send CORS headers.</li>
+<li><strong>Style not applied</strong>: add <code>!important</code>; the site's own rules can be more specific.</li>
+</ul>
+
+<h2 id="changes">12. What changed</h2>
+<table><tr><th>API</th><th>Site</th><th>Notes</th></tr><tr><td>1</td><td>1.44.0</td><td>First version: toast, style, storage, panel, chat, me, messages, network.</td></tr></table>
+  </main>
+</div>
+<script type="module">import { hydrateIcons } from "./js/ui.js"; hydrateIcons();</script>
+</body>
+</html>

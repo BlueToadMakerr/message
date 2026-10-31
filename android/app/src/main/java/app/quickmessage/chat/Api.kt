@@ -14,7 +14,7 @@ object Config {
     // looks like https://quickmessage-ac953-default-rtdb.<region>.firebasedatabase.app (see Firebase console > Realtime Database).
     const val DB_URL = "https://quickmessage-ac953-default-rtdb.firebaseio.com"
     /** Where the website lives (the app is a native shell around it). Keep the trailing slash. */
-    const val SITE_URL = "https://bluetoadmaker.infinityfreeapp.com/message/"
+    const val SITE_URL = "https://msg.infinityfreeapp.com/"
 }
 
 class ApiException(val code: Int, message: String) : Exception(message)

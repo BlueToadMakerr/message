@@ -151,6 +151,11 @@ jobs:
             incoming/**
             **/*.zip
             README.md
+            docs/**
+            server/**
+            functions/**
+            firebase.json
+            .firebaserc
             database.rules.json
             secrets.php
 

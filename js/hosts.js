@@ -2,7 +2,8 @@
 // The user's choices (which services, in what order, whether to be asked, how long files should last) live in this browser's storage.
 // Every host here is anonymous (no account / key). Uploads to all except Litterbox go through this site's upload.php (the hosts don't allow
 // browsers to read their answers directly); it only talks to the addresses listed in upload.php.
-import { uploadToLitterbox, uploadViaRelay, uploadDirectHost, fmtBytes } from "./litter.js";
+import { uploadToLitterbox, uploadViaRelay, uploadDirectHost, fmtBytes, kindOf } from "./litter.js";
+import { PRIVATE, privateBase } from "./mode.js";
 
 const H = 3600, D = 86400, MB = 1024 * 1024, GB = 1024 * MB, PERM = 3650 * D;     // PERM: "never expires" (10 years as a number)
 
@@ -102,7 +103,28 @@ export function whyNone(size, relayMax, s = getHostSettings()) {
  * Uploads `file` to the first host that works. `choose(list)` (optional) lets the user pick the first host (mode "ask").
  * `relayMax`: how big a file this site's relay can take (only matters for hosts that can't be reached straight from the browser). Returns { url, name, size, mime, kind, expiresAt, host }.
  */
+// Private-server mode: files are stored on the server itself (no internet host, no expiry).
+async function uploadToPrivateServer(file, onProgress, signal) {
+  const tok = await (await import("./firebase.js")).auth.currentUser.getIdToken();
+  return new Promise((resolve, reject) => {
+    const x = new XMLHttpRequest(), base = privateBase() || location.origin;
+    x.open("POST", base + "/api/upload");
+    x.setRequestHeader("Authorization", "Bearer " + tok);
+    x.setRequestHeader("X-Name", encodeURIComponent(file.name || "file"));
+    x.upload.onprogress = e => { if (e.lengthComputable && onProgress) onProgress(e.loaded / e.total); };
+    x.onload = () => {
+      let j = {}; try { j = JSON.parse(x.responseText); } catch (_) { /* ignore */ }
+      if (x.status >= 200 && x.status < 300 && j.url) resolve({ url: base + "/" + j.url, name: file.name || "File", size: file.size, mime: file.type || "application/octet-stream", kind: kindOf(file.type), host: "private" });
+      else reject(Object.assign(new Error(j.error || "Upload failed (" + x.status + ")"), { http: x.status }));
+    };
+    x.onerror = () => reject(new Error("Couldn't reach the server."));
+    if (signal) signal.addEventListener("abort", () => { x.abort(); reject(Object.assign(new Error("Cancelled"), { aborted: true })); }, { once: true });
+    x.send(file);
+  });
+}
+
 export async function uploadToHosts(file, { onProgress, signal, relayMax = 0, choose, onSwitch } = {}) {
+  if (PRIVATE) return uploadToPrivateServer(file, onProgress, signal);
   const s = getHostSettings();
   let list = eligibleHosts(file.size, relayMax, s);
   if (!list.length) throw new Error(whyNone(file.size, relayMax, s));

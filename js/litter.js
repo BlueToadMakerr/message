@@ -6,6 +6,7 @@ const API = "https://litterbox.catbox.moe/resources/internals/api.php";
 export const RETENTION = "72h";
 export const RETENTION_MS = 72 * 3600 * 1000;
 export const MAX_BYTES = 1000 * 1024 * 1024;           // Litterbox's limit is 1 GB
+import { PRIVATE as PRIVATE_FILES } from "./mode.js";
 const HOST_RE = /^https:\/\/(?:litter\.catbox\.moe|files\.catbox\.moe|oshi\.at|tmpfile\.link|(?:www\.)?file\.io|0x0\.st|tempfile\.org)\/[\w.\-\/%~+]+$/i;      // every file host we accept links from (see hosts.js)
 
 const rand16 = () => {
@@ -20,23 +21,18 @@ const extOf = f => {
 };
 
 /** Is this URL one we'd render? (only links to our file hosts: Litterbox, oshi.at, tmpfile.link, file.io) */
-export const isLitterUrl = u => typeof u === "string" && u.length <= 300 && HOST_RE.test(u);
+export const isLitterUrl = u => typeof u === "string" && u.length <= 300 && (HOST_RE.test(u) || (PRIVATE_FILES && /^https?:\/\/[^\/\s]+\/files\/[\w.\-%]+$/.test(u)));
 
 export const kindOf = mime => (mime || "").startsWith("image/") ? "image" : (mime || "").startsWith("video/") ? "video" : (mime || "").startsWith("audio/") ? "audio" : "file";
 
 // Same-origin proxy upload: XHR so we can report real progress (no CORS involved, so upload listeners are safe here).
-function postProxy(form, onProgress, signal, retried = false) {
+function postProxy(form, onProgress, signal) {
   return new Promise((resolve, reject) => {
     const x = new XMLHttpRequest();
     x.open("POST", "upload.php");
     x.upload.onprogress = e => { if (e.lengthComputable && onProgress) onProgress(e.loaded / e.total); };
     x.onload = () => {
       const text = x.responseText || "";
-      const ch = window.__qmChallenge;
-      if (ch && !retried && ch.isChallenge(text)) {         // the host's "browser check" page came back instead of the answer: solve it and send again
-        ch.solve(text, location.href).then(() => postProxy(form, onProgress, signal, true)).then(resolve, reject);
-        return;
-      }
       if (x.status >= 200 && x.status < 300) resolve(text.trim());
       else reject(Object.assign(new Error(text.trim().slice(0, 200) || "Upload failed (" + x.status + ")"), { http: x.status }));
     };

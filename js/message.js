@@ -10,6 +10,8 @@ import {
   copyText, formatMsgTime, wireDialog, alertDialog
 } from "./ui.js";
 import { initCallBanner } from "./call-banner.js";
+import { PRIVATE } from "./mode.js";
+import { cacheGet, cachePut, cacheDrop } from "./mediacache.js";
 import { QM, enterShell, trackSplit, toHome, markReady } from "./embed.js";
 import { isLitterUrl, fmtBytes, kindOf, relayMax } from "./litter.js";
 import { uploadToHosts, fmtTtl, fmtLimit } from "./hosts.js";
@@ -75,7 +77,39 @@ let keyHolders = [];
 let keysExist = false;            // the chat already has a key in the database (even if this device can't open it)
 let keyState = "unknown";        // "ready" | "waiting" (no key on this device yet)
 const rawOf = new WeakMap();      // decrypted message object -> the message exactly as stored (developer mode)
-const hydrate = m => (m && m.enc ? openMessage(chatId, m).then(o => { if (o && typeof o === "object") rawOf.set(o, m); return o; }) : Promise.resolve(m));
+const BIG_MIN = 12000;                                   // characters: media above this is stored in media/{key} instead of inside the message
+const hydrate = m => {
+  if (m && m.big && (m.type === "image" || m.type === "video" || m.type === "audio")) return Promise.resolve({ ...m, content: "", _big: true, _enc: !!m.enc });     // the picture itself is loaded when it is on screen (loadBig)
+  return m && m.enc ? openMessage(chatId, m).then(o => { if (o && typeof o === "object") rawOf.set(o, m); return o; }) : Promise.resolve(m);
+};
+// Fetch (or take from this device's cache) the media of a message whose body lives in media/{key}, open it, and redraw the message.
+const bigLoading = new Set();
+async function loadBig(key) {
+  const msg = msgData.get(key);
+  if (!msg || !msg._big || bigLoading.has(key)) return;
+  bigLoading.add(key);
+  try {
+    let body = await cacheGet(chatId, key);
+    if (body == null) { body = (await get(ref(db, `${chatPath}/media/${key}`))).val(); if (typeof body === "string") cachePut(chatId, key, body); }
+    if (typeof body !== "string") throw new Error("missing");
+    const { _big, ...stub } = msg;
+    const open = stub.enc ? await openMessage(chatId, { ...stub, content: body }) : { ...stub, content: body };
+    msgData.set(key, open);
+    const el = document.getElementById("msg-" + key);
+    if (el) fillMessage(el, key, open);
+  } catch (_) {
+    const el = document.getElementById("msg-" + key), b = el && el.querySelector(".media-lazy");
+    if (b) { b.textContent = "Couldn't load \u2014 tap to retry"; b.onclick = () => { bigLoading.delete(key); b.textContent = "Loading\u2026"; loadBig(key); }; }
+  } finally { bigLoading.delete(key); }
+}
+const lazyIO = typeof IntersectionObserver === "function" ? new IntersectionObserver(es => es.forEach(e => { if (e.isIntersecting) { lazyIO.unobserve(e.target); loadBig(e.target.dataset.key); } }), { root: null, rootMargin: "600px 0px" }) : null;
+function lazyPlaceholder(bubble, key, msg) {
+  const d = document.createElement("div");
+  d.className = "media-lazy"; d.dataset.key = key;
+  d.textContent = msg.type === "audio" ? "\ud83c\udfb5 Loading audio\u2026" : msg.type === "video" ? "\ud83c\udfa5 Loading video\u2026" : "\ud83d\udcf7 Loading photo\u2026";
+  bubble.append(d); bubble.classList.add("media-bubble");
+  lazyIO ? lazyIO.observe(d) : loadBig(key);
+}
 let addQ = Promise.resolve();
 // Lock-screen protection (Android): while the phone is locked and a call was answered from the lock screen, only messages sent
 // since then are shown (see shell.js "protect"). Older ones appear after the phone is unlocked.
@@ -166,7 +200,7 @@ async function fetchPlain(msg) {
   let buf;
   try { buf = await (await fetch(msg.url, { referrerPolicy: "no-referrer", credentials: "omit" })).arrayBuffer(); }
   catch (_) {
-    const r = await fetch("fetch-file.php?t=" + encodeURIComponent(await auth.currentUser.getIdToken()) + "&u=" + encodeURIComponent(msg.url));
+    const r = await fetch(PRIVATE ? msg.url : "fetch-file.php?t=" + encodeURIComponent(await auth.currentUser.getIdToken()) + "&u=" + encodeURIComponent(msg.url));
     if (!r.ok) throw new Error("download failed");
     buf = await r.arrayBuffer();
   }
@@ -269,7 +303,9 @@ function fillMessage(el, key, msg) {
   bubble.classList.remove("media-bubble");
   if (msg.replyTo && msg.replyTo.key) bubble.append(quoteEl(msg.replyTo));
 
-  if (msg.type === "file") {
+  if (msg._big && !msg.content) {
+    lazyPlaceholder(bubble, key, msg);
+  } else if (msg.type === "file") {
     fillFile(bubble, msg);
   } else if (msg.type === "audio") {
     const src = safeMediaUrl(msg.content || msg.text, "audio");
@@ -395,6 +431,7 @@ function appendLive(key, msg) {
   msgData.set(key, msg);
   const el = buildMessage(key, msg);
   messagesDiv.insertBefore(el, typingRow);
+  if (msg.type !== "event") { try { QM?.plugins?.emit("message", { chatId, key, fromMe: msg.fromUid === me, text: isText(msg) && !msg._locked ? String(msg.text ?? msg.content ?? "").slice(0, 2000) : null, type: msg.type || "text", time: msg.timestamp || null }); } catch (_) { /* a plugin must never break the chat */ } }
   if (msg.type !== "event") latestKey = key;          // system lines (call started, someone joined…) are never marked as read: the read marker only ever points at a real message
   return el;
 }
@@ -886,10 +923,16 @@ async function writeJob(job) {
     last = { fromUid: me, text: await sealPreview(chatId, previewOf(payload)), enc: true, timestamp: job.ts, id: key };
   }
   pendingKeys.add(key);
+  let bigBody = null;
+  if ((wire.type === "image" || wire.type === "video" || wire.type === "audio") && typeof wire.content === "string" && wire.content.length > BIG_MIN) {
+    bigBody = wire.content; wire = { ...wire, content: "", big: true };
+    cachePut(chatId, key, bigBody);                                                   // the sender never needs to download its own picture
+  }
   const multi = {
     [`${chatPath}/messages/${key}`]: { ...wire, deliveredAt: serverTimestamp() },        // "delivered": stamped by the database when it arrives
     [`${chatPath}/lastMessage`]: last
   };
+  if (bigBody != null) multi[`${chatPath}/media/${key}`] = bigBody;
   // "Something new" ping for every other member: the app's single live stream (live/{uid}) wakes up and shows the notification.
   for (const u of participants) if (u !== me) multi[`live/${u}/pings/${chatId}`] = { id: key, ts: job.ts, from: me };
   const p = update(ref(db), multi);
@@ -911,7 +954,6 @@ function finishJob(job) {
   }
   scrollToBottom();
   maybeMarkRead();
-  notifyServer();
 }
 
 function failJob(job, err) {
@@ -966,26 +1008,6 @@ function showJobMenu(job, btn) {
 
 // Used by anything that just needs "send this now" semantics (e.g. the link dialog).
 function sendMessage(spec) { return startJob(spec); }
-
-// Asks the server to push the new message to the other people's devices. It must not get lost: it is tried again (with a fresh sign-in token)
-// when the network hiccups or the host answers with an error, and `keepalive` lets it finish even if you leave the chat right after sending.
-// The server answers as soon as it has marked the message as notified, so this is quick; "already sent" / "someone else handles it" count as done.
-let notifyChain = Promise.resolve();
-function notifyServer() {
-  notifyChain = notifyChain.then(async () => {
-    for (let attempt = 0; attempt < 4; attempt++) {
-      try {
-        const idToken = await auth.currentUser.getIdToken(attempt > 0);
-        const r = await fetch("notify.php", { method: "POST", body: new URLSearchParams({ chatId, idToken }), keepalive: true });
-        const body = await r.text().catch(() => "");
-        let json = null; try { json = JSON.parse(body); } catch (_) { /* not JSON: a host error / "browser check" page, not our server's answer */ }
-        if (json && (r.ok || r.status === 403 || r.status === 404 || r.status === 400)) return;       // delivered to the server, or nothing (more) to do
-      } catch (err) { console.warn("Notification request failed (try " + (attempt + 1) + ")", err); }
-      await new Promise(res => setTimeout(res, 800 * 2 ** attempt));
-    }
-  }).catch(() => {});
-  return notifyChain;
-}
 
 // ---------- message actions ----------
 function closeMenu() {
@@ -1076,7 +1098,8 @@ async function deleteMessage(key) {
   if (!ok) return;
   try {
     const wasLast = msg ? await isLastMessage(key, msg) : null;
-    await remove(ref(db, `${chatPath}/messages/${key}`));
+    await update(ref(db), { [`${chatPath}/messages/${key}`]: null, ...(msg && (msg.type === "image" || msg.type === "video" || msg.type === "audio") ? { [`${chatPath}/media/${key}`]: null } : {}) });
+    cacheDrop(chatId, key);
     if (msg && (msg._enc || msg.enc)) dropKeyIfUnused();
     if (wasLast) {
       // Point the chat-list preview at the previous message instead of the deleted one.
@@ -1160,7 +1183,11 @@ async function prepareImage(file) {
     return readAsDataURL(file);
   }
   try {
-    for (const [dim, q] of [[1280, 0.82], [1024, 0.7], [800, 0.6]]) {
+    // Smallest picture that still looks good: WebP where the browser can make one (about 30% smaller than JPEG), and the first size/quality that
+    // fits under ~300 KB is used (storage and every download scale with this); only if none does, the smallest result below the hard limit.
+    const TARGET = 300 * 1024;
+    let best = null;
+    for (const [dim, q] of [[1280, 0.72], [1100, 0.62], [900, 0.55], [720, 0.5], [560, 0.45]]) {
       const scale = Math.min(1, dim / Math.max(bmp.width, bmp.height));
       const w = Math.max(1, Math.round(bmp.width * scale)), h = Math.max(1, Math.round(bmp.height * scale));
       const canvas = document.createElement("canvas");
@@ -1169,9 +1196,12 @@ async function prepareImage(file) {
       ctx.fillStyle = "#fff";
       ctx.fillRect(0, 0, w, h);
       ctx.drawImage(bmp, 0, 0, w, h);
-      const url = canvas.toDataURL("image/jpeg", q);
-      if (url.length <= LIMIT) return url;
+      let url = canvas.toDataURL("image/webp", q);
+      if (!url.startsWith("data:image/webp")) url = canvas.toDataURL("image/jpeg", q);
+      if (!best || url.length < best.length) best = url;
+      if (url.length <= TARGET) return url;
     }
+    if (best && best.length <= LIMIT) return best;
   } finally { bmp.close?.(); }
   throw new Error("That image is too large even after resizing.");
 }
@@ -1613,10 +1643,10 @@ onAuthStateChanged(auth, async user => {
     if (optionsDialog.open) renderParticipants();
   }, () => leaveChat("You don't have access to this chat."));
 
-  onValue(ref(db, `${chatPath}/chatData/photo`), snap => { customPhoto = snap.val() || ""; updateHeader(); }, () => {});
-  onValue(ref(db, `${chatPath}/chatData/name`), snap => {
-    customName = snap.val() || "";
-    updateHeader();
+  onValue(ref(db, `${chatPath}/chatData`), snap => {        // name, photo and the encryption flag: one listener
+    const d = snap.val() || {};
+    customPhoto = d.photo || ""; customName = d.name || ""; chatEncrypted = d.encrypted === true;
+    updateHeader(); paintEnc();
   }, () => {});
 
   onValue(ref(db, `${chatPath}/messageRead`), snap => {
@@ -1654,7 +1684,6 @@ onAuthStateChanged(auth, async user => {
       first = false; last = sig; paintEnc();
     }, () => {});
   }
-  onValue(ref(db, `${chatPath}/chatData/encrypted`), snap => { chatEncrypted = snap.val() === true; paintEnc(); }, () => {});
   paintVerify(); watchVerified(paintVerify);
 
   // Initial page of history, then a live window starting at its oldest message.

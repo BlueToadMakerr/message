@@ -4,7 +4,7 @@ import AuthenticationServices
 
 enum Config {
     /// Your site, with the trailing slash (same value as Config.SITE_URL in the Android app).
-    static let siteURL = URL(string: "https://bluetoadmaker.infinityfreeapp.com/message/")!
+    static let siteURL = URL(string: "https://msg.infinityfreeapp.com/")!
 }
 
 struct WebContainer: UIViewRepresentable {
@@ -21,10 +21,6 @@ struct WebContainer: UIViewRepresentable {
         let info = Bundle.main.infoDictionary
         let ver = (info?["CFBundleShortVersionString"] as? String) ?? "", build = (info?["CFBundleVersion"] as? String) ?? ""
         cfg.userContentController.addUserScript(WKUserScript(source: "window.__qmIosApp = { version: '\(ver)', build: '\(build)' };", injectionTime: .atDocumentStart, forMainFrameOnly: false))
-        // hosts like InfinityFree answer scripts / fetches with a JavaScript "browser check" page; challenge.js solves it (iPhone app only, see that file)
-        if let u = Bundle.main.url(forResource: "challenge", withExtension: "js"), let src = try? String(contentsOf: u, encoding: .utf8) {
-            cfg.userContentController.addUserScript(WKUserScript(source: src, injectionTime: .atDocumentStart, forMainFrameOnly: false))
-        }
         cfg.userContentController.add(context.coordinator, name: "qmUpdate")   // "Download update" opens the .ipa link in Safari
         cfg.userContentController.add(context.coordinator, name: "qmScreen")   // screen sharing (see ScreenReceiver.swift, js/native.js)
         cfg.userContentController.add(context.coordinator, name: "qmNotify")   // local notifications (see js/ios-notify.js, Notifier.swift)

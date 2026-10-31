@@ -52,6 +52,7 @@ self.addEventListener('push', event => {
       body: lines.length > 1 ? lines.join('\n') : body,
       data: { link, lines: isCall ? [] : lines },
       icon: 'icons/icon-192.png',
+      ...(extra.image && /^https:\/\//.test(extra.image) && !isCall ? { image: extra.image } : {}),       // a photo is shown big (Chrome / Edge / Android; Safari and Firefox ignore it)
       badge: 'icons/icon-192.png',
       vibrate: extra.call === '1' ? [300, 150, 300, 150, 300] : [100, 50, 100],
       tag,
