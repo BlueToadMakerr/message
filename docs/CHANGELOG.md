@@ -10,6 +10,8 @@ Newest first. Older rounds (1–43) are kept below exactly as they were written.
 - New `lite.php`: a PHP worker on the website host that answers like a private server but uses the Firebase database. Email + password accounts only (no Google sign-in), unencrypted text chats.
 - Very old browsers on the Firebase site are now sent to the compatibility client too.
 
+- Fix: `lite.php` now reports PHP/database/token problems as a readable message instead of a bare HTTP 500, and the compatibility page shows it. Firebase mode has a **Database** field (empty = the default database, same as the normal app; it also follows a database picked in the normal app on the same site).
+
 **Suggestions**
 - Account → Suggest a feature now also has a **Suggest on GitHub** link (https://github.com/BlueToadMakerr/message) next to the email option.
 

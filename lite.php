@@ -7,6 +7,14 @@
 // Messages are plain text in chats that are NOT end-to-end encrypted (an old browser has no cryptography). Uses the service account in secrets.php.
 declare(strict_types=1);
 require __DIR__ . '/lib.php';
+// Never answer with a bare "500": turn any PHP problem into a JSON message the compatibility page can show (and a PHP log line).
+ini_set('display_errors', '0');
+set_error_handler(function (int $no, string $msg, string $file, int $line) { if (!(error_reporting() & $no)) return false; throw new ErrorException($msg, 0, $no, $file, $line); });
+set_exception_handler(function (Throwable $e) {
+    error_log('lite.php: ' . $e->getMessage() . ' @' . basename($e->getFile()) . ':' . $e->getLine());
+    if (!headers_sent()) { http_response_code(500); header('Content-Type: application/json; charset=utf-8'); }
+    echo json_encode(['error' => 'Server error: ' . $e->getMessage() . ' (' . basename($e->getFile()) . ':' . $e->getLine() . ')']);
+});
 header('Access-Control-Allow-Origin: *');
 header('Access-Control-Allow-Headers: Authorization, Content-Type');
 header('Access-Control-Allow-Methods: GET, POST, OPTIONS');
@@ -17,7 +25,10 @@ $sa = require __DIR__ . '/secrets.php';
 $route = (string)($_GET['r'] ?? '');
 $body = json_decode((string)file_get_contents('php://input'), true);
 if (!is_array($body)) $body = [];
+// Which Realtime Database: the built-in default (config.php), or the one the page asks for with &db= (same rule as the app: a Firebase database host, https, no path).
 $db = rtrim($config['database_url'], '/');
+$want = trim((string)($_GET['db'] ?? ''));
+if ($want !== '' && preg_match('~^https://[a-z0-9-]+(\.[a-z0-9-]+)*\.(firebaseio\.com|firebasedatabase\.app)/?$~i', $want)) $db = strtolower(rtrim($want, '/'));
 $SECRET = hash('sha256', 'qm-lite|' . $sa['private_key'], true);       // signs this script's session tokens; never leaves the server
 
 function lt_token(string $uid): string {
@@ -38,12 +49,14 @@ function lt_uid(): ?string {
 function lt_db_token(): string {
     global $sa;
     $t = qm_service_token($sa, 'https://www.googleapis.com/auth/firebase.database https://www.googleapis.com/auth/userinfo.email');
-    if (!$t) qm_out(500, ['error' => 'Server could not authenticate.']);
+    if (!$t) qm_out(500, ['error' => 'Server could not get a Google access token (check secrets.php and that the host can reach oauth2.googleapis.com).']);
     return $t;
 }
 function lt_get(string $path, string $q = ''): mixed {
     global $db;
-    return qm_http('GET', "$db/$path.json" . ($q ? "?$q" : ''), ['Authorization: Bearer ' . lt_db_token()])['json'];
+    $r = qm_http('GET', "$db/$path.json" . ($q ? "?$q" : ''), ['Authorization: Bearer ' . lt_db_token()]);
+    if ($r['code'] === 0 || $r['code'] >= 400) qm_out(502, ['error' => 'Database read failed (HTTP ' . $r['code'] . ') at ' . $db . '. ' . substr((string)($r['json']['error'] ?? ''), 0, 120)]);
+    return $r['json'];
 }
 function lt_update(array $updates): bool {
     global $db;
