@@ -115,16 +115,16 @@ $uid = lt_uid();
 if (!$uid) qm_out(401, ['error' => 'Not signed in', 'code' => 'auth/expired']);
 
 if ($route === 'lite/chats') {
+    // Loaded once by the page, and kept small: no last message (that would be one more request per chat).
     $list = lt_get('chatList/' . rawurlencode($uid));
     $ids = is_array($list) ? array_slice(array_keys($list), 0, 40) : [];
     $req = [];
     foreach ($ids as $c) {
         if (!preg_match('/^[A-Za-z0-9_-]{1,64}$/', (string)$c)) continue;
-        $req["p$c"] = "privateChats/$c/participants.json"; $req["l$c"] = "privateChats/$c/lastMessage.json";
-        $req["n$c"] = "privateChats/$c/chatData/name.json"; $req["e$c"] = "privateChats/$c/chatData/encrypted.json";
+        $req["p$c"] = "privateChats/$c/participants.json"; $req["d$c"] = "privateChats/$c/chatData.json";
     }
     $r = $req ? lt_multi($req) : [];
-    $names = []; $chats = [];
+    $names = [];
     foreach ($ids as $c) {
         $p = $r["p$c"] ?? null;
         if (!is_array($p) || empty($p[$uid])) continue;
@@ -132,33 +132,41 @@ if ($route === 'lite/chats') {
     }
     $nm = []; foreach (array_keys($names) as $u) $nm["u$u"] = 'accsettings/' . rawurlencode((string)$u) . '/settings/displayName.json';
     $nr = $nm ? lt_multi($nm) : [];
+    $chats = [];
     foreach ($ids as $c) {
         $p = $r["p$c"] ?? null; if (!is_array($p) || empty($p[$uid])) continue;
-        $last = is_array($r["l$c"] ?? null) ? $r["l$c"] : [];
+        $cd = is_array($r["d$c"] ?? null) ? $r["d$c"] : [];
         $others = []; foreach (array_keys($p) as $u) if ($u !== $uid) $others[] = is_string($nr["u$u"] ?? null) ? $nr["u$u"] : 'Unknown user';
-        $custom = $r["n$c"] ?? null;
-        $chats[] = ['id' => $c, 'name' => is_string($custom) && $custom !== '' ? $custom : (implode(', ', $others) ?: 'Chat'), 'last' => !empty($last['enc']) ? '(encrypted)' : (string)($last['text'] ?? ''),
-                    'ts' => (int)($last['timestamp'] ?? 0), 'enc' => !empty($r["e$c"])];
+        $custom = $cd['name'] ?? null;
+        $chats[] = ['id' => $c, 'name' => is_string($custom) && $custom !== '' ? $custom : (implode(', ', $others) ?: 'Chat'), 'enc' => !empty($cd['encrypted'])];
     }
-    usort($chats, fn($a, $b) => $b['ts'] <=> $a['ts']);
     qm_out(200, ['me' => lt_name($uid), 'chats' => $chats]);
 }
 if ($route === 'lite/messages') {
-    $chat = (string)($_GET['chat'] ?? ''); $after = (string)($_GET['after'] ?? '');
+    $chat = (string)($_GET['chat'] ?? ''); $after = (string)($_GET['after'] ?? ''); $before = (string)($_GET['before'] ?? '');
     if (!lt_member($chat, $uid)) qm_out(403, ['messages' => []]);
-    $q = 'orderBy=' . rawurlencode('"$key"') . '&limitToLast=' . ($after === '' ? 60 : 200);
+    $page = 30;
+    // $after: only newer messages (refresh). $before: one page of older ones. Neither: the newest page. One extra row tells whether more exist.
+    $q = 'orderBy=' . rawurlencode('"$key"') . ($after !== '' ? '&startAt=' . rawurlencode('"' . $after . '"') . '&limitToFirst=200'
+        : ($before !== '' ? '&endAt=' . rawurlencode('"' . $before . '"') . '&limitToLast=' . ($page + 2) : '&limitToLast=' . ($page + 1)));
     $node = lt_get('privateChats/' . $chat . '/messages', $q);
-    $out = []; $nm = [];
+    $rows = [];
     if (is_array($node)) { ksort($node);
         foreach ($node as $k => $m) {
-            if (!is_array($m) || ($after !== '' && strcmp((string)$k, $after) <= 0) || ($m['type'] ?? '') === 'event') continue;
-            $t = $m['type'] ?? 'text';
-            $text = !empty($m['enc']) ? '(encrypted message - open QuickMessage on a newer browser to read it)' : ($t === 'text' ? (string)($m['text'] ?? '') : ($t === 'file' ? '[file: ' . ($m['name'] ?? $m['text'] ?? '') . ']' : "[$t]"));
-            $f = (string)($m['fromUid'] ?? ''); if (!isset($nm[$f])) $nm[$f] = lt_name($f);
-            $out[] = ['key' => (string)$k, 'from' => $f, 'name' => $nm[$f], 'me' => $f === $uid, 'text' => $text, 'ts' => (int)($m['timestamp'] ?? 0)];
+            if (!is_array($m) || ($after !== '' && strcmp((string)$k, $after) <= 0) || ($before !== '' && strcmp((string)$k, $before) >= 0)) continue;
+            $rows[(string)$k] = $m;
         }
     }
-    qm_out(200, ['messages' => $out]);
+    $more = false;
+    if ($after === '' && count($rows) > $page) { $more = true; $rows = array_slice($rows, -$page, null, true); }
+    $out = []; $nm = [];
+    foreach ($rows as $k => $m) {
+        $t = $m['type'] ?? 'text'; if ($t === 'event') continue;
+        $text = !empty($m['enc']) ? '(encrypted message - open QuickMessage on a newer browser to read it)' : ($t === 'text' ? (string)($m['text'] ?? '') : ($t === 'file' ? '[file: ' . ($m['name'] ?? $m['text'] ?? '') . ']' : "[$t]"));
+        $f = (string)($m['fromUid'] ?? ''); if (!isset($nm[$f])) $nm[$f] = lt_name($f);
+        $out[] = ['key' => (string)$k, 'from' => $f, 'name' => $nm[$f], 'me' => $f === $uid, 'text' => $text, 'ts' => (int)($m['timestamp'] ?? 0)];
+    }
+    qm_out(200, ['messages' => $out, 'more' => $more]);
 }
 if ($route === 'lite/send') {
     $chat = (string)($body['chat'] ?? ''); $text = mb_substr((string)($body['text'] ?? ''), 0, 4000);
@@ -169,7 +177,24 @@ if ($route === 'lite/send') {
            "privateChats/$chat/lastMessage" => ['fromUid' => $uid, 'text' => $text, 'timestamp' => $ts, 'id' => $key],
            "privateChats/$chat/messageRead/$uid" => $key];
     foreach ((array)lt_get('privateChats/' . $chat . '/participants') as $u => $_) if ($u !== $uid) $up["live/$u/pings/$chat"] = ['id' => $key, 'ts' => $ts, 'from' => $uid];
-    qm_out(200, ['ok' => lt_update($up)]);          // the Cloud Function sends the push notification for the new message
+    $ok = lt_update($up);          // the Cloud Function sends the push notification for the new message
+    qm_out(200, ['ok' => $ok, 'key' => $ok ? $key : null]);
+}
+if ($route === 'lite/delete') {
+    $chat = (string)($body['chat'] ?? ''); $key = (string)($body['key'] ?? '');
+    if (!preg_match('/^[A-Za-z0-9_-]{1,64}$/', $key) || !lt_member($chat, $uid)) qm_out(200, ['ok' => false]);
+    $m = lt_get("privateChats/$chat/messages/$key");
+    if (!is_array($m) || ($m['fromUid'] ?? '') !== $uid) qm_out(200, ['ok' => false]);          // only your own messages
+    $up = ["privateChats/$chat/messages/$key" => null, "privateChats/$chat/media/$key" => null];
+    $last = lt_get("privateChats/$chat/lastMessage");
+    if (is_array($last) && ($last['id'] ?? '') === $key) {          // keep the chat list preview of the normal app right
+        $prev = lt_get("privateChats/$chat/messages", 'orderBy=' . rawurlencode('"$key"') . '&endAt=' . rawurlencode('"' . $key . '"') . '&limitToLast=2');
+        $pk = null; $pm = null;
+        if (is_array($prev)) { ksort($prev); foreach ($prev as $k => $v) if ((string)$k !== $key && is_array($v)) { $pk = (string)$k; $pm = $v; } }
+        $up["privateChats/$chat/lastMessage"] = $pm ? ['fromUid' => $pm['fromUid'] ?? '', 'text' => empty($pm['enc']) ? (string)($pm['text'] ?? '') : '', 'timestamp' => (int)($pm['timestamp'] ?? 0), 'id' => $pk]
+            : ['fromUid' => '', 'text' => '(No messages yet)', 'timestamp' => (int)(microtime(true) * 1000)];
+    }
+    qm_out(200, ['ok' => lt_update($up)]);
 }
 if ($route === 'lite/newchat') {
     $email = strtolower(trim((string)($body['email'] ?? '')));

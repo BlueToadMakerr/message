@@ -12,6 +12,8 @@ Newest first. Older rounds (1–43) are kept below exactly as they were written.
 
 - Fix: `proxy.php` now reports PHP/database/token problems as a readable message instead of a bare HTTP 500, and the compatibility page shows it. The worker is now called `proxy.php`; its address box is blank by default (= `proxy.php` in the site root); the database is the normal app's (default, or the one picked there). No `curl_multi` needed (free hosts disable it).
 
+- Compatibility client made calmer and clearer: a "Working..." bar shows while anything is loading (and says so when the server is slow); your message appears at once as grey "sending..." and turns normal when stored (failed ones offer Try again / Remove); **Delete** on your own messages turns the message red to confirm, orange while deleting, then removes it; the chat list loads once (no last message, "Reload chats" button); messages refresh by themselves every 15 seconds plus a **Refresh** button that waits 5 seconds between uses; **Load older messages** at the top of a chat. New `lite/delete` route and `before` / `more` on `lite/messages` in both the Python server and `proxy.php`. Messages deleted by someone else show until the next full open of the chat.
+
 **Suggestions**
 - Account → Suggest a feature now also has a **Suggest on GitHub** link (https://github.com/BlueToadMakerr/message) next to the email option.
 

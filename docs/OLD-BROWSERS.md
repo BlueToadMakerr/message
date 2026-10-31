@@ -22,5 +22,8 @@ The database is the same one the normal page uses (the default, or the one picke
 - Manual: Account → **Compatibility mode** ("use on this device", "switch automatically"), or add `?legacy=1` / `?legacy=0` to the address.
 - On the Firebase version, a very old browser is sent to `legacy/` as well and uses `proxy.php` (see above).
 
+## Behaviour
+Because the proxy path is slow, the client avoids requests: the chat list loads once, the open chat refreshes every 15 s (button: every 5 s at most), the newest 30 messages load first and **Load older messages** fetches 30 more. Sent messages show as "sending..." first; **Delete** (own messages only) asks, then deletes.
+
 ## Status
 Tested in Chromium with `fetch` and `Promise` removed; **not tested on a real Wii**, and `proxy.php` has only been syntax-checked and exercised for routing/auth (not against a real Firebase project). The lite page avoids ES5+ features (no `let`, arrows, `forEach`, `JSON` assumed) but I could not verify Opera 9's behaviour here. If something misbehaves, the whole client is one file: `legacy/index.html`.

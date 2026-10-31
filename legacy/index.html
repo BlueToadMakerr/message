@@ -16,6 +16,14 @@ td{padding:0}
 .msg{padding:6px 8px;margin:4px 0;border:1px solid #ccc;background:#fff}
 .me{background:#e0e7ff;border-color:#a5b4fc}
 .who{font-size:13px;color:#555}
+.pending{background:#f3f4f6;border-color:#d1d5db;color:#6b7280}
+.askdel{background:#fecaca;border-color:#ef4444}
+.deleting{background:#fed7aa;border-color:#f97316;color:#7c2d12}
+.failed{background:#fee2e2;border-color:#ef4444}
+.act{font-size:13px;color:#555}
+.act a{cursor:pointer}
+#st{position:fixed;top:0;right:0;background:#fde68a;color:#111;font-size:15px;padding:4px 10px;display:none;z-index:9}
+.sm{font-size:15px;padding:3px 10px}
 input,textarea{font-size:18px;width:95%;padding:6px;margin:3px 0}
 button{font-size:18px;padding:6px 14px;margin:3px 3px 3px 0}
 #err{color:#b91c1c}
@@ -25,6 +33,7 @@ button{font-size:18px;padding:6px 14px;margin:3px 3px 3px 0}
 <body>
 <h1>QuickMessage</h1>
 <div class="note">Compatibility mode for very old browsers. Works with a private server or with the Firebase version of this site. <a href="../index.html" onclick="try{localStorage.removeItem('qm-legacy')}catch(e){}">Open the normal version</a></div>
+<div id="st"></div>
 <div id="err"></div>
 <div id="v"></div>
 <script type="text/javascript">
@@ -52,7 +61,15 @@ function str(o) {
   if (typeof o === 'string') return '"' + o.replace(/\\/g, '\\\\').replace(/"/g, '\\"').replace(/\n/g, '\\n').replace(/\r/g, '') + '"';
   var p = [], k; for (k in o) { if (o.hasOwnProperty(k)) p.push(str(k) + ':' + str(o[k])); } return '{' + p.join(',') + '}';
 }
+var pending = 0, slowT = null;
+function status(on) {
+  pending += on ? 1 : -1; if (pending < 0) pending = 0;
+  var e = document.getElementById('st'); if (!e) return;
+  if (pending > 0) { e.style.display = 'block'; if (!slowT) { e.innerHTML = 'Working...'; slowT = setTimeout(function () { e.innerHTML = 'Still working... the server is slow'; }, 4000); } }
+  else { e.style.display = 'none'; if (slowT) { clearTimeout(slowT); slowT = null; } }
+}
 function api(name, body, cb) {
+  status(true);
   var x = window.XMLHttpRequest ? new XMLHttpRequest() : new ActiveXObject('Microsoft.XMLHTTP');
   var url = mode === 'firebase' ? proxyUrl() + '?r=' + name.replace('?', '&') + (dbUrl ? '&db=' + encodeURIComponent(dbUrl) : '') + (token ? '&token=' + encodeURIComponent(token) : '')     // some free hosts drop the Authorization header, so proxy.php also accepts ?token=
     : base() + '/api/' + name + (name.indexOf('?') < 0 ? '?' : '&');
@@ -61,6 +78,7 @@ function api(name, body, cb) {
   if (body !== null) x.setRequestHeader('Content-Type', 'application/json');
   x.onreadystatechange = function () {
     if (x.readyState !== 4) return;
+    status(false);
     var j = parse(x.responseText) || {};
     if (x.status === 0) { cb(0, { error: 'Cannot reach ' + base() + '. Check the address in "Server" below.' }); return; }
     if (x.status === 401 && token) { logout(); return; }
@@ -100,55 +118,137 @@ function doAuth(kind) {
 }
 function logout() { token = ''; try { localStorage.removeItem('qm-ltoken'); } catch (e) {} loginView(); }
 
+var more = false, seen = {}, firstKey = '', sendN = 0, cdT = {}, polling = false;
+function near() { try { var d = document.documentElement, b = document.body; return (window.pageYOffset || d.scrollTop || 0) + (window.innerHeight || d.clientHeight || 0) >= Math.max(d.scrollHeight, b.scrollHeight) - 120; } catch (e) { return true; } }
+function bottom() { try { window.scrollTo(0, 999999); } catch (e) {} }
+/** Disables a button for N seconds (shows the countdown), so the refresh buttons can't be spammed. */
+function cool(id, label, secs) {
+  var b = document.getElementById(id); if (!b) return;
+  if (cdT[id]) clearInterval(cdT[id]);
+  var left = secs; b.disabled = true; b.innerHTML = label + ' (' + left + ')';
+  cdT[id] = setInterval(function () {
+    var bb = document.getElementById(id); left--;
+    if (!bb) { clearInterval(cdT[id]); return; }
+    if (left <= 0) { clearInterval(cdT[id]); cdT[id] = null; bb.disabled = false; bb.innerHTML = label; } else bb.innerHTML = label + ' (' + left + ')';
+  }, 1000);
+}
+
 function listView() {
   stop(); chat = null; setErr('');
+  show('<div class="box">Loading your chats...</div>');
   api('lite/chats', null, function (st, j) {
-    if (st !== 200) { setErr(j.error || 'Could not load chats.'); timer = setTimeout(listView, 5000); return; }
-    me = j.me; var h = '<div class="box">Signed in as <b>' + esc(j.me) + '</b> &nbsp; <button onclick="logout()">Log out</button></div>';
+    if (st !== 200) { setErr(j.error || 'Could not load chats.'); show('<div class="box"><button onclick="listView()">Try again</button> <button onclick="logout()">Log out</button></div>'); return; }
+    me = j.me; var h = '<div class="box">Signed in as <b>' + esc(j.me) + '</b> &nbsp; <button class="sm" onclick="logout()">Log out</button> <button class="sm" id="rl" onclick="listView()">Reload chats</button></div>';
     h += '<div class="box"><b>New chat</b><br><input id="ne" type="text" autocapitalize="off" value="" > <button onclick="newChat()">Start</button><div class="note">Type the other person\'s account email.</div></div>';
     var i, c; h += '<div class="box">';
     if (!j.chats.length) h += 'No chats yet.';
     for (i = 0; i < j.chats.length; i++) {
       c = j.chats[i];
-      h += '<div class="row" onclick="openChat(\'' + c.id + '\',\'' + esc(c.name).replace(/'/g, '') + '\')"><b>' + esc(c.name) + (c.enc ? ' (encrypted)' : '') + '</b><span>' + esc(c.last) + '</span></div>';
+      h += '<div class="row" onclick="openChat(\'' + c.id + '\',\'' + esc(c.name).replace(/'/g, '') + '\')"><b>' + esc(c.name) + (c.enc ? ' (encrypted)' : '') + '</b></div>';
     }
-    h += '</div>';
-    if (!document.getElementById('ne') || true) show(h);
-    timer = setTimeout(function () { if (!chat && document.getElementById('ne') && document.getElementById('ne').value === '') listView(); else if (!chat) timer = setTimeout(listView, 6000); }, 6000);
+    h += '<div class="note">The chat list loads once. Use "Reload chats" to update it.</div></div>';
+    show(h);
   });
 }
 function newChat() {
   var e = document.getElementById('ne').value;
-  api('lite/newchat', { email: e }, function (st, j) { if (st !== 200) { setErr(j.error || 'Could not start the chat.'); return; } listView(); });
+  if (!e) return;
+  setErr('Creating the chat...');
+  api('lite/newchat', { email: e }, function (st, j) { if (st !== 200) { setErr(j.error || 'Could not start the chat.'); return; } setErr(''); listView(); });
+}
+function msgHtml(m) {
+  var act = m.me ? '<div class="act" id="a_' + m.key + '"><a onclick="askDel(\'' + m.key + '\')">Delete</a></div>' : '';
+  return '<div class="msg' + (m.me ? ' me' : '') + '" id="m_' + m.key + '"><div class="who">' + esc(m.me ? 'You' : m.name) + '</div><span id="t_' + m.key + '">' + esc(m.text).replace(/\n/g, '<br>') + '</span>' + act + '</div>';
 }
 function openChat(id, name) {
-  stop(); chat = id; chatName = name; lastKey = ''; setErr('');
-  show('<div class="box"><button onclick="listView()">&laquo; Back</button> <b>' + esc(name) + '</b></div><div id="ms"></div>' +
-    '<div class="box"><textarea id="tx" rows="2"></textarea><br><button onclick="send()">Send</button><span class="note"> Text only. Encrypted chats can\'t be read here.</span></div>');
+  stop(); chat = id; chatName = name; lastKey = ''; firstKey = ''; seen = {}; more = false; setErr('');
+  show('<div class="box"><button class="sm" onclick="listView()">&laquo; Chats</button> <b>' + esc(name) + '</b> &nbsp; <button class="sm" id="rf" onclick="manualRefresh()">Refresh</button>' +
+    '<div class="note">Updates by itself every 15 seconds.</div></div><div id="older"></div><div id="ms"><div class="note">Loading messages...</div></div>' +
+    '<div class="box"><textarea id="tx" rows="2"></textarea><br><button id="sb" onclick="send()">Send</button><span class="note"> Text only. Encrypted chats can\'t be read here.</span></div>');
   poll(true);
 }
+function olderBtn() {
+  var o = document.getElementById('older'); if (!o) return;
+  o.innerHTML = more ? '<div class="box"><button id="ob" onclick="loadOlder()">Load older messages</button></div>' : '';
+}
+function manualRefresh() { cool('rf', 'Refresh', 5); stop(); poll(false); }
 function poll(first) {
-  if (!chat) return;
-  var id = chat;
+  if (!chat || polling) return;
+  polling = true; var id = chat;
   api('lite/messages?chat=' + encodeURIComponent(id) + '&after=' + encodeURIComponent(lastKey), null, function (st, j) {
+    polling = false;
     if (chat !== id) return;
+    var box = document.getElementById('ms');
     if (st === 200 && j.messages) {
-      var i, m, h = '', box = document.getElementById('ms');
+      var i, m, h = '', stick = near() || first;
       for (i = 0; i < j.messages.length; i++) {
-        m = j.messages[i]; lastKey = m.key;
-        h += '<div class="msg' + (m.me ? ' me' : '') + '"><div class="who">' + esc(m.me ? 'You' : m.name) + '</div>' + esc(m.text).replace(/\n/g, '<br>') + '</div>';
+        m = j.messages[i]; if (m.key > lastKey) lastKey = m.key;
+        if (seen[m.key]) continue;
+        seen[m.key] = 1; if (!firstKey || m.key < firstKey) firstKey = m.key; h += msgHtml(m);
       }
-      if (h && box) { box.innerHTML = box.innerHTML + h; try { window.scrollTo(0, 999999); } catch (e) {} }
-      if (first && !h && box) box.innerHTML = '<div class="note">No messages yet.</div>';
-    }
-    timer = setTimeout(function () { poll(false); }, 3000);
+      if (first) { box.innerHTML = h || '<div class="note" id="nomsg">No messages yet.</div>'; more = !!j.more; olderBtn(); }
+      else if (h && box) { var n = document.getElementById('nomsg'); if (n) n.parentNode.removeChild(n); box.innerHTML = box.innerHTML + h; }
+      if (h && stick) bottom();
+      setErr('');
+    } else if (st !== 200) setErr(j.error || 'Could not load messages. Will try again.');
+    stop(); timer = setTimeout(function () { poll(false); }, 15000);
   });
 }
+function loadOlder() {
+  if (!chat || !firstKey) return;
+  var id = chat, b = document.getElementById('ob'); if (b) { b.disabled = true; b.innerHTML = 'Loading...'; }
+  api('lite/messages?chat=' + encodeURIComponent(id) + '&before=' + encodeURIComponent(firstKey), null, function (st, j) {
+    if (chat !== id) return;
+    if (st !== 200) { setErr(j.error || 'Could not load older messages.'); if (b) { b.disabled = false; b.innerHTML = 'Load older messages'; } return; }
+    var i, m, h = '', box = document.getElementById('ms'), y = 0, h0 = 0;
+    try { y = window.pageYOffset || document.documentElement.scrollTop || 0; h0 = Math.max(document.documentElement.scrollHeight, document.body.scrollHeight); } catch (e) {}
+    for (i = 0; i < j.messages.length; i++) { m = j.messages[i]; if (seen[m.key]) continue; seen[m.key] = 1; if (m.key < firstKey) firstKey = m.key; h += msgHtml(m); }
+    box.innerHTML = h + box.innerHTML; more = !!j.more; olderBtn(); setErr('');
+    try { window.scrollTo(0, y + Math.max(document.documentElement.scrollHeight, document.body.scrollHeight) - h0); } catch (e2) {}
+  });
+}
+/** Sending: the message shows up at once as "sending..." (grey) and turns normal when the server has it. */
 function send() {
   var t = document.getElementById('tx'), v = t.value;
   if (!v || !chat) return;
-  t.value = '';
-  api('lite/send', { chat: chat, text: v }, function (st, j) { if (!j.ok) setErr('Message not sent (encrypted chat?).'); else { stop(); poll(false); } });
+  t.value = ''; doSend('p' + (++sendN), v, false);
+}
+function doSend(pid, v, retry) {
+  var box = document.getElementById('ms'), id = chat, el = document.getElementById('m_' + pid);
+  if (!el) { var d = document.createElement('div'); d.innerHTML = '<div class="msg me pending" id="m_' + pid + '"><div class="who">You</div><span id="t_' + pid + '">' + esc(v).replace(/\n/g, '<br>') + '</span><div class="act" id="a_' + pid + '"></div></div>'; box.appendChild(d.firstChild); el = document.getElementById('m_' + pid); }
+  el.className = 'msg me pending'; document.getElementById('a_' + pid).innerHTML = 'sending...';
+  bottom();
+  api('lite/send', { chat: id, text: v }, function (st, j) {
+    el = document.getElementById('m_' + pid); if (!el) return;
+    if (st === 200 && j.ok && j.key) {
+      seen[j.key] = 1; if (!firstKey || j.key < firstKey) firstKey = j.key;
+      el.id = 'm_' + j.key; document.getElementById('t_' + pid).id = 't_' + j.key; el.className = 'msg me';
+      var a = document.getElementById('a_' + pid); a.id = 'a_' + j.key; a.innerHTML = '<a onclick="askDel(\'' + j.key + '\')">Delete</a>';
+    } else {
+      el.className = 'msg me failed'; var q = v.replace(/\\/g, '\\\\').replace(/'/g, "\\'").replace(/\n/g, '\\n');
+      document.getElementById('a_' + pid).innerHTML = 'Not sent' + (st === 200 ? ' (encrypted chat?)' : '') + '. <a onclick="doSend(\'' + pid + '\',\'' + q + '\',true)">Try again</a> &nbsp; <a onclick="var e=document.getElementById(\'m_' + pid + '\');e.parentNode.removeChild(e)">Remove</a>';
+    }
+  });
+}
+/** Deleting: first the message turns red and asks, then orange while it is being deleted, then it disappears. */
+function askDel(key) {
+  var el = document.getElementById('m_' + key), a = document.getElementById('a_' + key); if (!el) return;
+  el.className = 'msg me askdel';
+  var box = a;
+  if (box) box.innerHTML = 'Delete this message? <a onclick="doDel(\'' + key + '\')"><b>Yes, delete</b></a> &nbsp; <a onclick="cancelDel(\'' + key + '\')">Cancel</a>';
+}
+function cancelDel(key) {
+  var el = document.getElementById('m_' + key); if (!el) return;
+  el.className = 'msg me'; var box = document.getElementById('a_' + key); if (box) box.innerHTML = '<a onclick="askDel(\'' + key + '\')">Delete</a>';
+}
+function doDel(key) {
+  var el = document.getElementById('m_' + key), id = chat; if (!el) return;
+  el.className = 'msg me deleting'; var box = document.getElementById('a_' + key); if (box) box.innerHTML = 'Deleting...';
+  api('lite/delete', { chat: id, key: key }, function (st, j) {
+    el = document.getElementById('m_' + key); if (!el) return;
+    if (st === 200 && j.ok) { el.parentNode.removeChild(el); }
+    else { setErr((j && j.error) || 'Could not delete the message.'); cancelDel(key); }
+  });
 }
 function start() { if (token) listView(); else loginView(); }
 if (mode) start();

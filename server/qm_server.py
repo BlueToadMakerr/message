@@ -353,34 +353,49 @@ def lite_chats(uid):
         others = [display_name(u) for u in c["participants"] if u != uid]
         name = (c.get("chatData") or {}).get("name") or ", ".join(others) or "Chat"
         enc = bool((c.get("chatData") or {}).get("encrypted"))
-        out.append({"id": chat, "name": name, "last": "(encrypted)" if last.get("enc") else last.get("text", ""), "ts": last.get("timestamp", 0), "enc": enc})
+        out.append({"id": chat, "name": name, "ts": last.get("timestamp", 0), "enc": enc})       # no last message: the compatibility client loads the list once and keeps it light
     out.sort(key=lambda x: -x["ts"]); return out
 
-def lite_messages(uid, chat, after):
+def lite_text(m):
+    t = m.get("type") or "text"
+    if m.get("enc"): return "(encrypted message - open QuickMessage on a newer browser to read it)"
+    if t == "text": return m.get("text", "")
+    if t == "file": return "[file: %s]" % (m.get("name") or m.get("text") or "")
+    return "[%s]" % t
+
+def lite_messages(uid, chat, after, before="", page=30):
+    """after: only newer than this key (refresh). before: one page of older messages. Neither: the newest page. Returns (messages, more_older) or None."""
     if not member(chat, uid): return None
     node = get_at(["privateChats", chat, "messages"]) or {}
-    res = []
-    for k, m in sorted(node.items()):
-        if after and k <= after: continue
-        if m.get("type") == "event": continue
-        t = m.get("type") or "text"
-        if m.get("enc"): text = "(encrypted message - open QuickMessage on a newer browser to read it)"
-        elif t == "text": text = m.get("text", "")
-        elif t == "file": text = "[file: %s]" % (m.get("name") or m.get("text") or "")
-        else: text = "[%s]" % t
-        res.append({"key": k, "from": m.get("fromUid"), "name": display_name(m.get("fromUid")), "me": m.get("fromUid") == uid, "text": text, "ts": m.get("timestamp", 0)})
-    return res[-200:]
+    keys = [k for k in sorted(node) if node[k].get("type") != "event"]
+    if after: keys = [k for k in keys if k > after][-200:]; more = False
+    else:
+        if before: keys = [k for k in keys if k < before]
+        more = len(keys) > page; keys = keys[-page:]
+    return [{"key": k, "from": node[k].get("fromUid"), "name": display_name(node[k].get("fromUid")), "me": node[k].get("fromUid") == uid,
+             "text": lite_text(node[k]), "ts": node[k].get("timestamp", 0)} for k in keys], more
 
 def lite_send(uid, chat, text):
     text = (text or "")[:4000]
-    if not text.strip() or not member(chat, uid): return False
-    if (get_at(["privateChats", chat, "chatData", "encrypted"])): return False
+    if not text.strip() or not member(chat, uid): return None
+    if (get_at(["privateChats", chat, "chatData", "encrypted"])): return None
     key = push_id(); ts = int(time.time() * 1000)
     ups = {"privateChats/%s/messages/%s" % (chat, key): {"fromUid": uid, "text": text, "timestamp": ts, "deliveredAt": ts},
            "privateChats/%s/lastMessage" % chat: {"fromUid": uid, "text": text, "timestamp": ts, "id": key},
            "privateChats/%s/messageRead/%s" % (chat, uid): key}
     for u in (get_at(["privateChats", chat, "participants"]) or {}):
         if u != uid: ups["live/%s/pings/%s" % (u, chat)] = {"id": key, "ts": ts, "from": uid}
+    return key if apply_update(uid, ups)[0] else None
+
+def lite_delete(uid, chat, key):
+    if not member(chat, uid) or not isinstance(key, str): return False
+    m = get_at(["privateChats", chat, "messages", key])
+    if not isinstance(m, dict) or m.get("fromUid") != uid: return False
+    ups = {"privateChats/%s/messages/%s" % (chat, key): None, "privateChats/%s/media/%s" % (chat, key): None}
+    if (get_at(["privateChats", chat, "lastMessage"]) or {}).get("id") == key:       # keep the chat list's preview right in the normal app
+        rest = [k for k in sorted(get_at(["privateChats", chat, "messages"]) or {}) if k != key]
+        prev = get_at(["privateChats", chat, "messages", rest[-1]]) if rest else None
+        ups["privateChats/%s/lastMessage" % chat] = ({"fromUid": prev.get("fromUid"), "text": prev.get("text", "") if not prev.get("enc") else "", "timestamp": prev.get("timestamp", 0), "id": rest[-1]} if prev else {"fromUid": "", "text": "(No messages yet)", "timestamp": int(time.time() * 1000)})
     return apply_update(uid, ups)[0]
 
 def lite_newchat(uid, email):
@@ -546,10 +561,12 @@ class H(BaseHTTPRequestHandler):
         # ---- lite
         if name == "lite/chats": return self.send_json(200, {"me": display_name(uid), "chats": lite_chats(uid)})
         if name == "lite/messages":
-            r = lite_messages(uid, q.get("chat", [""])[0], q.get("after", [""])[0])
-            return self.send_json(200 if r is not None else 403, {"messages": r or []})
+            r = lite_messages(uid, q.get("chat", [""])[0], q.get("after", [""])[0], q.get("before", [""])[0])
+            return self.send_json(200 if r is not None else 403, {"messages": r[0] if r else [], "more": bool(r and r[1])})
         if name == "lite/send":
-            d = self.jbody(); return self.send_json(200, {"ok": lite_send(uid, d.get("chat"), d.get("text"))})
+            d = self.jbody(); k = lite_send(uid, d.get("chat"), d.get("text")); return self.send_json(200, {"ok": bool(k), "key": k})
+        if name == "lite/delete":
+            d = self.jbody(); return self.send_json(200, {"ok": lite_delete(uid, d.get("chat"), d.get("key"))})
         if name == "lite/newchat":
             d = self.jbody(); c = lite_newchat(uid, d.get("email")); return self.send_json(200 if c else 404, {"chat": c, "error": None if c else "No account with that email."})
         return self.send_json(404, {"error": "unknown api"})
