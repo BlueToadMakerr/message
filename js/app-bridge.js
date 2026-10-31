@@ -3,9 +3,12 @@
 import { auth } from "./firebase.js";
 import { onIdTokenChanged } from "./sdk.js";
 import { activeDbUrl } from "./dburl.js";
+import { PRIVATE } from "./mode.js";
 if (window.top === window && window.QMApp && window.QMApp.setSession) {
   onIdTokenChanged(auth, user => {
     try { window.QMApp.setDbUrl && window.QMApp.setDbUrl(activeDbUrl()); } catch (_) { /* ignore */ }
+    // Private server: the session token plays the part of Firebase's refresh token (the app renews it at /api/auth/me).
+    if (PRIVATE && user) { user.getIdToken().then(t => { try { window.QMApp.setSession(user.uid, t); } catch (_) { /* ignore */ } }); return; }
     try { user ? window.QMApp.setSession(user.uid, user.refreshToken) : window.QMApp.logout(); } catch (_) { /* ignore */ }
   });
 }

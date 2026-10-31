@@ -217,8 +217,8 @@ def related(a, b):
 def snapshot_for(l):
     node = get_at(l["path"])
     if l["mode"] == "value":
-        if l["query"]: return run_query(node, l["query"])
-        return node
+        if l["query"]: return json.loads(json.dumps(run_query(node, l["query"])))
+        return json.loads(json.dumps(node))              # a copy: listeners compare old and new, the tree itself keeps changing
     return {k: v for k, v in run_query(node, l["query"])}
 
 def dispatch(changed_paths):
@@ -405,7 +405,7 @@ class H(BaseHTTPRequestHandler):
     def cors(self):
         self.send_header("Access-Control-Allow-Origin", "*")
         self.send_header("Access-Control-Allow-Headers", "Authorization, Content-Type, X-Name")
-        self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+        self.send_header("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS")
 
     def send_json(self, code, obj):
         b = json.dumps(obj, separators=(",", ":")).encode()
@@ -433,11 +433,15 @@ class H(BaseHTTPRequestHandler):
 
     def do_GET(self): self.route("GET")
     def do_POST(self): self.route("POST")
+    def do_PUT(self): self.route("PUT")
+    def do_PATCH(self): self.route("PATCH")
+    def do_DELETE(self): self.route("DELETE")
 
     def route(self, method):
         u = urlparse(self.path); q = parse_qs(u.query)
         try:
             if u.path.startswith("/api/"): return self.api(method, u.path[5:], q)
+            if u.path.startswith("/db/"): return self.rest(method, u.path[4:], q)
             if u.path.startswith("/files/"): return self.serve_file(os.path.join(CFG["data"], "files", os.path.basename(unquote(u.path))), download=True)
             return self.static(u.path)
         except (BrokenPipeError, ConnectionResetError): pass
@@ -549,6 +553,74 @@ class H(BaseHTTPRequestHandler):
         if name == "lite/newchat":
             d = self.jbody(); c = lite_newchat(uid, d.get("email")); return self.send_json(200 if c else 404, {"chat": c, "error": None if c else "No account with that email."})
         return self.send_json(404, {"error": "unknown api"})
+
+    # ---- Firebase-REST look-alike (/db/<path>.json?auth=TOKEN): what the Android / iPhone apps' background service talks to.
+    # Supports GET (with orderBy / limitToLast / limitToFirst / startAt / endAt / equalTo), PUT, PATCH, POST, DELETE and the text/event-stream "put" events.
+    def rest(self, method, rest_path, q):
+        uid = self.auth({"token": q.get("auth", [""])})
+        if not uid: return self.send_json(401, {"error": "Permission denied"})
+        path = unquote(rest_path)
+        if path.endswith(".json"): path = path[:-5]
+        pp = parts(path)
+        if method == "GET" and "text/event-stream" in (self.headers.get("Accept") or ""): return self.rest_stream(uid, pp)
+        if method == "GET":
+            if not can_read(uid, pp): return self.send_json(401, {"error": "Permission denied"})
+            with LOCK:
+                node = get_at(pp)
+                query = {}
+                ob = (q.get("orderBy", [""])[0] or "").strip('"')
+                if ob: query["orderBy"] = "key" if ob == "$key" else "value" if ob == "$value" else "child:" + ob
+                for qk, name in (("limitToLast", "limitLast"), ("limitToFirst", "limitFirst")):
+                    if qk in q: query[name] = int(q[qk][0])
+                for qk in ("startAt", "endAt", "equalTo"):
+                    if qk in q:
+                        try: query[qk] = json.loads(q[qk][0])
+                        except Exception: query[qk] = q[qk][0]
+                if query and isinstance(node, dict): return self.send_json(200, {k: v for k, v in run_query(node, query)})
+                return self.send_json(200, node)
+        body = self.jbody() if method != "DELETE" else None
+        key = "/".join(pp)
+        if method == "PUT": ups = {key: body}
+        elif method == "DELETE": ups = {key: None}
+        elif method == "PATCH":
+            if not isinstance(body, dict): return self.send_json(400, {"error": "bad body"})
+            ups = {(key + "/" + k if key else k): v for k, v in body.items()}
+        elif method == "POST":
+            nid = push_id(); ups = {(key + "/" + nid if key else nid): body}
+        else: return self.send_json(405, {"error": "method"})
+        ok, err = apply_update(uid, ups)
+        if not ok: return self.send_json(401, {"error": "Permission denied"})
+        return self.send_json(200, {"name": nid} if method == "POST" else body)
+
+    def rest_stream(self, uid, pp):
+        if not can_read(uid, pp): return self.send_json(401, {"error": "Permission denied"})
+        c = Client("rest" + secrets.token_hex(8), uid)
+        with LOCK: CLIENTS[c.cid] = c
+        self.send_response(200); self.cors()
+        self.send_header("Content-Type", "text/event-stream"); self.send_header("Cache-Control", "no-store"); self.send_header("Connection", "close"); self.end_headers()
+        def emit(event, path, data):
+            self.wfile.write(("event: %s\ndata: %s\n\n" % (event, json.dumps({"path": path, "data": data}, separators=(",", ":")))).encode()); self.wfile.flush()
+        prev = None
+        try:
+            add_listener(c, "r", "/".join(pp), None, "value")
+            while c.alive:
+                try: ev = c.q.get(timeout=8)
+                except queue.Empty: self.wfile.write(b"event: keep-alive\ndata: null\n\n"); self.wfile.flush(); continue
+                new = ev.get("v")
+                if prev is None: emit("put", "/", new)                                   # everything that is there now
+                else:                                                                      # then only what changed (two levels deep, like the app expects: /kind/key)
+                    a = prev if isinstance(prev, dict) else {}; b = new if isinstance(new, dict) else {}
+                    for k in set(a) | set(b):
+                        if a.get(k) == b.get(k): continue
+                        av, bv = a.get(k), b.get(k)
+                        if isinstance(av, dict) or isinstance(bv, dict):
+                            av = av if isinstance(av, dict) else {}; bv = bv if isinstance(bv, dict) else {}
+                            for k2 in set(av) | set(bv):
+                                if av.get(k2) != bv.get(k2): emit("put", "/%s/%s" % (k, k2), bv.get(k2))
+                        else: emit("put", "/" + k, bv)
+                prev = new if new is not None else {}
+        except (BrokenPipeError, ConnectionResetError, OSError): pass
+        finally: drop_client(c); self.close_connection = True
 
     def stream(self, uid, q):
         cid = q.get("cid", [""])[0]

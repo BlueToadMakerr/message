@@ -4,7 +4,20 @@ import AuthenticationServices
 
 enum Config {
     /// Your site, with the trailing slash (same value as Config.SITE_URL in the Android app).
-    static let siteURL = URL(string: "https://msg.infinityfreeapp.com/")!
+    static let defaultSite = URL(string: "https://msg.infinityfreeapp.com/")!
+    /// The page the app shows: the private server's address when one was entered on the login screen (it serves the site itself), else the normal site.
+    static var siteURL: URL {
+        if let s = UserDefaults.standard.string(forKey: "qmServer"), !s.isEmpty, let u = URL(string: s) { return u }
+        return defaultSite
+    }
+    /// "" = back to Firebase / the normal site. Anything else must be an http(s) address.
+    @discardableResult static func setServer(_ raw: String) -> Bool {
+        var t = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        if t.isEmpty { UserDefaults.standard.removeObject(forKey: "qmServer"); return true }
+        guard let u = URL(string: t), let sc = u.scheme?.lowercased(), sc == "http" || sc == "https", u.host != nil, u.user == nil else { return false }
+        if !t.hasSuffix("/") { t += "/" }
+        UserDefaults.standard.set(t, forKey: "qmServer"); return true
+    }
 }
 
 struct WebContainer: UIViewRepresentable {
@@ -16,6 +29,7 @@ struct WebContainer: UIViewRepresentable {
         cfg.mediaTypesRequiringUserActionForPlayback = []
         cfg.allowsPictureInPictureMediaPlayback = true
         cfg.applicationNameForUserAgent = "QuickMessageiOS/1"
+        cfg.userContentController.add(context.coordinator, name: "qmServer")   // "Private server" box on the login screen (js/serverbox.js)
         cfg.userContentController.add(context.coordinator, name: "qmGoogle")   // "Sign in with Google" (see js/native.js)
         // the page learns which build this is (js/update.js compares it with downloads/ios.json on the site)
         let info = Bundle.main.infoDictionary
@@ -99,6 +113,12 @@ struct WebContainer: UIViewRepresentable {
 
         // ---- Google sign-in: done in the system browser sheet (Google refuses web views), the token comes back as quickmessage://auth?idToken=…
         func userContentController(_ controller: WKUserContentController, didReceive message: WKScriptMessage) {
+            if message.name == "qmServer" {
+                if let m = message.body as? [String: Any], let u = m["url"] as? String, Config.setServer(u) {
+                    web?.load(URLRequest(url: Config.siteURL.appendingPathComponent("index.html")))      // the other server has its own accounts: start from its login screen
+                }
+                return
+            }
             if message.name == "qmNotify" { Notifier.shared.handle(message.body); return }
             if message.name == "qmUpdate" {
                 if let m = message.body as? [String: Any], let u = m["url"] as? String, let url = URL(string: u), url.host == Config.siteURL.host { UIApplication.shared.open(url) }

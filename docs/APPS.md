@@ -16,3 +16,6 @@ prepare (what changed? unpack an uploaded zip) ─┬─► site  (website → F
 
 The apps are built for the Firebase setup. They do **not** support the [private server](SERVER-PRIVATE.md).
 The Android and iPhone code is not compiled or run in the environment where it is written; the workflow is the first real build.
+
+## Private server
+Both apps can point at a [private Python server](SERVER-PRIVATE.md) instead of Firebase: on the login screen, **Use a private server instead of Firebase**. Android stores it in `Config`, iOS in UserDefaults `qmServer`. Untested on real devices.

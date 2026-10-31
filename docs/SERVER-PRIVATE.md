@@ -53,3 +53,12 @@ Open the hosted site, then in the browser console: `localStorage.setItem('qm-pri
 - Whole database in memory (JSON file on disk): fine for a household or a team, not for thousands of users. A write rewrites the file (debounced), so keep it on an SSD / SD card with care.
 - Single process; one thread per open connection.
 - Tested with the real site in Chromium (sign-up, chats, live messages, photos, files, the compatibility client). Not load-tested, not security-audited.
+
+## Android and iPhone apps
+The apps can use a private server too. On the login screen open **Use a private server instead of Firebase**, type the address (e.g. `http://192.168.1.20:8080`), press **Use this server** — the app reloads from your server. **Back to Firebase** undoes it. The native parts (notification polling, bubbles) talk to the server through a Firebase-REST look-alike at `/db/<path>.json?auth=<token>` (GET with `orderBy`/`limitToLast`, PUT, PATCH, POST, DELETE and `text/event-stream`), so they work unchanged. Both apps allow plain `http://` addresses for this.
+- Notifications come from the app's live connection / 60-second poll — there is no Google push in this mode.
+- Camera, microphone and calls need a **secure (HTTPS) address** in the WebView; on plain `http://` on a LAN, text, files and images work but calls do not. Put a reverse proxy with a certificate in front of the server for calls.
+- Not compiled or run on a device here; see `docs/APPS.md`.
+
+## Older browsers
+`legacy/` (the compatibility client) has a server-address box too; see [OLD-BROWSERS.md](OLD-BROWSERS.md).

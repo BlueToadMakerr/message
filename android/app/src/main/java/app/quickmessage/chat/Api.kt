@@ -14,7 +14,13 @@ object Config {
     // looks like https://quickmessage-ac953-default-rtdb.<region>.firebasedatabase.app (see Firebase console > Realtime Database).
     const val DB_URL = "https://quickmessage-ac953-default-rtdb.firebaseio.com"
     /** Where the website lives (the app is a native shell around it). Keep the trailing slash. */
-    const val SITE_URL = "https://msg.infinityfreeapp.com/"
+    const val DEFAULT_SITE = "https://msg.infinityfreeapp.com/"
+    /** A private server (server/qm_server.py) entered on the login screen: it serves the site and replaces Firebase. "" = Firebase. Ends with "/". */
+    @Volatile var privateServer: String = ""
+    /** The page the app shows. */
+    val SITE_URL: String get() = if (privateServer.isNotEmpty()) privateServer else DEFAULT_SITE
+    fun init(ctx: Context) { privateServer = ctx.getSharedPreferences("quickmessage", Context.MODE_PRIVATE).getString("server", "") ?: "" }
+    fun setServer(ctx: Context, url: String) { ctx.getSharedPreferences("quickmessage", Context.MODE_PRIVATE).edit().putString("server", url).apply(); privateServer = url }
 }
 
 class ApiException(val code: Int, message: String) : Exception(message)
@@ -22,6 +28,7 @@ class ApiException(val code: Int, message: String) : Exception(message)
 /** Persistent app state: the signed-in account, handed over by the website (js/app-bridge.js). */
 class Store(ctx: Context) {
     private val p = ctx.getSharedPreferences("quickmessage", Context.MODE_PRIVATE)
+    init { Config.init(ctx) }
     var refreshToken: String?
         get() = p.getString("rt", null)
         set(v) { p.edit().putString("rt", v).apply() }
@@ -42,8 +49,8 @@ class Store(ctx: Context) {
         set(v) { p.edit().putString("dburl", v).apply() }
     val signedIn: Boolean get() = uid != null && refreshToken != null
     fun forget() {
-        val n = notify; val d = p.getString("dburl", null)
-        val e = p.edit(); e.clear(); e.putBoolean("notify", n); if (d != null) e.putString("dburl", d); e.apply()
+        val n = notify; val d = p.getString("dburl", null); val sv = p.getString("server", null)
+        val e = p.edit(); e.clear(); e.putBoolean("notify", n); if (d != null) e.putString("dburl", d); if (sv != null) e.putString("server", sv); e.apply()
     }
 }
 
@@ -78,6 +85,12 @@ class Firebase(private val store: Store) {
         val cur = idToken
         if (cur != null && System.currentTimeMillis() - tokenAt < 50 * 60 * 1000) return cur
         val rt = store.refreshToken ?: throw ApiException(401, "not signed in")
+        if (Config.privateServer.isNotEmpty()) {            // private server: the session token is renewed by the server itself
+            val c = http(Config.privateServer + "api/auth/me", "GET"); c.setRequestProperty("Authorization", "Bearer $rt")
+            val j = JSONObject(read(c))
+            store.refreshToken = j.getString("token"); idToken = j.getString("token"); tokenAt = System.currentTimeMillis()
+            return idToken!!
+        }
         val j = JSONObject(read(http("https://securetoken.googleapis.com/v1/token?key=${Config.API_KEY}", "POST",
             "grant_type=refresh_token&refresh_token=$rt", form = true)))
         store.refreshToken = j.getString("refresh_token")
@@ -86,7 +99,8 @@ class Firebase(private val store: Store) {
         return idToken!!
     }
 
-    private fun url(path: String) = "${store.dbUrl}/${path.trim('/')}.json?auth=${token()}"
+    // A private server answers the same REST calls under /db/ (see server/qm_server.py), so nothing else in the app has to know the difference.
+    private fun url(path: String) = (if (Config.privateServer.isNotEmpty()) "${Config.privateServer}db" else store.dbUrl) + "/${path.trim('/')}.json?auth=${token()}"
 
     /** Returns the JSON value at [path] (JSONObject, String, Number, Boolean) or null. */
     fun get(path: String): Any? = parse(read(http(url(path), "GET")))

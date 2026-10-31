@@ -69,6 +69,19 @@
             <div id="dbMsg" class="muted" style="font-size:.8rem"></div>
           </div>
         </details>
+        <details id="srvOpt" class="db-opt">
+          <summary id="srvSum">Private server</summary>
+          <div class="stack" style="margin-top:.5rem">
+            <label class="lbl" for="srvUrl">Private server address</label>
+            <input id="srvUrl" class="field" type="url" inputmode="url" autocapitalize="off" autocomplete="off" spellcheck="false" placeholder="http://192.168.1.10:8080">
+            <p class="muted" style="margin:0;font-size:.8rem" id="srvHelp">Use your own QuickMessage server (the Python one in <code>server/</code>) instead of Firebase. It has its own accounts: sign up on it with an email and password. No Google sign-in there.</p>
+            <div class="row">
+              <button id="srvUse" class="btn primary grow" type="button">Use this server</button>
+              <button id="srvReset" class="btn grow" type="button">Use Firebase</button>
+            </div>
+            <div id="srvMsg" class="muted" style="font-size:.8rem"></div>
+          </div>
+        </details>
       </div>
     </section>
 

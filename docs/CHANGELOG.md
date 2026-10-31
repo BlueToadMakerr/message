@@ -2,6 +2,19 @@
 
 Newest first. Older rounds (1–43) are kept below exactly as they were written.
 
+## 1.45.0 — Round 45
+
+**Private servers everywhere**
+- Android and iOS apps can use a private Python server: new input box on the login page (**Use a private server instead of Firebase**), also available in the plain web page. The server got a Firebase-REST look-alike (`/db/<path>.json`, including streaming) so the native notification code works unchanged.
+- The compatibility (legacy) client has a **Server** box: a private server address, or **Firebase through `lite.php`**.
+- New `lite.php`: a PHP worker on the website host that answers like a private server but uses the Firebase database. Email + password accounts only (no Google sign-in), unencrypted text chats.
+- Very old browsers on the Firebase site are now sent to the compatibility client too.
+
+**Suggestions**
+- Account → Suggest a feature now also has a **Suggest on GitHub** link (https://github.com/BlueToadMakerr/message) next to the email option.
+
+**Honest notes**: Android/iOS changes and `lite.php` against a real Firebase project were not run here; the web parts and the Python server were tested.
+
 ## 1.44.0 — Round 44
 
 **Notifications and the host**

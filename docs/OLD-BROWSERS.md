@@ -9,13 +9,18 @@ The real app needs a modern browser (ES modules, promises, fetch, top-level awai
 - Encrypted chats (a Wii has no cryptography API): they show "encrypted" and cannot be read or written. Chats are created unencrypted by default.
 - Pictures, files, calls, plugins, notifications.
 
-## It needs the private server
-Old browsers also cannot speak today's HTTPS, so the compatibility client talks to a server on your own network over plain HTTP: the [private Python server](SERVER-PRIVATE.md). On the Wii open `http://<server-ip>:8080/` — it detects the browser and opens the compatibility version by itself.
+## Two ways to connect
+Old browsers cannot speak today's HTTPS, so the compatibility client has a **Server** box on its login page:
+- **Private server** — the address of your [private Python server](SERVER-PRIVATE.md), e.g. `http://192.168.1.20:8080` (plain HTTP works). On the Wii open that address: it detects the browser and opens the compatibility version by itself, using that server.
+- **Firebase (through lite.php)** — the address of the QuickMessage website that has `lite.php` (e.g. `https://msg.infinityfreeapp.com`). `lite.php` is a small PHP worker that behaves like a private server but stores everything in your Firebase database. You log in with the **email and password** of a Firebase account (no Google sign-in): either create one on the compatibility page, or add a password to your existing account in the normal app. The host must be reachable by the old browser (many free hosts force HTTPS, which a Wii cannot do; then use a private server, or put a plain-HTTP relay in front).
+The choice is remembered on the device. On a first visit the page guesses: a QuickMessage Python server answers `/api/ping`, a plain website does not.
+
+`lite.php` details: it uses the service account in `secrets.php`, checks chat membership itself, makes new chats **unencrypted**, never reads or writes encrypted chats, and a new-chat-by-email only works for verified accounts that allow being added by email (same rule as the app). Notifications for messages sent from here are sent by the Cloud Function as usual.
 
 ## Switching
 - Automatic: `js/legacy.js` (first script on `index.html`) tests for promises, fetch, URLSearchParams and `<script nomodule>` support. A browser that fails goes to `legacy/`. A browser that passes but whose scripts fail to start gets a "use the compatibility version" bar after 12 seconds.
 - Manual: Account → **Compatibility mode** ("use on this device", "switch automatically"), or add `?legacy=1` / `?legacy=0` to the address.
-- On the Firebase version, a very old browser only gets a plain explanation page (the lite client needs the private server's API).
+- On the Firebase version, a very old browser is sent to `legacy/` as well and uses `lite.php` (see above).
 
 ## Status
-Tested in Chromium with `fetch` and `Promise` removed; **not tested on a real Wii**. The lite page avoids ES5+ features (no `let`, arrows, `forEach`, `JSON` assumed) but I could not verify Opera 9's behaviour here. If something misbehaves, the whole client is one file: `legacy/index.html`.
+Tested in Chromium with `fetch` and `Promise` removed; **not tested on a real Wii**, and `lite.php` has only been syntax-checked and exercised for routing/auth (not against a real Firebase project). The lite page avoids ES5+ features (no `let`, arrows, `forEach`, `JSON` assumed) but I could not verify Opera 9's behaviour here. If something misbehaves, the whole client is one file: `legacy/index.html`.

@@ -1,1 +1,1 @@
-{ "version": "1.44.0", "apiVersion": 1, "released": "2026-10-30", "notes": "Notifications run through Firebase Cloud Functions (no PHP), site version check, developer-mode plugins." }
+{ "version": "1.45.0", "apiVersion": 1, "released": "2026-10-31", "notes": "Private servers in the Android/iOS apps, server address boxes, lite.php for old browsers on Firebase, GitHub suggestions." }

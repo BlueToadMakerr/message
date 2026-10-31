@@ -61,6 +61,7 @@ class MainActivity : Activity() {
     @SuppressLint("SetJavaScriptEnabled", "JavascriptInterface")
     @Suppress("DEPRECATION")
     override fun onCreate(b: Bundle?) {
+        Config.init(this)
         super.onCreate(b)
         instance = this
         root = FrameLayout(this).apply { setBackgroundColor(barColor) }
@@ -697,6 +698,15 @@ class MainActivity : Activity() {
             if (!Regex("^[A-Za-z][\\w]*(\\.[\\w]+)+$").matches(pkg) || !(url.startsWith("https://") || url.startsWith("http://"))) return@runOnUiThread
             try { startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)).setPackage(pkg).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) }
             catch (_: Exception) { try { startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) } catch (_: Exception) {} }
+        }
+        /** The login screen's "Private server" box: "" = back to Firebase. The server serves the site itself, so the app simply opens it. */
+        @JavascriptInterface fun setServer(url: String) {
+            var u = url.trim()
+            if (u.isNotEmpty() && !Regex("^https?://[^\\s/@]+(/[^\\s]*)?$").matches(u)) return
+            if (u.isNotEmpty() && !u.endsWith("/")) u += "/"
+            Crypt.forget(); Store(this@MainActivity).forget(); NotifyService.stop(this@MainActivity)
+            Config.setServer(this@MainActivity, u)
+            runOnUiThread { web.loadUrl(Config.SITE_URL + "index.html") }
         }
         @JavascriptInterface fun setDbUrl(url: String) {
             val s = Store(this@MainActivity)

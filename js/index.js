@@ -33,6 +33,7 @@ import { openPreview } from "./msgcrypto.js";
 import { requireVerified, isVerified, refreshVerified, resendVerification, watchVerified } from "./verify.js";
 import { resolveRecipient } from "./recipient.js";
 
+import "./serverbox.js";
 window.__qmBooted = true;      // js/legacy.js: the app's scripts did start
 hydrateIcons();
 

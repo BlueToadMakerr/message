@@ -57,3 +57,6 @@ docs/                    documentation
 
 ## Credits and licence
 Made with AI. Third-party services used by the default setup: Firebase, public STUN servers, anonymous file hosts (Litterbox, oshi.at, tmpfile.link, file.io, 0x0.st, tempfile.org).
+
+## Suggestions and contact
+Ideas and bug reports: open an issue at https://github.com/BlueToadMakerr/message/issues or email bluetmaker@gmail.com (both are also linked in Account → Suggest a feature).

@@ -62,6 +62,8 @@ targets:
           - UIInterfaceOrientationLandscapeRight
         UIBackgroundModes:
           - audio
+        NSAppTransportSecurity:
+          NSAllowsArbitraryLoads: true                  # a private server is usually plain http on the local network
         NSCameraUsageDescription: QuickMessage uses the camera for video calls and to send photos.
         NSMicrophoneUsageDescription: QuickMessage uses the microphone for calls and voice messages.
         NSPhotoLibraryUsageDescription: QuickMessage lets you pick photos and videos to send.

@@ -24,14 +24,23 @@ button{font-size:18px;padding:6px 14px;margin:3px 3px 3px 0}
 </head>
 <body>
 <h1>QuickMessage</h1>
-<div class="note">Compatibility mode for very old browsers (works with a private server). <a href="../index.html" onclick="try{localStorage.removeItem('qm-legacy')}catch(e){}">Open the normal version</a></div>
+<div class="note">Compatibility mode for very old browsers. Works with a private server or with the Firebase version of this site. <a href="../index.html" onclick="try{localStorage.removeItem('qm-legacy')}catch(e){}">Open the normal version</a></div>
 <div id="err"></div>
 <div id="v"></div>
 <script type="text/javascript">
 // Plain ES3 on purpose: no modules, promises, fetch, flexbox, JSON object or arrow functions (runs on Opera 9 / Nintendo Wii, old IE, old Android).
 var BASE = location.href.replace(/legacy\/[^\/]*(\?.*)?$/, '').replace(/\/$/, '');
 var token = '', me = '', chat = null, chatName = '', lastKey = '', timer = null, busy = false;
-try { token = localStorage.getItem('qm-ltoken') || ''; } catch (e) {}
+var mode = '', server = '';      // mode: 'private' (a QuickMessage Python server) or 'firebase' (the lite.php worker next to the hosted site)
+try { token = localStorage.getItem('qm-ltoken') || ''; mode = localStorage.getItem('qm-lmode') || ''; server = localStorage.getItem('qm-lserver') || ''; } catch (e) {}
+if (mode !== 'firebase' && mode !== 'private') mode = '';      // '' = not chosen yet: detected below
+function base() { return (server || BASE).replace(/\/+$/, ''); }
+function cleanUrl(u) {
+  u = String(u || '').replace(/^\s+|\s+$/g, '');
+  if (!u) return '';
+  if (!/^https?:\/\//i.test(u)) u = 'http://' + u;
+  return u.replace(/[?#].*$/, '').replace(/\/(api|legacy|lite\.php)(\/.*)?$/, '').replace(/\/+$/, '');
+}
 
 function esc(s) { return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;'); }
 function parse(t) { try { if (window.JSON && JSON.parse) return JSON.parse(t); } catch (e) { return null; } try { return eval('(' + t + ')'); } catch (e2) { return null; } }
@@ -44,12 +53,15 @@ function str(o) {
 }
 function api(name, body, cb) {
   var x = window.XMLHttpRequest ? new XMLHttpRequest() : new ActiveXObject('Microsoft.XMLHTTP');
-  x.open(body === null ? 'GET' : 'POST', BASE + '/api/' + name + (name.indexOf('?') < 0 ? '?' : '&') + '_=' + (new Date()).getTime(), true);
+  var url = mode === 'firebase' ? base() + '/lite.php?r=' + name.replace('?', '&') + (token ? '&token=' + encodeURIComponent(token) : '')     // some free hosts drop the Authorization header, so lite.php also accepts ?token=
+    : base() + '/api/' + name + (name.indexOf('?') < 0 ? '?' : '&');
+  x.open(body === null ? 'GET' : 'POST', url + (url.indexOf('?') < 0 ? '?' : '&') + '_=' + (new Date()).getTime(), true);
   if (token) x.setRequestHeader('Authorization', 'Bearer ' + token);
   if (body !== null) x.setRequestHeader('Content-Type', 'application/json');
   x.onreadystatechange = function () {
     if (x.readyState !== 4) return;
     var j = parse(x.responseText) || {};
+    if (x.status === 0) { cb(0, { error: 'Cannot reach ' + base() + '. Check the address in "Server" below.' }); return; }
     if (x.status === 401 && token) { logout(); return; }
     cb(x.status, j);
   };
@@ -62,7 +74,20 @@ function stop() { if (timer) { clearTimeout(timer); timer = null; } }
 function loginView() {
   stop(); chat = null;
   show('<div class="box"><b>Log in or create an account</b><br>Email<br><input id="em" type="text" autocapitalize="off"><br>Password<br><input id="pw" type="password"><br>' +
-    '<button onclick="doAuth(\'login\')">Log in</button><button onclick="doAuth(\'signup\')">Sign up</button></div>');
+    '<button onclick="doAuth(\'login\')">Log in</button><button onclick="doAuth(\'signup\')">Sign up</button>' +
+    '<div class="note">' + (mode === 'firebase' ? 'Firebase account (email + password; there is no Google sign-in here).' : 'Private server account.') + '</div></div>' +
+    '<div class="box"><b>Server</b><br>' +
+    '<label><input type="radio" name="md" id="md1"' + (mode === 'private' ? ' checked="checked"' : '') + '> Private server</label> ' +
+    '<label><input type="radio" name="md" id="md2"' + (mode === 'firebase' ? ' checked="checked"' : '') + '> Firebase (through lite.php)</label><br>' +
+    'Address<br><input id="sv" type="text" autocapitalize="off" value="' + esc(server) + '"><br>' +
+    '<button onclick="saveServer()">Save</button><div class="note">Private server: the address of your QuickMessage server, e.g. http://192.168.1.20:8080 (empty = the server this page came from). ' +
+    'Firebase: the address of the QuickMessage website that has lite.php, e.g. https://msg.infinityfreeapp.com (empty = this site).</div></div>');
+}
+function saveServer() {
+  server = cleanUrl(document.getElementById('sv').value);
+  mode = document.getElementById('md2').checked ? 'firebase' : 'private';
+  try { localStorage.setItem('qm-lmode', mode); localStorage.setItem('qm-lserver', server); localStorage.removeItem('qm-ltoken'); } catch (e) {}
+  token = ''; setErr('Saved. Now using ' + (mode === 'firebase' ? 'Firebase' : 'the private server') + ' at ' + base() + '.'); loginView();
 }
 function doAuth(kind) {
   setErr('');
@@ -124,7 +149,12 @@ function send() {
   t.value = '';
   api('lite/send', { chat: chat, text: v }, function (st, j) { if (!j.ok) setErr('Message not sent (encrypted chat?).'); else { stop(); poll(false); } });
 }
-if (token) listView(); else loginView();
+function start() { if (token) listView(); else loginView(); }
+if (mode) start();
+else {      // first visit: a QuickMessage Python server answers /api/ping; the Firebase website does not
+  mode = 'private';
+  api('ping', null, function (st, j) { if (!(j && j.server === 'quickmessage-private')) mode = 'firebase'; try { localStorage.setItem('qm-lmode', mode); } catch (e) {} start(); });
+}
 </script>
 <noscript>This page needs JavaScript.</noscript>
 </body>

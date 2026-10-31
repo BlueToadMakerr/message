@@ -25,6 +25,7 @@ class BubbleActivity : Activity() {
 
     @SuppressLint("SetJavaScriptEnabled")
     override fun onCreate(b: Bundle?) {
+        Config.init(this)
         super.onCreate(b)
         chat = intent?.getStringExtra(MainActivity.EXTRA_CHAT).orEmpty()
         if (!Regex("^[\\w-]{1,64}$").matches(chat)) { finish(); return }
