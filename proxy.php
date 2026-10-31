@@ -1,8 +1,8 @@
 <?php
 // "Private-server look-alike" for the Firebase setup. The compatibility client (legacy/) talks to this exactly like it talks to server/qm_server.py,
 // so a very old browser can use the Firebase database with an email + password account (no Google sign-in).
-//   POST lite.php?r=auth/login|auth/signup   {email, password}  -> {token}
-//   GET  lite.php?r=lite/chats | lite/messages&chat=&after=      POST lite.php?r=lite/send | lite/newchat
+//   POST proxy.php?r=auth/login|auth/signup   {email, password}  -> {token}
+//   GET  proxy.php?r=lite/chats | lite/messages&chat=&after=      POST proxy.php?r=lite/send | lite/newchat
 // Accounts are real Firebase Auth email/password accounts. Someone who only ever used Google sign-in must first add a password in the app (Account).
 // Messages are plain text in chats that are NOT end-to-end encrypted (an old browser has no cryptography). Uses the service account in secrets.php.
 declare(strict_types=1);
@@ -11,7 +11,7 @@ require __DIR__ . '/lib.php';
 ini_set('display_errors', '0');
 set_error_handler(function (int $no, string $msg, string $file, int $line) { if (!(error_reporting() & $no)) return false; throw new ErrorException($msg, 0, $no, $file, $line); });
 set_exception_handler(function (Throwable $e) {
-    error_log('lite.php: ' . $e->getMessage() . ' @' . basename($e->getFile()) . ':' . $e->getLine());
+    error_log('proxy.php: ' . $e->getMessage() . ' @' . basename($e->getFile()) . ':' . $e->getLine());
     if (!headers_sent()) { http_response_code(500); header('Content-Type: application/json; charset=utf-8'); }
     echo json_encode(['error' => 'Server error: ' . $e->getMessage() . ' (' . basename($e->getFile()) . ':' . $e->getLine() . ')']);
 });
@@ -21,6 +21,7 @@ header('Access-Control-Allow-Methods: GET, POST, OPTIONS');
 if (($_SERVER['REQUEST_METHOD'] ?? '') === 'OPTIONS') { http_response_code(204); exit; }
 
 $config = require __DIR__ . '/config.php';
+if (!is_file(__DIR__ . '/secrets.php')) qm_out(503, ['error' => 'secrets.php is missing on this server. proxy.php needs it: in Firebase console -> Project settings -> Service accounts -> Generate new private key, put the key in secrets.php (see secrets.php format in docs/SETUP-FIREBASE.md) and upload it next to proxy.php. The deploy never uploads it.']);
 $sa = require __DIR__ . '/secrets.php';
 $route = (string)($_GET['r'] ?? '');
 $body = json_decode((string)file_get_contents('php://input'), true);
@@ -63,18 +64,11 @@ function lt_update(array $updates): bool {
     $r = qm_http('PATCH', "$db/.json", ['Authorization: Bearer ' . lt_db_token(), 'Content-Type: application/json'], json_encode($updates, JSON_UNESCAPED_UNICODE | JSON_FORCE_OBJECT));
     return $r['code'] >= 200 && $r['code'] < 300;
 }
-/** Several GETs at once: [key => path-with-query] -> [key => decoded json]. */
+/** Several GETs: [key => path-with-query] -> [key => decoded json]. Sequential on purpose: many free hosts disable curl_multi_*. */
 function lt_multi(array $paths): array {
     global $db;
-    $tok = lt_db_token(); $mh = curl_multi_init(); $hs = [];
-    foreach ($paths as $k => $p) {
-        $ch = curl_init("$db/$p"); curl_setopt_array($ch, [CURLOPT_RETURNTRANSFER => true, CURLOPT_TIMEOUT => 15, CURLOPT_HTTPHEADER => ['Authorization: Bearer ' . $tok]]);
-        curl_multi_add_handle($mh, $ch); $hs[$k] = $ch;
-    }
-    do { $st = curl_multi_exec($mh, $run); if ($run) curl_multi_select($mh, 1.0); } while ($run && $st === CURLM_OK);
-    $out = [];
-    foreach ($hs as $k => $ch) { $out[$k] = json_decode((string)curl_multi_getcontent($ch), true); curl_multi_remove_handle($mh, $ch); curl_close($ch); }
-    curl_multi_close($mh);
+    $tok = lt_db_token(); $out = [];
+    foreach ($paths as $k => $p) $out[$k] = qm_http('GET', "$db/$p", ['Authorization: Bearer ' . $tok])['json'];
     return $out;
 }
 function lt_push_id(): string {

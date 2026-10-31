@@ -31,16 +31,16 @@ button{font-size:18px;padding:6px 14px;margin:3px 3px 3px 0}
 // Plain ES3 on purpose: no modules, promises, fetch, flexbox, JSON object or arrow functions (runs on Opera 9 / Nintendo Wii, old IE, old Android).
 var BASE = location.href.replace(/legacy\/[^\/]*(\?.*)?$/, '').replace(/\/$/, '');
 var token = '', me = '', chat = null, chatName = '', lastKey = '', timer = null, busy = false;
-var mode = '', server = '', dbUrl = '';      // mode: 'private' (a QuickMessage Python server) or 'firebase' (the lite.php worker next to the hosted site)
-try { token = localStorage.getItem('qm-ltoken') || ''; mode = localStorage.getItem('qm-lmode') || ''; server = localStorage.getItem('qm-lserver') || ''; dbUrl = localStorage.getItem('qm-ldb') || localStorage.getItem('qm-db-url') || ''; if (dbUrl === 'default') dbUrl = ''; } catch (e) {}      // qm-db-url: the database picked in the normal app on this same site
+var mode = '', server = '', dbUrl = '';      // mode: 'private' (a QuickMessage Python server) or 'firebase' (the proxy.php worker next to the hosted site)
+try { token = localStorage.getItem('qm-ltoken') || ''; mode = localStorage.getItem('qm-lmode') || ''; server = localStorage.getItem('qm-lserver') || ''; dbUrl = localStorage.getItem('qm-db-url') || ''; } catch (e) {}      // qm-db-url: the database picked in the normal app on this same site
 if (mode !== 'firebase' && mode !== 'private') mode = '';      // '' = not chosen yet: detected below
-var DEFAULT_DB = 'https://quickmessage-ac953-default-rtdb.firebaseio.com';
 function base() { return (server || BASE).replace(/\/+$/, ''); }
+function proxyUrl() { return /\.php$/i.test(server) ? server : base() + '/proxy.php'; }      // blank address = proxy.php in the site's root
 function cleanUrl(u) {
   u = String(u || '').replace(/^\s+|\s+$/g, '');
   if (!u) return '';
   if (!/^https?:\/\//i.test(u)) u = 'http://' + u;
-  return u.replace(/[?#].*$/, '').replace(/\/(api|legacy|lite\.php)(\/.*)?$/, '').replace(/\/+$/, '');
+  return u.replace(/[?#].*$/, '').replace(/\/(api|legacy)(\/.*)?$/, '').replace(/\/+$/, '');
 }
 
 function esc(s) { return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;'); }
@@ -54,7 +54,7 @@ function str(o) {
 }
 function api(name, body, cb) {
   var x = window.XMLHttpRequest ? new XMLHttpRequest() : new ActiveXObject('Microsoft.XMLHTTP');
-  var url = mode === 'firebase' ? base() + '/lite.php?r=' + name.replace('?', '&') + (dbUrl ? '&db=' + encodeURIComponent(dbUrl) : '') + (token ? '&token=' + encodeURIComponent(token) : '')     // some free hosts drop the Authorization header, so lite.php also accepts ?token=
+  var url = mode === 'firebase' ? proxyUrl() + '?r=' + name.replace('?', '&') + (dbUrl ? '&db=' + encodeURIComponent(dbUrl) : '') + (token ? '&token=' + encodeURIComponent(token) : '')     // some free hosts drop the Authorization header, so proxy.php also accepts ?token=
     : base() + '/api/' + name + (name.indexOf('?') < 0 ? '?' : '&');
   x.open(body === null ? 'GET' : 'POST', url + (url.indexOf('?') < 0 ? '?' : '&') + '_=' + (new Date()).getTime(), true);
   if (token) x.setRequestHeader('Authorization', 'Bearer ' + token);
@@ -79,15 +79,13 @@ function loginView() {
     '<div class="note">' + (mode === 'firebase' ? 'Firebase account (email + password; there is no Google sign-in here).' : 'Private server account.') + '</div></div>' +
     '<div class="box"><b>Server</b><br>' +
     '<label><input type="radio" name="md" id="md1"' + (mode === 'private' ? ' checked="checked"' : '') + '> Private server</label> ' +
-    '<label><input type="radio" name="md" id="md2"' + (mode === 'firebase' ? ' checked="checked"' : '') + '> Firebase (through lite.php)</label><br>' +
+    '<label><input type="radio" name="md" id="md2"' + (mode === 'firebase' ? ' checked="checked"' : '') + '> Firebase (through proxy.php)</label><br>' +
     'Address<br><input id="sv" type="text" autocapitalize="off" value="' + esc(server) + '"><br>' +
-    (mode === 'firebase' ? 'Database (empty = the default one)<br><input id="dbu" type="text" autocapitalize="off" value="' + esc(dbUrl) + '"><br>' : '') +
     '<button onclick="saveServer()">Save</button><div class="note">Private server: the address of your QuickMessage server, e.g. http://192.168.1.20:8080 (empty = the server this page came from). ' +
-    'Firebase: the address of the QuickMessage website that has lite.php, e.g. https://msg.infinityfreeapp.com (empty = this site).</div></div>');
+    'Firebase: the address of the proxy, e.g. https://msg.infinityfreeapp.com/proxy.php (empty = proxy.php in the root of this site).</div></div>');
 }
 function saveServer() {
   server = cleanUrl(document.getElementById('sv').value);
-  var dbe = document.getElementById('dbu'); if (dbe) { dbUrl = String(dbe.value).replace(/^\s+|\s+$/g, '').replace(/\/+$/, ''); if (dbUrl === DEFAULT_DB) dbUrl = ''; try { localStorage.setItem('qm-ldb', dbUrl || 'default'); } catch (e) {} }
   mode = document.getElementById('md2').checked ? 'firebase' : 'private';
   try { localStorage.setItem('qm-lmode', mode); localStorage.setItem('qm-lserver', server); localStorage.removeItem('qm-ltoken'); } catch (e) {}
   token = ''; setErr('Saved. Now using ' + (mode === 'firebase' ? 'Firebase' : 'the private server') + ' at ' + base() + '.'); loginView();

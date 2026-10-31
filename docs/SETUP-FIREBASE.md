@@ -26,3 +26,18 @@ See [APPS.md](APPS.md).
 
 ## 5. Database usage
 See [DATABASE-USAGE.md](DATABASE-USAGE.md).
+
+## secrets.php (service account)
+`secrets.php` is never committed and the GitHub deploy never uploads it, so you add it once by hand (File Manager / FTP) next to `index.html`. It is a PHP file that returns the service-account key as an array:
+
+```php
+<?php
+return [
+  "type" => "service_account",
+  "project_id" => "YOUR-PROJECT",
+  "private_key" => "-----BEGIN PRIVATE KEY-----\n...\n-----END PRIVATE KEY-----\n",
+  "client_email" => "firebase-adminsdk-xxxxx@YOUR-PROJECT.iam.gserviceaccount.com",
+  "token_uri" => "https://oauth2.googleapis.com/token",
+];
+```
+Get the values from Firebase console → Project settings → Service accounts → Generate new private key (the downloaded JSON has the same fields). It is needed by `proxy.php` (compatibility client on Firebase) and the optional helpers above. Without it those features answer "secrets.php is missing".

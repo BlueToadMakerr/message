@@ -1,6 +1,6 @@
 // Runs first on index.html, written in plain old JavaScript (ES3) so even a Nintendo Wii browser can execute it.
 // Very old browsers can't run the real app (it uses modules, promises, fetch...). On a private server they are sent to legacy/ (a small text chat);
-// on the Firebase site they are sent there too (the legacy client talks to lite.php). Otherwise they get a plain explanation. Switch by hand: Account -> Compatibility mode, or add ?legacy=1 / ?legacy=0 to the address.
+// on the Firebase site they are sent there too (the legacy client talks to proxy.php). Otherwise they get a plain explanation. Switch by hand: Account -> Compatibility mode, or add ?legacy=1 / ?legacy=0 to the address.
 (function () {
   var q = location.search, force = false, auto = true, priv = window.__QM_PRIVATE === 1;
   try {
