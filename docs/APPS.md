@@ -21,7 +21,7 @@ The Android and iPhone code is not compiled or run in the environment where it i
 Both apps can point at a [private Python server](SERVER-PRIVATE.md) instead of Firebase: on the login screen, **Use a private server instead of Firebase**. Android stores it in `Config`, iOS in UserDefaults `qmServer`. Untested on real devices.
 
 ## Android Auto
-Messages: new-message notifications are `MessagingStyle` notifications with the two actions Android Auto needs — a voice **Reply** and **Mark as read**, both set not to open the app — and `res/xml/automotive_app_desc.xml` declares the app as a notification-based messaging app. In the car the messages are read aloud and you can answer by voice (not in end-to-end encrypted chats that this phone has no key for, same as the phone's own Reply button).
+Messages: new-message notifications are `MessagingStyle` notifications with the two actions Android Auto needs — a voice **Reply** and **Mark as read** (both run in the background service, so they do not open the app) — and `res/xml/automotive_app_desc.xml` declares the app as a notification-based messaging app. In the car the messages are read aloud and you can answer by voice (not in end-to-end encrypted chats that this phone has no key for, same as the phone's own Reply button).
 
 Calls: ringing and running calls are also registered with Android's Telecom framework as self-managed calls (`Telecomm.kt`, `QmConnectionService`), next to the existing incoming-call / ongoing-call notifications. The car, a Bluetooth headset or the system can then show the call, **answer**, **decline**, **hang up** and **mute**; those requests do exactly what the notification buttons do. If the system refuses (old Android, missing permission) nothing else changes.
 

@@ -548,7 +548,7 @@ class NotifyService : Service() {
         val readPi = PendingIntent.getService(this, ("read$chatId").hashCode(), Intent(this, NotifyService::class.java).setAction(ACT_READ).putExtra("chat", chatId), PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
         // Android Auto reads the messages aloud and then uses these two "semantic" actions (reply by voice, mark as read) without opening the app
         val readB = Notification.Action.Builder(ic(android.R.drawable.ic_menu_view), "Mark as read", readPi)
-        if (Build.VERSION.SDK_INT >= 28) { readB.setSemanticAction(Notification.Action.SEMANTIC_ACTION_MARK_AS_READ); readB.setShowsUserInterface(false) }
+        if (Build.VERSION.SDK_INT >= 28) readB.setSemanticAction(Notification.Action.SEMANTIC_ACTION_MARK_AS_READ)
         val readAct = readB.build()
         val isRead = last?.id != null && readIds[chatId] == last.id     // already read: nothing left to mark
         if (encChats[chatId] == true && Crypt.cached(chatId) == null) { if (!isRead) b.addAction(readAct); nm().notify(chatId.hashCode(), b.build()); return }   // encrypted and no key here: no reply
@@ -557,7 +557,7 @@ class NotifyService : Service() {
         val pi = PendingIntent.getService(this, chatId.hashCode(), Intent(this, NotifyService::class.java).setAction(ACT_REPLY).putExtra("chat", chatId), flags)
         val act = Notification.Action.Builder(android.graphics.drawable.Icon.createWithResource(this, android.R.drawable.ic_menu_send), "Reply", pi)
             .addRemoteInput(ri).setAllowGeneratedReplies(true)
-        if (Build.VERSION.SDK_INT >= 28) { act.setSemanticAction(Notification.Action.SEMANTIC_ACTION_REPLY); act.setShowsUserInterface(false) }
+        if (Build.VERSION.SDK_INT >= 28) act.setSemanticAction(Notification.Action.SEMANTIC_ACTION_REPLY)
         b.addAction(act.build())
         if (!isRead) b.addAction(readAct)
         nm().notify(chatId.hashCode(), b.build())
