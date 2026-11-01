@@ -1,4 +1,4 @@
-import { devCard, devGrid, devPill, devBar, devWho, devSection, devHistRow, devLoop, rateSelect, devRate, spanSelect, holdGuard, histClear } from "../dev.js";
+import { pluginDevCards, devCard, devGrid, devPill, devBar, devWho, devSection, devHistRow, devLoop, rateSelect, devRate, spanSelect, holdGuard, histClear } from "../dev.js";
 import { getProfile } from "../users.js";
 // Developer mode: a floating panel with live call statistics (WebRTC getStats) and the raw call state. Opened by the small { } button in the call.
 const prev = new Map();            // "linkId|ssrc|dir" -> { t, bytes, frames }
@@ -207,6 +207,7 @@ export async function visualCall(S, snap) {
     cards.push(devCard("", rows, { head: devWho((p && p.displayName) || "Someone", p && p.pfp, [ses.device, sid.slice(0, 6)].filter(Boolean).join(" \u00b7 ")) }));
   }
   if (cards.length === 1) cards.push(devCard("Nobody else yet", [["Waiting", "Stats appear when someone joins"]]));
+  cards.push(...pluginDevCards("call"));          // cards added by plugins
   return devGrid(cards);
 }
 

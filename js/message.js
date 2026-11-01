@@ -1334,7 +1334,7 @@ async function urlCard(url, enc) {
 async function showMessageDev(key, msg) {
   const stored = rawOf.get(msg) || msg;
   const raw = () => ({ key, path: `${chatPath}/messages/${key}`, stored, shown: msg, fromMe: msg.fromUid === me, pending: pendingKeys.has(key) });
-  await showDev("Message " + key.slice(-6), { raw, visual: async () => {
+  await showDev("Message " + key.slice(-6), { raw, scope: "message", visual: async () => {
     const p = await getProfile(msg.fromUid).catch(() => null);
     const t = fmtDate, srv = keyTime(key), sent = msg.timestamp;
     const readers = await Promise.all(Object.entries(readReceipts || {}).filter(([u, k]) => u !== msg.fromUid && String(k) >= key).map(async ([u]) => [u, await getProfile(u).catch(() => null)]));
@@ -1368,7 +1368,7 @@ $("chatOptionsBtn").before(devButton("{ }", async () => {
       serverClockOffsetMs: srvOff, env: envInfo()
     };
   };
-  await showDev("Chat " + chatId.slice(0, 8), { raw: rawData, every: 0, visual: async () => {
+  await showDev("Chat " + chatId.slice(0, 8), { raw: rawData, every: 0, scope: "chat", visual: async () => {
     const els = [...messagesDiv.querySelectorAll(".msg")];
     const locked = [...msgData.values()].filter(m => m && m._locked), lost = locked.filter(m => m._lost).length;
     const people = await Promise.all(participants.map(async u => ({ u, p: await getProfile(u).catch(() => null) })));

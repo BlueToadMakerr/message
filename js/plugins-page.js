@@ -2,7 +2,7 @@ import { hydrateIcons, toast, confirmDialog, copyText } from "./ui.js";
 import { devOn, setDev } from "./dev.js";
 import { loadPlugins, savePlugins, normalize, newPluginId, PERMISSIONS, pluginIssues, isBlocked, checkPluginUpdate } from "./plugin-store.js";
 import { SITE_VERSION, API_VERSION, checkSiteVersion, lastCheck } from "./version.js";
-import { QM } from "./embed.js";
+import { QM, markReady } from "./embed.js";
 
 hydrateIcons();
 const $ = id => document.getElementById(id);
@@ -15,6 +15,9 @@ const TEMPLATES = {
   hello: { label: "Hello (toast)", perms: ["toast"], code: "await qm.toast('Hello from my plugin! Site ' + qm.version, 'success');\nqm.on('chat-open', () => qm.toast('You opened a chat'));\n" },
   theme: { label: "Restyle the site (CSS)", perms: ["style"], code: "await qm.style.set(`\\n  .bubble, .msg .bubble { border-radius: 4px !important; }\\n  :root { --accent: #e11d48; }\\n`);\n" },
   counter: { label: "Message counter (panel)", perms: ["panel", "messages", "chat", "toast"], code: "let n = Number(await qm.storage.get('count')) || 0;\nconst show = () => qm.panel.set({ title: 'Messages seen', lines: ['Total: ' + n] , buttons: ['Reset'] });\nshow();\nqm.on('message', async m => { n++; await qm.storage.set('count', n); show(); });\nqm.on('panel-button', async () => { n = 0; await qm.storage.set('count', 0); show(); });\n" },
+  find: { label: "Find a message (button that scrolls the chat)", perms: ["buttons", "page", "toast"], code: "await qm.buttons.add({ id: 'find', where: 'chat', label: 'Find', title: 'Scroll up until a message is found' });\nqm.on('button', async b => {\n  if (b.id !== 'find') return;\n  const text = await qm.ask('Find a message', 'Text to look for');\n  if (!text) return;\n  const r = await qm.page.scrollUntil({ text, direction: 'up', maxMs: 60000 });   // loads older messages on the way\n  qm.toast(r.found ? 'Found it' : 'Not found (' + r.reason + ')', r.found ? 'success' : 'error');\n});\n" },
+  callinfo: { label: "Extra call info (developer view)", perms: ["devinfo", "calls"], code: "const paint = async () => {\n  const c = await qm.calls.state();\n  let extra = [];\n  if (c.joined) { try { const s = await qm.dev.read('call'); extra = [['Connections', Object.keys(s.links || {}).length], ['Online', s.online === false ? 'no' : 'yes', s.online === false ? 'bad' : 'ok']]; } catch (e) {} }\n  await qm.dev.addCard('call', { id: 'extra', title: 'Call extras', rows: [['In a call', c.joined ? 'yes' : 'no', c.joined ? 'ok' : ''], ...extra] });\n};\nqm.on('dev-view', paint); qm.on('call-state', paint); paint();\n" },
+  appinfo: { label: "Extra app info (developer view)", perms: ["devinfo"], code: "const paint = async () => {\n  const env = await qm.dev.read('env');\n  await qm.dev.addCard('app', { id: 'env', title: 'Quick facts', rows: [['Online', env.online ? 'yes' : 'no', env.online ? 'ok' : 'bad'], ['Screen', env.viewport.w + ' x ' + env.viewport.h], ['Memory (MB)', env.memoryMB ?? 'n/a']] });\n};\nqm.on('dev-view', paint); paint();\n" },
   quick: { label: "Quick reply buttons", perms: ["panel", "chat"], code: "qm.on('chat-open', () => qm.panel.set({ title: 'Quick text', buttons: ['On my way', 'Call you later', 'Thanks!'] }));\nqm.on('chat-close', () => qm.panel.hide());\nqm.on('panel-button', b => qm.chat.insertText(b.label));\n" }
 };
 
@@ -116,3 +119,4 @@ $("verCheck").onclick = async () => { const r = await checkSiteVersion(); verLin
 $("turnOn").onclick = () => { setDev(true); location.reload(); };
 $("offCard").hidden = devOn();
 verLine(); paintList(); setInterval(() => { if (!editing && editing !== "") paintList(); }, 4000);
+markReady();   // tells the shell this frame booted (otherwise the "still loading" hint and the frame watchdog stay on)

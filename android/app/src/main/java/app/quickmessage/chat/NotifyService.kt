@@ -21,7 +21,7 @@ class NotifyService : Service() {
         private const val CH_MSG = "messages"
         private const val CH_CALL = "calls2"
         private const val ACT_REPLY = "app.quickmessage.REPLY"
-        private const val ACT_DECLINE = "app.quickmessage.DECLINE"
+        const val ACT_DECLINE = "app.quickmessage.DECLINE"
         private const val ACT_READ = "app.quickmessage.READ"
         private const val KEY_REPLY = "reply"
         private const val ID_FG = 1
@@ -40,8 +40,8 @@ class NotifyService : Service() {
         @Volatile var callUseDeaf = false          // the notification's 3rd button is "Deafen" instead of "Share screen" (Android allows 3 buttons, one is taken by Hang up)
         private const val ACT_DEAF = "app.quickmessage.CALL_DEAF"
         private const val ACT_SCREEN = "app.quickmessage.CALL_SCREEN"
-        private const val ACT_MIC = "app.quickmessage.CALL_MIC"
-        private const val ACT_HANGUP = "app.quickmessage.CALL_HANGUP"
+        const val ACT_MIC = "app.quickmessage.CALL_MIC"
+        const val ACT_HANGUP = "app.quickmessage.CALL_HANGUP"
 
         /** The call page reports its name and mic / screen-share state; the ongoing-call notification follows it. */
         fun setCallInfo(ctx: Context, title: String, muted: Boolean, screen: Boolean, canScreen: Boolean, photo: String, startMs: Long) {
@@ -72,6 +72,7 @@ class NotifyService : Service() {
         /** Tells the service a call is up, so it can hold the camera/microphone foreground types (Android blocks background capture otherwise). */
         fun setCall(ctx: Context, on: Boolean) {
             inCall = on
+            if (on) Telecomm.active(ctx, callTitle) else Telecomm.end(null, rejected = false)       // the system's call list (and Android Auto) follow the call
             if (!on) { callBmp = null; callPhoto = ""; callTitle = ""; callWho = "" }
             else if (callBmp == null && callTitle.isNotBlank()) Thread { callBmp = Avatars.load(callPhoto.ifBlank { null }, callTitle); setCall(ctx, true) }.start()
             val i = Intent(ctx, NotifyService::class.java).putExtra("call", on)
@@ -397,6 +398,7 @@ class NotifyService : Service() {
         val n = b.build()
         n.flags = n.flags or Notification.FLAG_INSISTENT or Notification.FLAG_NO_CLEAR        // the ringtone keeps looping until you act
         nm().notify(rid, n)
+        Telecomm.incoming(this, chatId, if (chatGroup[chatId] == true) "$who · ${chatLabel[chatId]}" else who)       // tells the system (and the car) about the call
     }
 
     private val seenDeclines = java.util.Collections.newSetFromMap(ConcurrentHashMap<String, Boolean>())
@@ -419,6 +421,7 @@ class NotifyService : Service() {
     private fun handleDecline(i: Intent) {
         val chat = i.getStringExtra("chat") ?: return
         nm().cancel(("ring$chat").hashCode())
+        Telecomm.end(chat, rejected = true)
         val me = store.uid ?: return
         Thread {
             try {
@@ -524,7 +527,7 @@ class NotifyService : Service() {
             val meP = android.app.Person.Builder().setName("You").apply { store.uid?.let { personBmp[it] }?.let { setIcon(android.graphics.drawable.Icon.createWithBitmap(it)) } }.build()
             val style = Notification.MessagingStyle(meP)
             if (title.isNotBlank()) style.setConversationTitle(title)
-            style.setGroupConversation(true)             // shows each sender's picture next to their messages, like Discord
+            style.setGroupConversation(true)             // shows each sender's picture next to their messages, like Discord (cars read "Name: text")
             synchronized(list) { list.toList() }.forEach { msg ->
                 val p = if (msg.from == null) meP else personOf(msg.from)
                 style.addMessage(msg.text, msg.ts, p)
@@ -543,7 +546,10 @@ class NotifyService : Service() {
         if (Build.VERSION.SDK_INT >= 30) bubbleFor(chatId, chatLabel[chatId] ?: title.ifBlank { last?.from?.let { nameOf(it) } ?: "Chat" })?.let { (sid, meta) -> b.setShortcutId(sid); b.setBubbleMetadata(meta) }
         // reply straight from the notification (not in encrypted chats: this app can't encrypt from the background)
         val readPi = PendingIntent.getService(this, ("read$chatId").hashCode(), Intent(this, NotifyService::class.java).setAction(ACT_READ).putExtra("chat", chatId), PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
-        val readAct = Notification.Action.Builder(ic(android.R.drawable.ic_menu_view), "Mark as read", readPi).build()
+        // Android Auto reads the messages aloud and then uses these two "semantic" actions (reply by voice, mark as read) without opening the app
+        val readB = Notification.Action.Builder(ic(android.R.drawable.ic_menu_view), "Mark as read", readPi)
+        if (Build.VERSION.SDK_INT >= 28) { readB.setSemanticAction(Notification.Action.SEMANTIC_ACTION_MARK_AS_READ); readB.setShowsUserInterface(false) }
+        val readAct = readB.build()
         val isRead = last?.id != null && readIds[chatId] == last.id     // already read: nothing left to mark
         if (encChats[chatId] == true && Crypt.cached(chatId) == null) { if (!isRead) b.addAction(readAct); nm().notify(chatId.hashCode(), b.build()); return }   // encrypted and no key here: no reply
         val ri = android.app.RemoteInput.Builder(KEY_REPLY).setLabel("Reply").build()
@@ -551,7 +557,7 @@ class NotifyService : Service() {
         val pi = PendingIntent.getService(this, chatId.hashCode(), Intent(this, NotifyService::class.java).setAction(ACT_REPLY).putExtra("chat", chatId), flags)
         val act = Notification.Action.Builder(android.graphics.drawable.Icon.createWithResource(this, android.R.drawable.ic_menu_send), "Reply", pi)
             .addRemoteInput(ri).setAllowGeneratedReplies(true)
-        if (Build.VERSION.SDK_INT >= 28) act.setSemanticAction(Notification.Action.SEMANTIC_ACTION_REPLY)
+        if (Build.VERSION.SDK_INT >= 28) { act.setSemanticAction(Notification.Action.SEMANTIC_ACTION_REPLY); act.setShowsUserInterface(false) }
         b.addAction(act.build())
         if (!isRead) b.addAction(readAct)
         nm().notify(chatId.hashCode(), b.build())

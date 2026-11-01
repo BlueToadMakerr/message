@@ -9,7 +9,11 @@ export const PERMISSIONS = {
   chat:     { label: "Know which chat is open; put text in the message box", risk: "medium" },
   messages: { label: "Read the text of messages shown on your screen", risk: "high" },
   panel:    { label: "Show a small panel on the screen", risk: "low" },
-  network:  { label: "Contact other websites (can send data out)", risk: "high" }
+  network:  { label: "Contact other websites (can send data out)", risk: "high" },
+  page:     { label: "Control the page: read what is on screen, click, type, scroll, search the chat", risk: "high" },
+  buttons:  { label: "Add buttons to the chat, chat list and call screens", risk: "low" },
+  calls:    { label: "Know when you are in a call", risk: "medium" },
+  devinfo:  { label: "Read developer info and add cards to developer views", risk: "medium" }
 };
 export const MAX_CODE = 200000;
 

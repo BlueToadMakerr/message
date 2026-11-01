@@ -46,7 +46,13 @@ if (QM) document.addEventListener("click", ev => {
   if (!a || ev.defaultPrevented || ev.button !== 0 || ev.metaKey || ev.ctrlKey || ev.shiftKey || ev.altKey) return;
   if ((a.target && a.target !== "_self") || a.hasAttribute("download")) return;
   let u; try { u = new URL(a.href, location.href); } catch (_) { return; }
-  if (u.origin !== location.origin || (u.pathname === location.pathname && u.search === location.search && u.hash)) return;
+  if (u.origin !== location.origin) return;
+  if (u.pathname === location.pathname && u.search === location.search && u.hash) {      // a link to a place on this same page: scroll there ourselves, so no history entry is added (Back would land on the docs again)
+    ev.preventDefault();
+    let t = null; try { t = document.getElementById(decodeURIComponent(u.hash.slice(1))); } catch (_) { /* ignore */ }
+    if (t) t.scrollIntoView({ block: "start" }); else window.scrollTo(0, 0);
+    return;
+  }
   ev.preventDefault();
   try { location.replace(u.href); } catch (_) { location.href = u.href; }
 });

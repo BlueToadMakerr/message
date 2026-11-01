@@ -75,7 +75,7 @@ function lt_push_id(): string {
     $c = '-0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ_abcdefghijklmnopqrstuvwxyz'; $t = (int)(microtime(true) * 1000); $s = '';
     for ($i = 0; $i < 8; $i++) { $s = $c[$t % 64] . $s; $t = intdiv($t, 64); }
     for ($i = 0; $i < 12; $i++) $s .= $c[random_int(0, 63)];
-    return '-' . $s;
+    return $s;          // 20 chars like a Firebase push id (its first time char is already '-'); an extra '-' in front made the message sort BEFORE every real one
 }
 /** Tiny file cache (names, chat membership) so a chat that refreshes every 15 s does not re-read the same small things from the database each time. */
 function lt_cache(string $k, ?callable $make = null, int $ttl = 600): mixed {

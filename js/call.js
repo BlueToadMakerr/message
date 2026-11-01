@@ -4,7 +4,7 @@
 import { askScreenSettings } from "./call/sharedialog.js";
 import { clearScreenOverride } from "./screenprefs.js";
 import { audioSettingsNode, applyOutput, applyNativeAudio } from "./call/devices.js";
-import { toggleDevPanel } from "./call/devstats.js";
+import { toggleDevPanel, callSnapshot } from "./call/devstats.js";
 import { plain } from "./dev.js";
 import { auth, db } from "./firebase.js";
 import { onAuthStateChanged } from "./sdk.js";
@@ -790,6 +790,7 @@ addEventListener("qm-audio-devices", () => { if (S.joined) applyNativeAudio(); }
 
 // developer mode: live call statistics (frame rate, bitrate, connection path, …)
 $("devCallBtn").onclick = () => toggleDevPanel(S, plain);
+window.__qmDev = Object.assign(window.__qmDev || {}, { call: () => callSnapshot(S) });      // lets the shell (plugins with "devinfo") read the call stats
 
 // ---------------------------------------------------------------- app shell hooks (mini call bar)
 function pushShellState() {

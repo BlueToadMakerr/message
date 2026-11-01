@@ -59,15 +59,19 @@ qm.on('chat-open', () =&gt; qm.toast('You opened a chat'));</pre>
 <tr><td><code>me</code></td><td>medium</td><td><code>qm.me()</code> your account id and display name</td></tr>
 <tr><td><code>chat</code></td><td>medium</td><td><code>qm.chat.current()</code>, <code>qm.chat.insertText()</code>, events <code>chat-open</code> / <code>chat-close</code></td></tr>
 <tr><td><code>messages</code></td><td>high</td><td>event <code>message</code> with the text of messages that appear on your screen (already decrypted for display; locked ones are <code>null</code>)</td></tr>
+<tr><td><code>page</code></td><td>high</td><td><code>qm.page.*</code>: read what is on screen, click, type, scroll, search the chat. Event <code>page-load</code>. (It can read message text, so treat it like <code>messages</code>.)</td></tr>
+<tr><td><code>buttons</code></td><td>low</td><td><code>qm.buttons.*</code> and the <code>button</code> event: your own buttons in the chat header, the chat list and the call controls</td></tr>
+<tr><td><code>calls</code></td><td>medium</td><td><code>qm.calls.state()</code> and the <code>call-state</code> event</td></tr>
+<tr><td><code>devinfo</code></td><td>medium</td><td><code>qm.dev.*</code>: read developer info (<code>env</code>, <code>state</code>, <code>call</code>) and add your own cards to the developer views (app, chat, message, call). Event <code>dev-view</code></td></tr>
 <tr><td><code>network</code></td><td>high</td><td>Use <code>qm.fetch</code> / <code>fetch</code> to https websites (the website must allow it with CORS)</td></tr>
 </table>
-<p><code>qm.storage</code>, <code>qm.log</code>, <code>qm.on</code> and <code>qm.version</code> need no permission.</p>
+<p><code>qm.storage</code>, <code>qm.log</code>, <code>qm.on</code>, <code>qm.sleep</code> and <code>qm.version</code> need no permission. <code>qm.ask</code> needs any one of <code>panel</code>, <code>buttons</code>, <code>toast</code>.</p>
 
 <h2 id="api">4. The <code>qm</code> API</h2>
 <p>Every method that talks to the site returns a Promise.</p>
 <table>
 <tr><th>Call</th><th>Returns</th><th>Details</th></tr>
-<tr><td><code>qm.version</code></td><td>string</td><td>Site version, e.g. <code>"1.44.0"</code>.</td></tr>
+<tr><td><code>qm.version</code></td><td>string</td><td>Site version, e.g. <code>"1.46.0"</code>.</td></tr>
 <tr><td><code>qm.apiVersion</code></td><td>number</td><td>Plugin API version (currently <code>1</code>).</td></tr>
 <tr><td><code>qm.on(event, fn)</code></td><td>function</td><td>Subscribe; returns an unsubscribe function. See <a href="#events">Events</a>.</td></tr>
 <tr><td><code>qm.off(event, fn)</code></td><td></td><td>Unsubscribe.</td></tr>
@@ -82,6 +86,25 @@ qm.on('chat-open', () =&gt; qm.toast('You opened a chat'));</pre>
 <tr><td><code>qm.chat.insertText(text)</code></td><td></td><td>Needs <code>chat</code>. Appends to the message box of the open chat (2,000 characters at most). It never sends: the person still presses Send. Throws if no chat is open.</td></tr>
 <tr><td><code>qm.panel.set({title, lines, buttons})</code></td><td></td><td>Needs <code>panel</code>. A small floating card (bottom right). <code>lines</code>: up to 30 strings of plain text; <code>buttons</code>: up to 8 labels. A press fires the <code>panel-button</code> event. The card has its own close button.</td></tr>
 <tr><td><code>qm.panel.hide()</code></td><td></td><td>Removes the panel.</td></tr>
+<tr><td><code>qm.chat.open(chatId)</code></td><td></td><td>Needs <code>chat</code>. Opens that chat.</td></tr>
+<tr><td><code>qm.ask(title, placeholder?)</code></td><td>string / null</td><td>Needs <code>panel</code>, <code>buttons</code> or <code>toast</code>. Shows a question box (labelled with your plugin's name) and returns what the user typed, or <code>null</code> when cancelled.</td></tr>
+<tr><td><code>qm.sleep(ms)</code></td><td></td><td>Waits (60 s at most).</td></tr>
+<tr><td colspan="3"><strong>Page control</strong> (needs <code>page</code>). <code>frame</code> is <code>"detail"</code> (the open chat or account page, default), <code>"call"</code> or <code>"shell"</code> (the chat list).</td></tr>
+<tr><td><code>qm.page.query(selector, {text?, limit?, frame?})</code></td><td>array</td><td>Elements matching a CSS selector (optionally only those containing <code>text</code>): <code>{index, tag, text, attrs, visible, rect}</code>. Password values are never returned. In a chat, <code>.msg</code> is a message and <code>#messages</code> the list.</td></tr>
+<tr><td><code>qm.page.click(selector, {index?, text?, frame?})</code></td><td></td><td>Clicks the element. Throws when nothing matches.</td></tr>
+<tr><td><code>qm.page.type(selector, text, {index?, frame?})</code></td><td></td><td>Sets a text box (not password fields) and fires <code>input</code>/<code>change</code>. The chat's box is <code>#msgInput</code>. It does not send: click the send button yourself.</td></tr>
+<tr><td><code>qm.page.scroll({to?, by?, scroller?, frame?})</code></td><td><code>{top, height, view}</code></td><td><code>to</code>: <code>"top"</code>, <code>"bottom"</code>, a pixel number, or a selector to bring into view; or <code>by</code> pixels. <code>scroller</code> defaults to the chat's message list.</td></tr>
+<tr><td><code>qm.page.scrollUntil({text? | regex?, selector?, direction?, maxMs?, scroller?, frame?})</code></td><td><code>{found, text, key, waitedMs}</code> or <code>{found:false, reason}</code></td><td>Keeps scrolling (default: up, through <code>.msg</code> elements) and lets the page load older messages until something matches, then scrolls it into view and flashes it. Stops at the start/end of the list, after <code>maxMs</code> (default 30 s, at most 120 s), or when the user presses the Stop button that is shown meanwhile.</td></tr>
+<tr><td><code>qm.page.cancel()</code> / <code>qm.page.highlight(selector, opts?)</code> / <code>qm.page.url(opts?)</code></td><td></td><td>Stop a running search; flash an element; the path of the page in that frame.</td></tr>
+<tr><td colspan="3"><strong>Buttons</strong> (needs <code>buttons</code>)</td></tr>
+<tr><td><code>qm.buttons.add({id, label, where?, title?})</code></td><td></td><td><code>where</code>: <code>"chat"</code> (header of a chat), <code>"list"</code> (top of the chat list) or <code>"call"</code> (call controls). Up to 6 buttons per plugin. Pressing one fires the <code>button</code> event. Buttons come back by themselves when a page is replaced.</td></tr>
+<tr><td><code>qm.buttons.remove(id)</code> / <code>qm.buttons.clear()</code></td><td></td><td></td></tr>
+<tr><td colspan="3"><strong>Calls</strong> (needs <code>calls</code>)</td></tr>
+<tr><td><code>qm.calls.state()</code></td><td><code>{chatId, joined, visible, muted, camOn, screenOn, startedAt, title}</code></td><td>The current call (<code>joined:false</code> when none).</td></tr>
+<tr><td colspan="3"><strong>Developer info</strong> (needs <code>devinfo</code>)</td></tr>
+<tr><td><code>qm.dev.addCard(scope, {id, title, rows})</code></td><td></td><td>Adds (or replaces) a card in a developer view. <code>scope</code>: <code>"app"</code> (Developer: loaded data), <code>"chat"</code>, <code>"message"</code> or <code>"call"</code> (call stats panel). <code>rows</code>: <code>[label, value, tone?]</code> with tone <code>"ok" | "warn" | "bad" | "info"</code>; up to 40 rows, 8 cards per plugin. The card is marked with your plugin's name. Update it when the <code>dev-view</code> event fires (live views fire it about once a second).</td></tr>
+<tr><td><code>qm.dev.removeCard(id)</code></td><td></td><td></td></tr>
+<tr><td><code>qm.dev.read(scope)</code></td><td>object</td><td><code>"env"</code>: facts about this device and page (like the Raw tab). <code>"state"</code>: open chat, call and plugin states. <code>"call"</code>: the full call snapshot of the developer call panel (links, bitrates, devices); throws when no call is running. Capped at 200 KB.</td></tr>
 <tr><td><code>qm.fetch(url, init?)</code></td><td>Response</td><td>Needs <code>network</code>. The normal <code>fetch</code>; subject to CORS.</td></tr>
 <tr><td><code>qm.log(...args)</code></td><td></td><td>Writes to the plugin log on the Plugins page (last 100 lines) and the browser console.</td></tr>
 </table>
@@ -93,6 +116,10 @@ qm.on('chat-open', () =&gt; qm.toast('You opened a chat'));</pre>
 <tr><td><code>chat-close</code></td><td><code>chat</code></td><td><code>{chatId}</code> when it is closed or replaced.</td></tr>
 <tr><td><code>message</code></td><td><code>messages</code></td><td><code>{chatId, key, fromMe, text, type, time}</code>. Fired for every message that is drawn in an open chat (history included). <code>text</code> is <code>null</code> for files and for messages that can't be decrypted on this device.</td></tr>
 <tr><td><code>panel-button</code></td><td><code>panel</code></td><td><code>{label}</code> of the pressed button.</td></tr>
+<tr><td><code>button</code></td><td><code>buttons</code></td><td><code>{id, where}</code> of a button you added.</td></tr>
+<tr><td><code>call-state</code></td><td><code>calls</code></td><td>Same object as <code>qm.calls.state()</code>, when it changes (joined, left, minimised, muted…).</td></tr>
+<tr><td><code>dev-view</code></td><td><code>devinfo</code></td><td><code>{scope}</code>: a developer view was opened or refreshed. Good moment to call <code>qm.dev.addCard</code>.</td></tr>
+<tr><td><code>page-load</code></td><td><code>page</code></td><td><code>{frame}</code>: the chat/account page or the call page was (re)loaded.</td></tr>
 </table>
 <p>Errors thrown in a handler are caught and written to the plugin log; they never break the chat.</p>
 
@@ -123,6 +150,26 @@ qm.on('panel-button', b =&gt; qm.chat.insertText(b.label));</pre>
 const j = await r.json();
 qm.toast(j.setup + ' ' + j.punchline);</pre>
 <p>Permissions: <code>network</code>, <code>toast</code>.</p>
+
+<h3>Find a message (button that scrolls the chat)</h3>
+<pre>await qm.buttons.add({ id: 'find', where: 'chat', label: 'Find' });
+qm.on('button', async b =&gt; {
+  if (b.id !== 'find') return;
+  const text = await qm.ask('Find a message', 'Text to look for');
+  if (!text) return;
+  const r = await qm.page.scrollUntil({ text, direction: 'up', maxMs: 60000 });
+  qm.toast(r.found ? 'Found it' : 'Not found (' + r.reason + ')', r.found ? 'success' : 'error');
+});</pre>
+<p>Permissions: <code>buttons</code>, <code>page</code>, <code>toast</code>.</p>
+<h3>Extra info in the call stats</h3>
+<pre>const paint = async () =&gt; {
+  const c = await qm.calls.state();
+  let rows = [['In a call', c.joined ? 'yes' : 'no', c.joined ? 'ok' : '']];
+  if (c.joined) { const s = await qm.dev.read('call'); rows.push(['Connections', Object.keys(s.links || {}).length]); }
+  await qm.dev.addCard('call', { id: 'extra', title: 'Call extras', rows });
+};
+qm.on('dev-view', paint); qm.on('call-state', paint);</pre>
+<p>Permissions: <code>devinfo</code>, <code>calls</code>.</p>
 
 <h2 id="file">8. Plugin files</h2>
 <p>Export writes a <code>.qmplugin.json</code> file:</p>
@@ -166,9 +213,10 @@ qm.toast(j.setup + ' ' + j.punchline);</pre>
 </ul>
 
 <h2 id="changes">12. What changed</h2>
-<table><tr><th>API</th><th>Site</th><th>Notes</th></tr><tr><td>1</td><td>1.44.0</td><td>First version: toast, style, storage, panel, chat, me, messages, network.</td></tr></table>
+<table><tr><th>API</th><th>Site</th><th>Notes</th></tr><tr><td>1</td><td>1.44.0</td><td>First version: toast, style, storage, panel, chat, me, messages, network.</td></tr><tr><td>1</td><td>1.46.0</td><td>Added (nothing existing changed, so the API number stays 1; set <code>minSite</code> to 1.46.0 when you use them): permissions <code>page</code>, <code>buttons</code>, <code>calls</code>, <code>devinfo</code>; <code>qm.page.*</code>, <code>qm.buttons.*</code>, <code>qm.calls.state</code>, <code>qm.dev.*</code>, <code>qm.ask</code>, <code>qm.sleep</code>, <code>qm.chat.open</code>; events <code>button</code>, <code>call-state</code>, <code>dev-view</code>, <code>page-load</code>.</td></tr></table>
   </main>
 </div>
-<script type="module">import { hydrateIcons } from "./js/ui.js"; hydrateIcons();</script>
+<script type="module" src="js/bars.js"></script>
+<script type="module">import { hydrateIcons } from "./js/ui.js"; import { markReady } from "./js/embed.js"; hydrateIcons(); markReady();</script>
 </body>
 </html>

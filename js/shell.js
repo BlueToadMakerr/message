@@ -346,6 +346,7 @@ function setCallState(patch) {
 function renderBar() {
   const { bar } = els();
   tellApp();
+  try { pluginHost.setContext({ call: { ...st.call } }); } catch (_) { /* ignore */ }
   try { window.__qmIosCall && window.__qmIosCall(!!st.call.joined); } catch (_) { /* not the iPhone app */ }
   const show = st.call.joined && !st.call.visible;
   bar.hidden = !show;

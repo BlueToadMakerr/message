@@ -338,7 +338,7 @@ def push_id():
     chars = "-0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ_abcdefghijklmnopqrstuvwxyz"
     t = int(time.time() * 1000); s = ""
     for _ in range(8): s = chars[t % 64] + s; t //= 64
-    return "-" + s + "".join(secrets.choice(chars) for _ in range(11))
+    return s + "".join(secrets.choice(chars) for _ in range(12))          # 20 chars like Firebase push ids (the first time char is already "-")
 
 def display_name(uid):
     n = get_at(["accsettings", uid, "settings", "displayName"])

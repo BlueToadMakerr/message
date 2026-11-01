@@ -934,3 +934,5 @@ dialog.modal.tour { width: min(520px, calc(100vw - 1.5rem)); border: 1px solid v
 /* private-server mode hides what needs Google or the internet */
 .private-mode [data-nopriv]{display:none !important}
 .pm-only{display:none}.private-mode .pm-only{display:block}
+.plugin-search{position:fixed;left:50%;transform:translateX(-50%);bottom:calc(var(--sab,0px) + 70px);z-index:61;background:var(--card,#fff);color:var(--text,#111);border:1px solid var(--border,#8886);border-radius:999px;padding:.35rem .5rem .35rem .9rem;box-shadow:0 6px 24px #0004;font-size:.85rem;display:flex;align-items:center;gap:.4rem}
+.plugin-btn{white-space:nowrap}

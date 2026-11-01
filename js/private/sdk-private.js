@@ -149,7 +149,7 @@ function pushId() {
   if (!dup) { lastRand = []; for (let i = 0; i < 12; i++) lastRand[i] = Math.floor(Math.random() * 64); }
   else { let i; for (i = 11; i >= 0 && lastRand[i] === 63; i--) lastRand[i] = 0; lastRand[i]++; }
   for (let i = 0; i < 12; i++) id += CH.charAt(lastRand[i]);
-  return "-" + id;
+  return id;          // 8 time chars + 12 random = 20 chars, like Firebase (the first time char is already "-")
 }
 
 // ---- live connection (Server-Sent Events). New connection id every (re)connect; listeners and onDisconnect actions are registered again each time.

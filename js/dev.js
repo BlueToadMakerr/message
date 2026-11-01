@@ -104,11 +104,24 @@ function devLabel(text) {
   else k.textContent = String(text);
   return k;
 }
+/** Cards that Developer-mode plugins (permission "devinfo") added to this kind of developer view: "app", "chat", "message" or "call". */
+export function pluginDevCards(scope) {
+  let host = null; try { host = window.top.QM && window.top.QM.plugins; } catch (_) { /* cross-origin parent */ }
+  if (!host || !host.devCards || !scope) return [];
+  try { host.devView && host.devView(scope); } catch (_) { /* ignore */ }
+  try { return host.devCards(scope).map(c => devCard("Plugin \u00b7 " + c.plugin + " \u00b7 " + c.title, c.rows.map(r => [r[0], r[2] ? devPill(r[1], r[2]) : r[1]]))); } catch (_) { return []; }
+}
+function withPluginCards(nodes, scope) {
+  const extra = pluginDevCards(scope); if (!extra.length) return nodes;
+  const grid = nodes.find(n => n && n.classList && n.classList.contains("dev-grid"));
+  if (grid) grid.append(...extra); else nodes.push(devGrid(extra));
+  return nodes;
+}
 export const devSection = title => ({ section: title });
 export const devGrid = (...cards) => { const g = h("div", "dev-grid"); g.append(...cards.flat().filter(Boolean)); return g; };
 
 /** Dialog with a Visual tab (cards) and a Raw tab (JSON, copyable). `visual()` may be async and returns a Node / array of Nodes. */
-export async function showDev(title, { visual, raw, every = 0 }) {
+export async function showDev(title, { visual, raw, every = 0, scope = "" }) {
   const wrap = h("div", "stack dev-view"), tabs = h("div", "dev-tabs"), pane = h("div", "dev-pane");
   const mk = (id, label) => { const b = h("button", "dev-tab", label); b.type = "button"; b.dataset.tab = id; return b; };
   let mode = visual ? "visual" : "raw", last = "";
@@ -119,7 +132,7 @@ export async function showDev(title, { visual, raw, every = 0 }) {
     tabs.querySelectorAll(".dev-tab").forEach(b => b.classList.toggle("on", b.dataset.tab === mode));
     copy.hidden = mode !== "raw";
     try {
-      if (mode === "visual") { const n = await visual(); if (live && held()) return; pane.replaceChildren(...[].concat(n).filter(Boolean)); }     // (building it also records the graph history, so that goes on while you press)
+      if (mode === "visual") { const n = await visual(); if (live && held()) return; pane.replaceChildren(...withPluginCards([].concat(n).filter(Boolean), scope)); }     // (building it also records the graph history, so that goes on while you press)
       else { const d = await (typeof raw === "function" ? raw() : raw); last = typeof d === "string" ? d : plain(d); const pre = h("pre", "dev-pre", last); pane.replaceChildren(pre); }
     } catch (e) { pane.replaceChildren(h("pre", "dev-pre", String(e && e.stack || e))); }
   };

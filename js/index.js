@@ -711,7 +711,7 @@ topActions.prepend(devButton("{ }", () => {
     serviceWorkers: sw, notificationPermission: window.Notification ? Notification.permission : "n/a", env: envInfo()
   };
 };
-  return showDev("Developer: loaded data", { raw, every: 0, visual: async () => {
+  return showDev("Developer: loaded data", { raw, every: 0, scope: "app", visual: async () => {
     const env = envInfo(), me = await getProfile(currentUid).catch(() => null);
     const sw = navigator.serviceWorker ? await navigator.serviceWorker.getRegistrations().catch(() => []) : [];
     const list = [...chats.values()];

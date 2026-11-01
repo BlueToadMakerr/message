@@ -2,6 +2,16 @@
 
 Newest first. Older rounds (1–43) are kept below exactly as they were written.
 
+## 1.46.0 — Round 46
+
+**Android Auto** (Android app): messages read aloud with voice reply and mark-as-read; calls registered with Telecom so the car can show, answer, decline, hang up and mute them. Not compiled or tried in a car here. See [APPS.md](APPS.md).
+
+**Plugins**: new permissions `page`, `buttons`, `calls`, `devinfo`. Plugins can now read what is on screen and click / type / scroll (`qm.page`), search a chat by scrolling until a message is found (`qm.page.scrollUntil`, loads older messages on the way, with a Stop button), add their own buttons to the chat header, chat list or call controls (`qm.buttons`), follow calls (`qm.calls.state`, `call-state`), read developer info (`qm.dev.read`) and add their own cards to the developer views for the app, a chat, a message and the call stats (`qm.dev.addCard`), ask the user a question (`qm.ask`), open a chat (`qm.chat.open`). Three new templates in the editor. Docs: [PLUGINS.md](PLUGINS.md), plugin-docs.html.
+
+**Fixes**
+- Plugins page showed "Still loading… your connection looks slow" forever, because the page never told the app it had loaded; fixed. The plugin docs page had no such signal either, and its table-of-contents links added browser history entries, so Back could land on the docs again; same-page links no longer touch history in any embedded page.
+- Messages sent from the compatibility client (proxy.php), and in private-server mode, got ids one character too long that sorted before every real message, so they showed up above the older messages in the normal app and in the next refresh. New messages now get proper 20-character ids. Messages already sent with the wrong id stay where they are.
+
 ## 1.45.0 — Round 45
 
 **Private servers everywhere**
