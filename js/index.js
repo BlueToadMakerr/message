@@ -755,7 +755,7 @@ function setupLocalNotifications(btn) {
       const [last, prof] = await Promise.all([get(ref(db, `privateChats/${snap.key}/lastMessage`)), getProfile(p.from)]);
       const m = last.val() || {};
       const body = m.enc ? "\ud83d\udd12 New message" : (m.text || "New message");
-      const n = new Notification(prof.displayName || "New message", { body, tag: "chat_" + snap.key, icon: "icons/icon-192.png" });
+      const n = new Notification((prof.displayName || "New message") + (p.mention ? " mentioned you" : ""), { body, tag: "chat_" + snap.key, icon: "icons/icon-192.png" });
       n.onclick = () => { window.focus(); try { QM.openChat(snap.key); } catch (_) { /* ignore */ } n.close(); };
     } catch (_) { /* ignore */ }
   }));

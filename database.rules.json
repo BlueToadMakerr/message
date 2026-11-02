@@ -105,7 +105,12 @@
             "editedAt":  { ".validate": "newData.isNumber()" },
             "deliveredAt": { ".validate": "newData.isNumber() && (data.exists() ? newData.val() === data.val() : newData.val() === now)" },
             "notifSent": { ".validate": "newData.isBoolean()" },
-            "big":       { ".validate": "newData.isBoolean()" }
+            "big":       { ".validate": "newData.isBoolean()" },
+            // @mentions: the uids of the members the message is for (only they are notified). Plain even in encrypted chats.
+            "mentions":  {
+              ".validate": "newData.hasChildren()",
+              "$u": { ".validate": "newData.val() === true && root.child('privateChats').child($chatId).child('participants').child($u).exists()" }
+            }
           }
         },
 

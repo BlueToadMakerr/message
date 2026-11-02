@@ -8,6 +8,8 @@
 - Camera (photo and video, full frame) and a voice recorder.
 - Uploads keep going if you leave the chat; closing the page asks for confirmation and lists unfinished uploads; chat-list badges and (apps) a progress notification.
 
+- **Swipe to reply / @mentions:** swipe a message right to reply; type `@` to pick someone and notify only them. Messages without an `@` notify everyone.
+
 ## Calls
 - Voice, video and screen-sharing group calls (WebRTC mesh) that survive switching chats; picture-in-picture; full call statistics in developer mode.
 - Incoming calls ring on every device of the account.

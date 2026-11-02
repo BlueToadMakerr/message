@@ -2,6 +2,14 @@
 
 Newest first. Older rounds (1–43) are kept below exactly as they were written.
 
+## 1.47.0 — Round 47
+
+- **Swipe to reply.** Swipe a message to the right (touch screens) and it starts a reply; the row follows your finger, buzzes once at the trigger point and springs back. Vertical scrolling is untouched and the first 24px from the screen edge are ignored so the back gesture still works.
+- **@mentions.** Type `@` in the composer to get a picker of the chat's people (plus `@everyone`); arrows/Enter/Tab/Esc or tap to pick. Mentions are highlighted while typing and shown as pills in messages, and messages that mention you get a glow.
+- **Targeted notifications.** If a message mentions people, only they are notified ("Name mentioned you"). No `@` (or `@everyone`) still notifies everyone, as before.
+- Mentions are stored as a plain `mentions` map (uids) even in encrypted chats; the message text stays encrypted.
+- **You must:** republish `database.rules.json` and redeploy Cloud Functions (`firebase deploy --only functions`) for mention-only push. Private server needs nothing.
+
 ## 1.46.0 — Round 46
 
 **Android Auto** (Android app): messages read aloud with voice reply and mark-as-read; calls registered with Telecom so the car can show, answer, decline, hang up and mute them. Not compiled or tried in a car here. See [APPS.md](APPS.md).

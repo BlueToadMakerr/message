@@ -1,1 +1,1 @@
-{ "version": "1.46.0", "apiVersion": 1, "released": "2026-10-31", "notes": "Android Auto, more plugin powers (page control, buttons, calls, developer info), plugins page fixes, legacy message order fix." }
+{ "version": "1.47.0", "apiVersion": 1, "released": "2026-11-02", "notes": "Swipe right on a message to reply, and @mentions: pick a person to notify only them (no @ still notifies everyone)." }

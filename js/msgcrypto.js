@@ -15,6 +15,7 @@ export async function sealPayload(chatId, p) {
   } else {
     out.text = await encText(chatId, p.text ?? "");
   }
+  if (p.mentions) out.mentions = p.mentions;                       // uids only: the server needs them to know whom to notify
   if (p.replyTo) out.replyTo = { key: p.replyTo.key, uid: p.replyTo.uid, text: await encText(chatId, p.replyTo.text || "") };
   return out;
 }

@@ -47,14 +47,18 @@ exports.onMessage = onValueCreated(trig("/privateChats/{chatId}/messages/{msgId}
   // A photo can be shown in the notification only when it has a public https address (a picture uploaded to a file host, not encrypted).
   // Pictures stored inside the chat are not public, so they cannot be shown in a push (the Android app draws those itself).
   const imageUrl = !encrypted && ((msg.type === "file" && msg.kind === "image" && /^https:\/\//.test(msg.url || "") && msg.url) || (msg.type === "image" && /^https:\/\//.test(msg.content || "") && msg.content)) || null;
-  await Promise.all(Object.keys(participants).filter(u => u !== from).map(async uid => {
+  // @mentions: a message that names people is for those people only; without a mention everybody in the chat is notified.
+  const only = msg.mentions && typeof msg.mentions === "object" ? Object.keys(msg.mentions).filter(u => participants[u]) : [];
+  const mentioned = only.length > 0;
+  const title = mentioned ? `${name} mentioned you` : name;
+  await Promise.all(Object.keys(participants).filter(u => u !== from && (!mentioned || only.includes(u))).map(async uid => {
     const read = await val(`privateChats/${chatId}/messageRead/${uid}`);
     if (read === msgId) return;                                         // already looking at it
     await pushTo(uid, () => ({
-      notification: { title: name, body: text },
+      notification: { title, body: text },
       android: { priority: "high", collapseKey: `chat_${chatId}`, notification: { tag: `chat_${chatId}`, ...(imageUrl ? { imageUrl } : {}) } },
       webpush: { headers: { TTL: "86400", Urgency: "high" }, notification: { tag: `chat_${chatId}`, renotify: true, requireInteraction: false, ...(imageUrl ? { image: imageUrl } : {}) }, fcmOptions: { link } },
-      apns: { headers: { "apns-collapse-id": `chat_${chatId}`, "apns-priority": "10" }, payload: { aps: { alert: { title: name, body: text }, sound: "default" } } },
+      apns: { headers: { "apns-collapse-id": `chat_${chatId}`, "apns-priority": "10" }, payload: { aps: { alert: { title, body: text }, sound: "default" } } },
       data: { link, chatId, ...(imageUrl ? { image: imageUrl } : {}) }
     }));
   }));

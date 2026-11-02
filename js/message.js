@@ -17,6 +17,7 @@ import { isLitterUrl, fmtBytes, kindOf, relayMax } from "./litter.js";
 import { uploadToHosts, fmtTtl, fmtLimit } from "./hosts.js";
 import { logEvent } from "./catlog.js";
 import { getProfile, peekProfile, ensureProfile, profileExists, invalidateProfile } from "./users.js";
+import { mentionsOf, decorate, attachMentionBox, attachSwipeReply } from "./mentions.js";
 import * as E2E from "./crypto.js";
 import { sealPayload, sealPreview, openMessage } from "./msgcrypto.js";
 import { attachPreviews, urlsIn, inspectUrl, fetchPreviewNow } from "./linkpreview.js";
@@ -296,8 +297,21 @@ function buildEvent(key, msg) {
   Promise.all(ids.map(getProfile)).then(paint);
   return el;
 }
+// ---------- @mentions (see js/mentions.js) ----------
+const peopleNow = () => participants.filter(u => u !== me).map(u => { const p = peekProfile(u); return p && p.displayName ? { uid: u, name: p.displayName, pfp: p.pfp } : null; }).filter(Boolean);
+function mentionPeople(msg) {
+  const ids = msg.mentions && typeof msg.mentions === "object" ? Object.keys(msg.mentions) : [];
+  return ids.map(u => { const p = peekProfile(u); return { uid: u, name: (u === me ? ownName : p && p.displayName) || "" }; });
+}
+let ownName = "";
+function decorateMsg(bubble, msg) {
+  decorate(bubble, mentionPeople(msg), me);
+  const ids = msg.mentions && typeof msg.mentions === "object" ? Object.keys(msg.mentions) : [];
+  if (ids.some(u => u !== me && !peekProfile(u))) Promise.all(ids.map(u => getProfile(u).catch(() => null))).then(() => { if (bubble.isConnected) decorate(bubble, mentionPeople(msg), me); });
+}
 function fillMessage(el, key, msg) {
   el.classList.toggle("enc", !!msg._enc);                   // encrypted messages get their own colour
+  el.classList.toggle("mentions-me", !!(msg.mentions && typeof msg.mentions === "object" && msg.mentions[me]));      // someone @mentioned you
   const bubble = el.querySelector(".bubble");
   bubble.replaceChildren();
   bubble.classList.remove("media-bubble");
@@ -340,6 +354,7 @@ function fillMessage(el, key, msg) {
     }
   } else {
     bubble.append(linkify(msg.text ?? msg.content ?? ""));
+    if (!msg._locked) decorateMsg(bubble, msg);
     if (msg._locked) {      // can't be read yet: an info button says why and how to get the key
       const why = document.createElement("button"); why.type = "button"; why.className = "enc-why"; why.setAttribute("aria-label", "What's this?");
       why.innerHTML = icon("info", 16); why.onclick = e => { e.stopPropagation(); explainEncrypted(msg); };
@@ -749,6 +764,12 @@ function autosize() {
   msgInput.style.height = Math.min(msgInput.scrollHeight, 140) + "px";
 }
 
+const mbox = attachMentionBox({ input: msgInput, people: peopleNow });          // "@" picker + highlight behind typed @names
+attachSwipeReply({
+  container: messagesDiv, iconHtml: icon("reply", 18),
+  canReply: el => { const m = msgData.get(el.dataset.key); return !!m && m.type !== "event" && !el.classList.contains("pending"); },
+  onReply: el => setReply(el.dataset.key)
+});
 msgInput.addEventListener("keydown", e => {
   // Enter sends on desktop; on touch devices Enter inserts a newline.
   if (e.key === "Enter" && !e.shiftKey && !e.isComposing && matchMedia("(pointer: fine)").matches) {
@@ -762,11 +783,13 @@ composer.addEventListener("submit", e => {
   e.preventDefault();
   const text = msgInput.value.trim();
   if (!text) return;
+  const mn = mentionsOf(text, peopleNow(), me);
   msgInput.value = "";
+  mbox.refresh();
   autosize();
   clearTimeout(typingTimer);
   setTyping(false);
-  startJob({ type: "text", text });
+  startJob({ type: "text", text, mentions: mn.uids, everyone: mn.everyone });
   msgInput.focus();
 });
 
@@ -798,7 +821,8 @@ const buildPayload = (spec, timestamp) => ({
   ...(spec.type === "text" ? { fromUid: me, text: spec.text, timestamp }
   : spec.type === "file" ? { fromUid: me, type: "file", text: spec.extra.name, ...spec.extra, timestamp }
   : { fromUid: me, type: spec.type, content: spec.content, ...(spec.wave ? { wave: spec.wave, duration: spec.duration } : {}), timestamp }),
-  ...(spec.reply ? { replyTo: spec.reply } : {})
+  ...(spec.reply ? { replyTo: spec.reply } : {}),
+  ...(spec.type === "text" && spec.mentions && spec.mentions.length && !spec.everyone ? { mentions: Object.fromEntries(spec.mentions.map(u => [u, true])) } : {})      // only these people are notified
 });
 
 /** @param spec {type:'text'|'image'|'video'|'file', text?, content?, extra?} message to send
@@ -841,6 +865,7 @@ function paintJob(job) {
   const kind = lit ? (spec.extra?.kind || kindOf(job.file?.type)) : spec.type;
   if (spec.type === "text") {
     bubble.append(linkify(spec.text));
+    decorate(bubble, peopleNow().filter(p => (spec.mentions || []).includes(p.uid)), me);
   } else if (src && kind === "image") {
     const img = new Image(); img.className = "media"; img.alt = "Sending image"; img.referrerPolicy = "no-referrer";
     img.addEventListener("load", ev => onMedia(ev.target));
@@ -934,7 +959,9 @@ async function writeJob(job) {
   };
   if (bigBody != null) multi[`${chatPath}/media/${key}`] = bigBody;
   // "Something new" ping for every other member: the app's single live stream (live/{uid}) wakes up and shows the notification.
-  for (const u of participants) if (u !== me) multi[`live/${u}/pings/${chatId}`] = { id: key, ts: job.ts, from: me };
+  // A message that @mentions people only pings (= notifies) those people; one without a mention pings everybody.
+  const only = payload.mentions && typeof payload.mentions === "object" ? Object.keys(payload.mentions) : null;
+  for (const u of participants) if (u !== me && (!only || only.includes(u))) multi[`live/${u}/pings/${chatId}`] = { id: key, ts: job.ts, from: me, ...(only ? { mention: true } : {}) };
   const p = update(ref(db), multi);
   p.then(() => { if (jobs.has(job.id) && !job.cancelled) finishJob(job); }, () => {});
   return p;
@@ -1631,6 +1658,7 @@ onAuthStateChanged(auth, async user => {
   if (!user) { toHome(); return; }
   if (me) return; // already initialised
   me = user.uid;
+  getProfile(me).then(p => { ownName = p.displayName || ""; }).catch(() => {});
   ensureProfile(user).catch(() => {});
 
   // Membership + header (also detects being removed from the chat)
