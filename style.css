@@ -214,7 +214,7 @@ label.lbl { display: block; font-size: .85rem; font-weight: 600; color: var(--mu
 .chat-title-wrap .sub.typing { color: var(--accent); font-weight: 600; }
 .chat-title-wrap .titles { min-width: 0; }
 
-.messages { flex: 1; overflow-y: auto; overflow-x: hidden; padding: 1rem; display: flex; flex-direction: column; gap: .35rem; scroll-behavior: auto; overscroll-behavior: contain; }
+.messages { flex: 1; overflow-anchor: none; overflow-y: auto; overflow-x: hidden; padding: 1rem; display: flex; flex-direction: column; gap: .35rem; scroll-behavior: auto; overscroll-behavior: contain; }
 #historyStatus { text-align: center; color: var(--muted); font-size: .85rem; padding: .5rem; }
 
 .msg { display: flex; align-items: flex-end; gap: .5rem; max-width: 100%; position: relative; touch-action: pan-y; }

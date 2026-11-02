@@ -1,1 +1,1 @@
-{ "version": "1.47.0", "apiVersion": 1, "released": "2026-11-02", "notes": "Swipe right on a message to reply, and @mentions: pick a person to notify only them (no @ still notifies everyone)." }
+{ "version": "1.47.2", "apiVersion": 1, "released": "2026-11-02", "notes": "Chat scrolling no longer jumps when pictures, videos or link previews load." }

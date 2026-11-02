@@ -42,6 +42,9 @@ var BASE = location.href.replace(/legacy\/[^\/]*(\?.*)?$/, '').replace(/\/$/, ''
 var token = '', me = '', chat = null, chatName = '', lastKey = '', timer = null, busy = false;
 var mode = '', server = '', dbUrl = '';      // mode: 'private' (a QuickMessage Python server) or 'firebase' (the proxy.php worker next to the hosted site)
 try { token = localStorage.getItem('qm-ltoken') || ''; mode = localStorage.getItem('qm-lmode') || ''; server = localStorage.getItem('qm-lserver') || ''; dbUrl = localStorage.getItem('qm-ldb') || ''; } catch (e) {}
+var via = 'direct', rtoken = '', exp = 0, myUid = '', names = {};      // Firebase: 'direct' = this browser talks to Google itself (the default); 'proxy' = through proxy.php (very old browsers)
+var API_KEY = 'AIzaSyBNynmpC9-jTZd56WnpsjnbJa7THeyTMWY', DEFAULT_DB = 'https://quickmessage-ac953-default-rtdb.firebaseio.com';      // both are public (the same ones the normal app ships)
+try { via = localStorage.getItem('qm-lvia') === 'proxy' ? 'proxy' : 'direct'; rtoken = localStorage.getItem('qm-lrt') || ''; exp = parseInt(localStorage.getItem('qm-lexp') || '0', 10) || 0; myUid = localStorage.getItem('qm-luid') || ''; } catch (e) {}
 if (mode !== 'firebase' && mode !== 'private') mode = '';      // '' = not chosen yet: detected below
 function base() { return (mode === 'private' && server ? server : BASE).replace(/\/+$/, ''); }      // Firebase mode always uses proxy.php in the root of the site this page came from
 function proxyUrl() { return BASE.replace(/\/+$/, '') + '/proxy.php'; }
@@ -70,6 +73,7 @@ function status(on) {
   else { e.style.display = 'none'; if (slowT) { clearTimeout(slowT); slowT = null; } }
 }
 function api(name, body, cb) {
+  if (mode === 'firebase' && via === 'direct') { status(true); dRoute(name, body, function (st, j) { status(false); cb(st, j || {}); }); return; }
   status(true);
   var x = window.XMLHttpRequest ? new XMLHttpRequest() : new ActiveXObject('Microsoft.XMLHTTP');
   var url = mode === 'firebase' ? proxyUrl() + '?r=' + name.replace('?', '&') + (dbUrl ? '&db=' + encodeURIComponent(dbUrl) : '') + (token ? '&token=' + encodeURIComponent(token) : '')     // some free hosts drop the Authorization header, so proxy.php also accepts ?token=
@@ -87,6 +91,212 @@ function api(name, body, cb) {
   };
   x.send(body === null ? null : str(body));
 }
+
+/* ---------------------------------------------------------------- Firebase, direct
+   The browser signs in with Google's REST API and reads/writes the Realtime Database itself with its own login token, under the normal database rules.
+   proxy.php is only used for a very old browser that cannot reach Google (see "Connection"), and email-lookup.php when starting a new chat. */
+function enc(s) { return encodeURIComponent(s); }
+function xhr(method, url, body, ctype, cb) {
+  var x = window.XMLHttpRequest ? new XMLHttpRequest() : new ActiveXObject('Microsoft.XMLHTTP');
+  try { x.open(method, url, true); } catch (e) { cb(0, null); return; }
+  if (ctype) x.setRequestHeader('Content-Type', ctype);
+  x.onreadystatechange = function () { if (x.readyState === 4) cb(x.status, parse(x.responseText)); };
+  try { x.send(body === null ? null : body); } catch (e2) { cb(0, null); }
+}
+function setSession(id, rt, secs, uid) {
+  token = id; rtoken = rt; exp = (new Date()).getTime() + (parseInt(secs, 10) || 3600) * 1000; if (uid) myUid = uid;
+  try { localStorage.setItem('qm-ltoken', token); localStorage.setItem('qm-lrt', rtoken); localStorage.setItem('qm-lexp', String(exp)); localStorage.setItem('qm-luid', myUid); } catch (e) {}
+}
+function clearSession() { token = ''; rtoken = ''; exp = 0; myUid = ''; names = {}; try { localStorage.removeItem('qm-ltoken'); localStorage.removeItem('qm-lrt'); localStorage.removeItem('qm-lexp'); localStorage.removeItem('qm-luid'); } catch (e) {} }
+/** Makes sure the login token is valid for the next couple of minutes (they last an hour): cb(true), cb(false) = could not reach Google, cb('out') = logged out. */
+function fresh(cb, force) {
+  if (!force && token && exp - (new Date()).getTime() > 120000) { cb(true); return; }
+  if (!rtoken) { logout(); cb('out'); return; }
+  xhr('POST', 'https://securetoken.googleapis.com/v1/token?key=' + API_KEY, 'grant_type=refresh_token&refresh_token=' + enc(rtoken), 'application/x-www-form-urlencoded', function (st, j) {
+    if (st === 200 && j && j.id_token) { setSession(j.id_token, j.refresh_token || rtoken, j.expires_in, myUid); cb(true); }
+    else if (st >= 400 && st < 500) { logout(); cb('out'); }
+    else cb(false);
+  });
+}
+function dbBase() { return (dbUrl || DEFAULT_DB).replace(/\/+$/, ''); }
+/** One database call. method GET | PATCH (PATCH goes as POST + method override, which every browser can send) | DELETE. cb(status, data). */
+function fb(method, path, q, body, cb, again) {
+  fresh(function (r) {
+    if (r === 'out') return;
+    if (r !== true) { cb(0, { error: 'Could not reach Google. Check the connection.' }); return; }
+    var url = dbBase() + '/' + path + '.json?auth=' + enc(token) + (q ? '&' + q : '') + (method === 'PATCH' ? '&x-http-method-override=PATCH' : method === 'DELETE' ? '&x-http-method-override=DELETE' : '');
+    xhr(method === 'GET' ? 'GET' : 'POST', url, method === 'GET' ? null : (body === null ? '' : str(body)), method === 'GET' ? '' : 'text/plain', function (st, d) {
+      if (st === 401 && !again && d && /token|expired/i.test(String(d.error || ''))) { fb(method, path, q, body, cb, true); return; }          // clock skew: refresh once and retry
+      cb(st, d);
+    });
+  }, again);
+}
+/** Runs worker(item, next) for every item, at most n at a time, then done(). */
+function pool(items, n, worker, done) {
+  var i = 0, running = 0, finished = 0, total = items.length;
+  if (!total) { done(); return; }
+  function go() {
+    while (running < n && i < total) { running++; (function (it) { worker(it, function () { running--; finished++; if (finished === total) done(); else go(); }); })(items[i++]); }
+  }
+  go();
+}
+function nameOf(uid, cb) {
+  if (names[uid]) { cb(names[uid]); return; }
+  fb('GET', 'accsettings/' + enc(uid) + '/settings/displayName', '', null, function (st, d) { names[uid] = (st === 200 && typeof d === 'string' && d.replace(/\s/g, '')) ? d : 'Unknown user'; cb(names[uid]); });
+}
+function pushId() {      // like Firebase's own: 8 time characters + 12 random ones, sorts by time
+  var c = '-0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ_abcdefghijklmnopqrstuvwxyz', t = (new Date()).getTime(), s = '', i;
+  for (i = 0; i < 8; i++) { s = c.charAt(t % 64) + s; t = Math.floor(t / 64); }
+  for (i = 0; i < 12; i++) s += c.charAt(Math.floor(Math.random() * 64));
+  return s;
+}
+var SV = { '.sv': 'timestamp' }, ID_OK = /^[A-Za-z0-9_-]{1,64}$/;
+function qs(name) { var o = {}, a = name.split('?')[1] || '', p = a.split('&'), i, kv; for (i = 0; i < p.length; i++) { kv = p[i].split('='); if (kv[0]) o[kv[0]] = decodeURIComponent((kv[1] || '').replace(/\+/g, ' ')); } return o; }
+function dRoute(name, body, cb) {
+  var r = name.split('?')[0], q = qs(name);
+  if (r === 'auth/login' || r === 'auth/signup') return dAuth(r === 'auth/signup', body || {}, cb);
+  if (!token || !myUid) { cb(401, { error: 'Not signed in' }); logout(); return; }
+  if (r === 'lite/chats') return dChats(cb);
+  if (r === 'lite/messages') return dMessages(q.chat || '', q.after || '', q.before || '', cb);
+  if (r === 'lite/send') return dSend(body || {}, cb);
+  if (r === 'lite/delete') return dDelete(body || {}, cb);
+  if (r === 'lite/newchat') return dNewChat(body || {}, cb);
+  cb(404, { error: 'unknown route' });
+}
+function dAuth(signup, b, cb) {
+  var email = String(b.email || '').replace(/^\s+|\s+$/g, ''), pw = String(b.password || '');
+  if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) { cb(400, { error: 'Enter a valid email address.' }); return; }
+  if (pw.length < 6) { cb(400, { error: 'The password needs at least 6 characters.' }); return; }
+  xhr('POST', 'https://identitytoolkit.googleapis.com/v1/accounts:' + (signup ? 'signUp' : 'signInWithPassword') + '?key=' + API_KEY, str({ email: email, password: pw, returnSecureToken: true }), 'application/json', function (st, j) {
+    if (st === 0) { cb(0, { error: 'Cannot reach Google directly.' }); return; }
+    j = j || {};
+    if (st !== 200 || !j.idToken) {
+      var m = String((j.error && j.error.message) || '');
+      cb(401, { error: m.indexOf('EMAIL_EXISTS') === 0 ? 'That email already has an account. Log in instead.' : m.indexOf('OPERATION_NOT_ALLOWED') === 0 ? 'Email/password sign-in is not enabled for this project.' : m.indexOf('TOO_MANY') === 0 ? 'Too many attempts. Wait a few minutes and try again.' : 'Wrong email or password.' });
+      return;
+    }
+    setSession(j.idToken, j.refreshToken, j.expiresIn, j.localId);
+    if (signup) xhr('POST', 'https://identitytoolkit.googleapis.com/v1/accounts:sendOobCode?key=' + API_KEY, str({ requestType: 'VERIFY_EMAIL', idToken: token }), 'application/json', function () {});      // the verification mail: needed to send messages
+    nameOf(myUid, function (n) {
+      if (n !== 'Unknown user') { cb(200, { token: token }); return; }
+      fb('PATCH', 'accsettings/' + enc(myUid) + '/settings', '', { displayName: email.split('@')[0].substring(0, 40) }, function () { names[myUid] = ''; delete names[myUid]; cb(200, { token: token }); });
+    });
+  });
+}
+function dChats(cb) {
+  fb('GET', 'chatList/' + enc(myUid), '', null, function (st, list) {
+    if (st !== 200) { cb(st || 502, { error: 'Could not load chats (' + (st || 'no connection') + ').' }); return; }
+    var ids = [], k, info = {};
+    if (list && typeof list === 'object') for (k in list) { if (list.hasOwnProperty(k) && ID_OK.test(k)) ids.push(k); }
+    ids = ids.slice(0, 40);
+    pool(ids, 3, function (c, next) {
+      var o = info[c] = {}, left = 4;
+      function one(path, key) { fb('GET', 'privateChats/' + enc(c) + '/' + path, '', null, function (s, d) { o[key] = s === 200 ? d : undefined; left--; if (!left) next(); }); }
+      one('participants', 'p'); one('chatData', 'd'); one('lastMessage/timestamp', 't'); one('lastMessage/fromUid', 'f');      // only the time and sender of the last message, never its text
+    }, function () {
+      var others = [], seen2 = {}, i, u, o;
+      for (i = 0; i < ids.length; i++) { o = info[ids[i]]; if (!o.p || typeof o.p !== 'object' || !o.p[myUid]) continue; for (u in o.p) { if (o.p.hasOwnProperty(u) && u !== myUid && !seen2[u]) { seen2[u] = 1; others.push(u); } } }
+      pool(others.concat([myUid]), 3, function (uid, next) { nameOf(uid, function () { next(); }); }, function () {
+        var chats = [], j, nm, cd, custom;
+        for (i = 0; i < ids.length; i++) {
+          o = info[ids[i]]; if (!o.p || typeof o.p !== 'object' || !o.p[myUid]) continue;
+          nm = []; for (u in o.p) { if (o.p.hasOwnProperty(u) && u !== myUid) nm.push(names[u] || 'Unknown user'); }
+          cd = (o.d && typeof o.d === 'object') ? o.d : {}; custom = cd.name;
+          chats.push({ id: ids[i], name: (typeof custom === 'string' && custom) ? custom : (nm.join(', ') || 'Chat'), enc: !!cd.encrypted, ts: typeof o.t === 'number' ? o.t : 0, mine: o.f === myUid });
+        }
+        cb(200, { me: names[myUid] || 'Me', chats: chats });
+      });
+    });
+  });
+}
+function dMessages(chat, after, before, cb) {
+  if (!ID_OK.test(chat)) { cb(403, { messages: [] }); return; }
+  var page = 30, q = 'orderBy=' + enc('"$key"') + (after !== '' ? '&startAt=' + enc('"' + after + '"') + '&limitToFirst=200'
+    : (before !== '' ? '&endAt=' + enc('"' + before + '"') + '&limitToLast=' + (page + 2) : '&limitToLast=' + (page + 1)));
+  fb('GET', 'privateChats/' + enc(chat) + '/messages', q, null, function (st, node) {
+    if (st === 401 || st === 403) { cb(403, { error: 'You are not in this chat.' }); return; }
+    if (st !== 200) { cb(st || 502, { error: 'Could not load messages (' + (st || 'no connection') + ').' }); return; }
+    var keys = [], k, rows = [], i, m, more = false, out = [], t;
+    if (node && typeof node === 'object') for (k in node) { if (node.hasOwnProperty(k)) keys.push(k); }
+    keys.sort();
+    for (i = 0; i < keys.length; i++) {
+      k = keys[i]; m = node[k];
+      if (!m || typeof m !== 'object' || (after !== '' && k <= after) || (before !== '' && k >= before)) continue;
+      rows.push(k);
+    }
+    if (after === '' && rows.length > page) { more = true; rows = rows.slice(rows.length - page); }
+    var senders = [], sn = {};
+    for (i = 0; i < rows.length; i++) { var f = String(node[rows[i]].fromUid || ''); if (f && !sn[f]) { sn[f] = 1; senders.push(f); } }
+    pool(senders, 3, function (u, next) { nameOf(u, function () { next(); }); }, function () {
+      for (i = 0; i < rows.length; i++) {
+        k = rows[i]; m = node[k]; t = m.type || 'text'; if (t === 'event') continue;
+        var text = m.enc ? '(encrypted message - open QuickMessage on a newer browser to read it)' : (t === 'text' ? String(m.text || '') : (t === 'file' ? '[file: ' + (m.name || m.text || '') + ']' : '[' + t + ']'));
+        var fu = String(m.fromUid || '');
+        out.push({ key: k, from: fu, name: names[fu] || 'Unknown user', me: fu === myUid, text: text, ts: typeof m.timestamp === 'number' ? m.timestamp : 0 });
+      }
+      cb(200, { messages: out, more: more });
+    });
+  });
+}
+function dSend(b, cb) {
+  var chat = String(b.chat || ''), text = String(b.text || '').substring(0, 4000);
+  if (!text.replace(/\s/g, '') || !ID_OK.test(chat)) { cb(200, { ok: false }); return; }
+  fb('GET', 'privateChats/' + enc(chat) + '/chatData/encrypted', '', null, function (st, e) {
+    if (st !== 200) { cb(st || 502, { error: 'Could not send.' }); return; }
+    if (e) { cb(200, { ok: false, error: 'this chat is encrypted' }); return; }
+    fb('GET', 'privateChats/' + enc(chat) + '/participants', '', null, function (st2, p) {
+      if (st2 !== 200 || !p || typeof p !== 'object') { cb(200, { ok: false, error: 'you are not in this chat' }); return; }
+      var key = pushId(), up = {}, u;
+      up['privateChats/' + chat + '/messages/' + key] = { fromUid: myUid, text: text, timestamp: SV, deliveredAt: SV };
+      up['privateChats/' + chat + '/lastMessage'] = { fromUid: myUid, text: text, timestamp: SV, id: key };
+      up['privateChats/' + chat + '/messageRead/' + myUid] = key;
+      for (u in p) { if (p.hasOwnProperty(u) && u !== myUid) up['live/' + u + '/pings/' + chat] = { id: key, ts: SV, from: myUid }; }
+      fb('PATCH', '', '', up, function (st3) {          // the Cloud Function sends the push notification for the new message
+        if (st3 === 200) cb(200, { ok: true, key: key });
+        else cb(200, { ok: false, error: st3 === 401 ? 'verify your email address first: open the mail Firebase sent you, then try again' : 'error ' + st3 });
+      });
+    });
+  });
+}
+function dDelete(b, cb) {
+  var chat = String(b.chat || ''), key = String(b.key || '');
+  if (!ID_OK.test(chat) || !ID_OK.test(key)) { cb(200, { ok: false }); return; }
+  var base = 'privateChats/' + enc(chat);
+  fb('GET', base + '/messages/' + enc(key), '', null, function (st, m) {
+    if (st !== 200 || !m || m.fromUid !== myUid) { cb(200, { ok: false }); return; }          // only your own messages
+    var up = {}; up['privateChats/' + chat + '/messages/' + key] = null; up['privateChats/' + chat + '/media/' + key] = null;
+    function finish() { fb('PATCH', '', '', up, function (s) { cb(200, { ok: s === 200 }); }); }
+    fb('GET', base + '/lastMessage/id', '', null, function (s2, lid) {
+      if (s2 !== 200 || lid !== key) { finish(); return; }          // keep the chat list preview of the normal app right
+      fb('GET', base + '/messages', 'orderBy=' + enc('"$key"') + '&endAt=' + enc('"' + key + '"') + '&limitToLast=2', null, function (s3, prev) {
+        var pk = null, pm = null, ks = [], k, i;
+        if (prev && typeof prev === 'object') { for (k in prev) { if (prev.hasOwnProperty(k)) ks.push(k); } ks.sort(); for (i = 0; i < ks.length; i++) { if (ks[i] !== key && prev[ks[i]] && typeof prev[ks[i]] === 'object') { pk = ks[i]; pm = prev[ks[i]]; } } }
+        up['privateChats/' + chat + '/lastMessage'] = pm ? { fromUid: pm.fromUid || '', text: pm.enc ? '' : String(pm.text || ''), timestamp: typeof pm.timestamp === 'number' ? pm.timestamp : 0, id: pk } : { fromUid: '', text: '(No messages yet)', timestamp: SV };
+        finish();
+      });
+    });
+  });
+}
+function dNewChat(b, cb) {
+  var email = String(b.email || '').replace(/^\s+|\s+$/g, '').toLowerCase();
+  if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) { cb(404, { error: 'No account with that email.' }); return; }
+  fresh(function (r) {
+    if (r === 'out') return;
+    if (r !== true) { cb(0, { error: 'Could not reach Google.' }); return; }
+    // Looking an account up by email needs the server (it keeps the "let people add me by email" privacy rule): the one place this page still uses it.
+    xhr('POST', BASE.replace(/\/+$/, '') + '/email-lookup.php', 'idToken=' + enc(token) + '&email=' + enc(email), 'application/x-www-form-urlencoded', function (st, j) {
+      if (!j || !j.uid) { cb(st === 0 ? 0 : (st || 404), { error: (j && j.error) || 'No one can be added with that email.' }); return; }
+      var chat = pushId(), other = j.uid, a = {}, c2 = {};
+      var pa = {}; pa[myUid] = true; pa[other] = true;
+      a['privateChats/' + chat] = { participants: pa, lastMessage: { fromUid: '', text: '(No messages yet)', timestamp: SV } }; a['chatList/' + myUid + '/' + chat] = true;
+      c2['chatList/' + other + '/' + chat] = true;
+      fb('PATCH', '', '', a, function (s1) {          // two steps: the rules only let you add the chat to someone's list once the chat exists
+        if (s1 !== 200) { cb(200, { error: s1 === 401 ? 'Verify your email address first (open the mail Firebase sent you).' : 'Could not start the chat.' }); return; }
+        fb('PATCH', '', '', c2, function (s2) { cb(s2 === 200 ? 200 : 500, s2 === 200 ? { chat: chat } : { error: 'Could not add the chat for the other person.' }); });
+      });
+    });
+  });
+}
 function setErr(t) { document.getElementById('err').innerHTML = esc(t || ''); }
 function show(h) { document.getElementById('v').innerHTML = h; }
 function stop() { if (timer) { clearTimeout(timer); timer = null; } }
@@ -98,28 +308,37 @@ function loginView() {
     '<div class="note">' + (mode === 'firebase' ? 'Firebase account (email + password; there is no Google sign-in here).' : 'Private server account.') + '</div></div>' +
     '<div class="box"><b>Server</b><br>' +
     '<label><input type="radio" name="md" id="md1"' + (mode === 'private' ? ' checked="checked"' : '') + '> Private server</label> ' +
-    '<label><input type="radio" name="md" id="md2"' + (mode === 'firebase' ? ' checked="checked"' : '') + '> Firebase (through proxy.php)</label><br>' +
+    '<label><input type="radio" name="md" id="md2"' + (mode === 'firebase' ? ' checked="checked"' : '') + '> Firebase</label><br>' +
     'Private server address<br><input id="sv" type="text" autocapitalize="off" value="' + esc(server) + '"><div class="note">e.g. http://192.168.1.20:8080 (empty = the server this page came from)</div>' +
-    'Firebase database address<br><input id="dbu" type="text" autocapitalize="off" value="' + esc(dbUrl) + '"><div class="note">e.g. https://your-project-default-rtdb.firebaseio.com (empty = the default database). Firebase always goes through proxy.php on this site.</div>' +
+    'Firebase database address<br><input id="dbu" type="text" autocapitalize="off" value="' + esc(dbUrl) + '"><div class="note">e.g. https://your-project-default-rtdb.firebaseio.com (empty = the default database).</div>' +
+    'Firebase connection<br><label><input type="radio" name="vi" id="vi1"' + (via === 'direct' ? ' checked="checked"' : '') + '> Direct</label> <label><input type="radio" name="vi" id="vi2"' + (via === 'proxy' ? ' checked="checked"' : '') + '> Through proxy.php</label>' +
+    '<div class="note">Direct: this browser talks to Firebase itself, which puts no load on this website (needs a browser with modern HTTPS). Proxy: for very old browsers; used automatically if direct cannot connect.</div>' +
     '<button onclick="saveServer()">Save</button></div>');
 }
 function saveServer() {
   var d = cleanDb(document.getElementById('dbu').value);
   if (d === null) { setErr('That is not a Firebase database address (it should look like https://name-default-rtdb.firebaseio.com).'); return; }
   server = cleanUrl(document.getElementById('sv').value); dbUrl = d;
-  mode = document.getElementById('md2').checked ? 'firebase' : 'private';
-  try { localStorage.setItem('qm-lmode', mode); localStorage.setItem('qm-lserver', server); localStorage.setItem('qm-ldb', dbUrl); localStorage.removeItem('qm-ltoken'); } catch (e) {}
-  token = ''; chatsCache = null; setErr('Saved. Now using ' + (mode === 'firebase' ? 'Firebase' + (dbUrl ? ' (' + dbUrl + ')' : ' (default database)') : 'the private server at ' + base()) + '.'); loginView();
+  mode = document.getElementById('md2').checked ? 'firebase' : 'private'; via = document.getElementById('vi2').checked ? 'proxy' : 'direct';
+  try { localStorage.setItem('qm-lmode', mode); localStorage.setItem('qm-lserver', server); localStorage.setItem('qm-ldb', dbUrl); localStorage.setItem('qm-lvia', via); } catch (e) {}
+  clearSession(); chatsCache = null; setErr('Saved. Now using ' + (mode === 'firebase' ? 'Firebase' + (via === 'proxy' ? ' through proxy.php' : ' directly') + (dbUrl ? ' (' + dbUrl + ')' : ' (default database)') : 'the private server at ' + base()) + '.'); loginView();
 }
 function doAuth(kind) {
   setErr('');
-  api('auth/' + kind, { email: document.getElementById('em').value, password: document.getElementById('pw').value }, function (st, j) {
+  var b = { email: document.getElementById('em').value, password: document.getElementById('pw').value };
+  api('auth/' + kind, b, function (st, j) {
+    if (st === 0 && mode === 'firebase' && via === 'direct') {          // this browser can't reach Google: use the proxy from now on (it tries again with it right away)
+      via = 'proxy'; try { localStorage.setItem('qm-lvia', 'proxy'); } catch (e0) {}
+      setErr('This browser could not reach Google directly, so it now uses proxy.php.');
+      api('auth/' + kind, b, function (st2, j2) { if (st2 !== 200) { setErr(j2.error || 'Could not log in.'); return; } token = j2.token; try { localStorage.setItem('qm-ltoken', token); } catch (e1) {} listView(); });
+      return;
+    }
     if (st !== 200) { setErr(j.error || 'Could not log in.'); return; }
-    token = j.token; try { localStorage.setItem('qm-ltoken', token); } catch (e) {}
+    if (!(mode === 'firebase' && via === 'direct')) { token = j.token; try { localStorage.setItem('qm-ltoken', token); } catch (e) {} }
     listView();
   });
 }
-function logout() { token = ''; chatsCache = null; try { localStorage.removeItem('qm-ltoken'); } catch (e) {} loginView(); }
+function logout() { clearSession(); chatsCache = null; loginView(); }
 
 var more = false, seen = {}, firstKey = '', sendN = 0, cdT = {}, polling = false;
 function near() { try { var d = document.documentElement, b = document.body; return (window.pageYOffset || d.scrollTop || 0) + (window.innerHeight || d.clientHeight || 0) >= Math.max(d.scrollHeight, b.scrollHeight) - 120; } catch (e) { return true; } }
@@ -183,7 +402,7 @@ function msgHtml(m) {
 function openChat(id, name) {
   markOpened(id); stop(); chat = id; chatName = name; lastKey = ''; firstKey = ''; seen = {}; more = false; setErr('');
   show('<div class="box"><button class="sm" onclick="listView(false)">&laquo; Chats</button> <b>' + esc(name) + '</b> &nbsp; <button class="sm" id="rf" onclick="manualRefresh()">Refresh</button>' +
-    '<div class="note">Updates by itself every 15 seconds.</div></div><div id="older"></div><div id="ms"><div class="note">Loading messages...</div></div>' +
+    '<div class="note">Updates by itself every 10 seconds.</div></div><div id="older"></div><div id="ms"><div class="note">Loading messages...</div></div>' +
     '<div class="box"><textarea id="tx" rows="2"></textarea><br><button id="sb" onclick="send()">Send</button><span class="note"> Text only. Encrypted chats can\'t be read here.</span></div>');
   poll(true);
 }
@@ -194,7 +413,7 @@ function olderBtn() {
 function manualRefresh() { cool('rf', 'Refresh', 5); stop(); poll(false); }
 function poll(first) {
   if (!chat || polling) return;
-  if (!first && document.hidden === true) { stop(); timer = setTimeout(function () { poll(false); }, 15000); return; }      // nobody is looking: don't download anything
+  if (!first && document.hidden === true) { stop(); timer = setTimeout(function () { poll(false); }, 10000); return; }      // nobody is looking: don't download anything
   polling = true; var id = chat;
   api('lite/messages?chat=' + encodeURIComponent(id) + '&after=' + encodeURIComponent(lastKey), null, function (st, j) {
     polling = false;
@@ -212,7 +431,7 @@ function poll(first) {
       if (h && stick) bottom();
       setErr('');
     } else if (st !== 200) setErr(j.error || 'Could not load messages. Will try again.');
-    stop(); timer = setTimeout(function () { poll(false); }, 15000);
+    stop(); timer = setTimeout(function () { poll(false); }, 10000);
   });
 }
 function loadOlder() {
@@ -247,7 +466,7 @@ function doSend(pid, v, retry) {
       var a = document.getElementById('a_' + pid); a.id = 'a_' + j.key; a.innerHTML = '<a onclick="askDel(\'' + j.key + '\')">Delete</a>';
     } else {
       el.className = 'msg me failed'; var q = v.replace(/\\/g, '\\\\').replace(/'/g, "\\'").replace(/\n/g, '\\n');
-      document.getElementById('a_' + pid).innerHTML = 'Not sent' + (st === 200 ? ' (encrypted chat?)' : '') + '. <a onclick="doSend(\'' + pid + '\',\'' + q + '\',true)">Try again</a> &nbsp; <a onclick="var e=document.getElementById(\'m_' + pid + '\');e.parentNode.removeChild(e)">Remove</a>';
+      document.getElementById('a_' + pid).innerHTML = 'Not sent' + (j && j.error ? ' (' + esc(j.error) + ')' : (st === 200 ? ' (encrypted chat?)' : '')) + '. <a onclick="doSend(\'' + pid + '\',\'' + q + '\',true)">Try again</a> &nbsp; <a onclick="var e=document.getElementById(\'m_' + pid + '\');e.parentNode.removeChild(e)">Remove</a>';
     }
   });
 }

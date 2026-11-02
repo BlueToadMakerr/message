@@ -2,6 +2,16 @@
 
 Newest first. Older rounds (1–43) are kept below exactly as they were written.
 
+## 1.47.2 — Scrolling fix
+
+- **Chat scrolling no longer jumps when pictures, videos or link previews load.** The browser's own scroll anchoring is off for the message list (it was fighting the app's correction and moving things twice), and the app now keeps the message you are reading exactly where it is on screen whatever grows above it or inside it. At the bottom it stays at the bottom, and "am I at the bottom" is no longer flipped by the growth itself. The chat also stays at the bottom when its area changes size (keyboard, composer growing, rotating).
+
+## 1.47.1 — Legacy talks to Firebase directly
+
+- **Legacy (compatibility) page, Firebase mode: direct connection.** Sign-in, chat list, messages, sending, deleting and starting chats now go straight from the browser to Google/Firebase with the user's own token under the normal database rules, so the website host (InfinityFree) is no longer hit for every refresh. `proxy.php` remains as a selectable "Connection" option and as an automatic fallback when the browser can't reach Google; `email-lookup.php` is still used once per new chat.
+- Auto refresh is now every **10 seconds** (manual refresh still limited to once per 5 s).
+- Direct sending needs a verified email (the database rules require it); the failed-message line says so.
+
 ## 1.47.0 — Round 47
 
 - **Swipe to reply.** Swipe a message to the right (touch screens) and it starts a reply; the row follows your finger, buzzes once at the trigger point and springs back. Vertical scrolling is untouched and the first 24px from the screen edge are ignored so the back gesture still works.

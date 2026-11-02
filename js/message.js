@@ -425,21 +425,41 @@ function buildMessage(key, msg) {
   return el;
 }
 
-// Keeps the page from jumping when something in a message changes size later (link previews, pictures, edits, reactions):
-// at the bottom the view stays at the bottom, otherwise anything that grows ABOVE what you are reading pushes the scroll position by the same amount.
+// Keeps the page from jumping when something in a message changes size later (link previews, pictures, videos, edits, reactions, the keyboard):
+//  - at the bottom the view stays at the bottom (decided by what the USER did, never by a scroll event that the growth itself caused);
+//  - anywhere else the message you are reading is the anchor: whatever happens above it, it stays exactly where it was on screen.
+// (The browser's own scroll anchoring is switched off for .messages in the CSS: it would fight with this and move things twice.)
+let anchorEl = null, anchorTop = 0, lastInput = 0, lastGrow = 0;
+const noteInput = () => { lastInput = Date.now(); };
+for (const t of ["wheel", "touchstart", "touchmove", "pointerdown", "keydown"]) messagesDiv.addEventListener(t, noteInput, { passive: true, capture: true });
+function pickAnchor() {
+  const top = messagesDiv.getBoundingClientRect().top;
+  anchorEl = null;
+  for (const el of messagesDiv.children) {
+    if (!el.classList.contains("msg") || !el.offsetHeight) continue;
+    const r = el.getBoundingClientRect();
+    if (r.bottom > top + 1) { anchorEl = el; anchorTop = r.top - top; return; }
+  }
+}
 const msgHeights = new WeakMap();
+function keepPlace() {
+  if (stick) { scrollToBottom(); return; }
+  if (!anchorEl || !anchorEl.isConnected) { pickAnchor(); return; }
+  const d = anchorEl.getBoundingClientRect().top - messagesDiv.getBoundingClientRect().top - anchorTop;
+  if (Math.abs(d) >= 1) { ignoreScrollUntil = Date.now() + 250; messagesDiv.scrollTop += d; }
+  pickAnchor();
+}
 const sizeWatch = new ResizeObserver(entries => {
-  let push = 0, bottom = false;
+  let changed = false;
   for (const e of entries) {
     const h = e.target.offsetHeight, prev = msgHeights.get(e.target);
     msgHeights.set(e.target, h);
-    if (prev == null || prev === h) continue;
-    if (stick) bottom = true;
-    else if (e.target.getBoundingClientRect().top < messagesDiv.getBoundingClientRect().top) push += h - prev;
+    if (prev != null && prev !== h) changed = true;
   }
-  if (bottom) scrollToBottom();
-  else if (push) { ignoreScrollUntil = Date.now() + 250; messagesDiv.scrollTop += push; }
+  if (changed) { lastGrow = Date.now(); keepPlace(); }
 });
+// the chat area itself changing size (keyboard, composer growing, rotating): stay at the bottom if that is where you were
+new ResizeObserver(() => { if (stick) scrollToBottom(); else pickAnchor(); }).observe(messagesDiv);
 
 function appendLive(key, msg) {
   if (document.getElementById("msg-" + key)) return null;
@@ -539,7 +559,10 @@ function fillViewport() {
 }
 
 messagesDiv.addEventListener("scroll", () => {
-  stick = isNearBottom();
+  const near = isNearBottom();
+  // A scroll event right after something grew, with no finger/wheel/key involved, is the layout moving, not the reader leaving the bottom.
+  if (!(stick && !near && Date.now() - lastGrow < 200 && Date.now() - lastInput > 400)) stick = near;
+  if (!stick) pickAnchor();
   if (stick) jumpBtn.classList.add("hidden");
   if (messagesDiv.scrollTop < 40 && Date.now() > ignoreScrollUntil) loadOlder();
   closeMenu();
