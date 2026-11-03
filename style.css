@@ -970,3 +970,8 @@ dialog.modal.tour { width: min(520px, calc(100vw - 1.5rem)); border: 1px solid v
 .mp-item small { margin-left: auto; color: var(--muted); font-size: .72rem; }
 .mp-all { background: #f59e0b; color: #fff; font-weight: 800; display: inline-grid; place-items: center; }
 @media (prefers-reduced-motion: reduce) { .mention-pop { animation: none; } .msg.swipe-back { transition: none; } }
+
+/* plugin banner (qm.banner.show) */
+.plugin-banner{position:fixed;left:50%;transform:translateX(-50%);top:calc(var(--sat,0px) + 8px);z-index:62;display:flex;align-items:center;gap:8px;flex-wrap:wrap;max-width:min(560px,94vw);padding:.45rem 2rem .45rem .8rem;border-radius:12px;background:var(--card,#fff);color:var(--text,#111);border:1px solid var(--border,#8886);box-shadow:0 6px 24px #0004}
+.plugin-banner.success{border-color:#16a34a}.plugin-banner.error{border-color:#dc2626}
+.plugin-banner .plugin-x{position:absolute;right:6px;top:4px}

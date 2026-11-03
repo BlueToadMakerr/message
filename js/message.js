@@ -806,6 +806,11 @@ composer.addEventListener("submit", e => {
   e.preventDefault();
   const text = msgInput.value.trim();
   if (!text) return;
+  // "/name args": a plugin may have registered that command (Developer mode); if one did, it handles it and nothing is sent
+  if (text[0] === "/" && window.top !== window) {
+    let used = false; try { used = !!(window.top.QM && window.top.QM.plugins && window.top.QM.plugins.command && window.top.QM.plugins.command(text, chatId)); } catch (_) { used = false; }
+    if (used) { msgInput.value = ""; mbox.refresh(); autosize(); msgInput.focus(); return; }
+  }
   const mn = mentionsOf(text, peopleNow(), me);
   msgInput.value = "";
   mbox.refresh();
@@ -815,6 +820,27 @@ composer.addEventListener("submit", e => {
   startJob({ type: "text", text, mentions: mn.uids, everyone: mn.everyone });
   msgInput.focus();
 });
+
+// What the plugin host (js/plugins.js, Developer mode) can read and do in this chat. Same-origin frames call these directly.
+window.__qmMsgs = () => [...messagesDiv.querySelectorAll(".msg[data-key]")].map(el => {
+  const m = msgData.get(el.dataset.key);
+  if (!m || m.type === "event") return null;
+  const who = m.fromUid === me ? ownName : (peekProfile(m.fromUid) || {}).displayName || "";
+  const textual = isText(m) && !m._locked;
+  return { key: el.dataset.key, fromMe: m.fromUid === me, from: who || "", text: textual ? String(m.text ?? m.content ?? "").slice(0, 2000) : null, type: m.type || "text", name: m.name ? String(m.name).slice(0, 120) : undefined,
+    time: m.timestamp || null, replyTo: m.replyTo && m.replyTo.key || null, edited: !!m.editedAt, pending: el.classList.contains("pending") };
+}).filter(Boolean);
+window.__qmComposer = {
+  get: () => msgInput.value,
+  set: t => { msgInput.value = String(t); msgInput.dispatchEvent(new Event("input", { bubbles: true })); mbox.refresh(); autosize(); },
+  focus: () => msgInput.focus(),
+  send: (t, replyKey) => {
+    const text = String(t).trim().slice(0, 4000); if (!text) return false;
+    if (replyKey && msgData.has(replyKey)) setReply(replyKey);
+    const mn = mentionsOf(text, peopleNow(), me);
+    return !!startJob({ type: "text", text, mentions: mn.uids, everyone: mn.everyone });
+  }
+};
 
 // ---------- sending: every outgoing message first shows up as a grey "pending" copy of what it will look like ----------
 // A job owns that grey bubble. While it uploads/writes it shows progress; on failure it turns red with an alert button

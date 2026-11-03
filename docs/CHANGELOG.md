@@ -2,6 +2,20 @@
 
 Newest first. Older rounds (1–43) are kept below exactly as they were written.
 
+## 1.48.0 — Many more plugin functions; disabling a plugin works at once
+
+- **Fixed: switching a plugin off did not fully switch it off until Developer mode was toggled.** The Plugins page asked the host to "start all enabled plugins", which never stopped the disabled ones. The host now makes what is running match what is saved: switched-off, deleted or blocked plugins are stopped (and everything they put on screen is taken back: CSS, panels, banners, buttons, hidden elements, the page title, shortcuts, commands, timers), edited ones restart, new ones start, unchanged ones are left alone.
+- **New plugin functions** (additive: the plugin API number stays 1; set `minSite` to 1.48.0 when you use them). Five new permissions: `send`, `clipboard`, `notify`, `keys`, `commands`.
+  - Messages: `qm.messages.list / find / get / jump / reply` (the messages loaded in the open chat, with sender, type, time, reply and edited state).
+  - Chat: `qm.chat.getText / setText / clearText / focus / list / info / send`.
+  - Slash commands: `qm.commands.*` and the `command` event (`/name args` is handed to the plugin instead of being sent). Shortcuts: `qm.keys.*` and the `key` event.
+  - Look and feel: `qm.style.vars / sheet / removeSheet / get`, `qm.banner.show / hide`, panel `progress`, `qm.notify`, `qm.vibrate`, `qm.clipboard.write`.
+  - More page control: `qm.page.waitFor / text / attr / count / focus / press / select / check / hide / show / title`.
+  - Helpers that need no permission: `qm.every / after / now`, `qm.util.*`, `qm.bus.emit / on` (plugins talking to each other), `qm.app.info`, `qm.plugins.list`, `qm.storage.keys / clear / usage`.
+  - New events: `command`, `key`, `banner-button`, `bus`, `online`, `offline`, `visibility`, `theme-change`.
+  - Safety: sending is rate limited (5 per 10 seconds) and announced with a notice; shortcuts need ctrl/alt/meta and cannot take browser shortcuts; commands and shortcuts belong to one plugin each.
+- Two new templates (slash commands + shortcut, copy my messages), documentation in `plugin-docs.html`.
+
 ## 1.47.3 — Uploads survive closing the app (Android), speaker fix
 
 - **Android: closing the app no longer cancels an upload.** If you swipe the app away while a file is uploading, the page that is doing the upload is kept running quietly in the background (the "Uploading a file" notification stays), and it is released as soon as the upload is done (or after 30 minutes). When you open the app again, the chat shows the file as an uploading message with its percentage, and the chat list shows "Uploading". Both pages share what they are uploading through `localStorage` (`qm-up:*`), and the upload notification adds the pages up.

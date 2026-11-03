@@ -39,6 +39,36 @@ const qm={ version:SITE, apiVersion:API,
   ask:(t,ph)=>call("ask",[t,ph]),
   sleep:ms=>new Promise(r=>setTimeout(r,Math.max(0,Math.min(60000,+ms||0)))),
   fetch:(...a)=>fetch(...a) };
+const timers=new Set();
+Object.assign(qm,{
+  now:()=>Date.now(),
+  every:(ms,fn)=>{const t=setInterval(()=>{try{const r=fn();if(r&&r.catch)r.catch(x=>call("log",["error in every: "+x]));}catch(x){call("log",["error in every: "+x]);}},Math.max(200,+ms||1000));timers.add(t);return()=>{clearInterval(t);timers.delete(t);};},
+  after:(ms,fn)=>{const t=setTimeout(()=>{timers.delete(t);try{const r=fn();if(r&&r.catch)r.catch(x=>call("log",["error in after: "+x]));}catch(x){call("log",["error in after: "+x]);}},Math.max(0,+ms||0));timers.add(t);return()=>{clearTimeout(t);timers.delete(t);};},
+  util:{
+    debounce:(fn,ms)=>{let t;return(...a)=>{clearTimeout(t);t=setTimeout(()=>fn(...a),ms);};},
+    throttle:(fn,ms)=>{let last=0;return(...a)=>{const n=Date.now();if(n-last>=ms){last=n;return fn(...a);}};},
+    uid:()=>Math.random().toString(36).slice(2,10),
+    clamp:(n,a,b)=>Math.min(b,Math.max(a,n)),
+    fmtBytes:n=>{n=+n||0;const u=["B","KB","MB","GB"];let i=0;while(n>=1024&&i<3){n/=1024;i++;}return (i?n.toFixed(1):n)+" "+u[i];},
+    fmtTime:(ts,o)=>new Date(ts).toLocaleString(undefined,o),
+    fmtDuration:ms=>{ms=Math.max(0,+ms||0);const s=Math.floor(ms/1000),h=Math.floor(s/3600),m=Math.floor(s%3600/60),x=s%60;return (h?h+":"+String(m).padStart(2,"0"):m)+":"+String(x).padStart(2,"0");}
+  },
+  bus:{emit:(t,d)=>call("bus.emit",[t,d]),on:(t,fn)=>qm.on("bus",e=>{if(e&&e.topic===t)fn(e.data,e.from);})},
+  app:{info:()=>call("app.info")},
+  plugins:{list:()=>call("plugins.list")},
+  messages:{list:o=>call("messages.list",[o]),find:o=>call("messages.find",[o]),get:k=>call("messages.get",[k]),jump:k=>call("messages.jump",[k]),reply:(k,t)=>call("messages.reply",[k,t])},
+  clipboard:{write:t=>call("clipboard.write",[t])},
+  notify:(t,b)=>call("notify",[t,b]), vibrate:p=>call("vibrate",[p]),
+  keys:{add:o=>call("keys.add",[o]),remove:id=>call("keys.remove",[id]),clear:()=>call("keys.clear"),list:()=>call("keys.list")},
+  commands:{add:o=>call("commands.add",[o]),remove:n=>call("commands.remove",[n]),clear:()=>call("commands.clear"),list:()=>call("commands.list")},
+  banner:{show:o=>call("banner.show",[o]),hide:()=>call("banner.hide")}
+});
+Object.assign(qm.chat,{getText:()=>call("chat.getText"),setText:t=>call("chat.setText",[t]),clearText:()=>call("chat.setText",[""]),focus:()=>call("chat.focus"),list:()=>call("chat.list"),info:()=>call("chat.info"),send:(t,o)=>call("chat.send",[t,o])});
+Object.assign(qm.style,{vars:o=>call("style.vars",[o]),get:()=>call("style.get"),sheet:(id,css)=>call("style.sheet",[id,css]),removeSheet:id=>call("style.removeSheet",[id])});
+Object.assign(qm.storage,{keys:()=>call("storage.keys"),clear:()=>call("storage.clear"),usage:()=>call("storage.usage")});
+Object.assign(qm.page,{waitFor:(s,o)=>call("page.waitFor",[s,o]),text:(s,o)=>call("page.text",[s,o]),attr:(s,n,o)=>call("page.attr",[s,n,o]),count:(s,o)=>call("page.count",[s,o]),
+  focus:(s,o)=>call("page.focus",[s,o]),press:(k,s,o)=>call("page.press",[k,s,o]),select:(s,v,o)=>call("page.select",[s,v,o]),check:(s,v,o)=>call("page.check",[s,v,o]),
+  hide:(s,o)=>call("page.hide",[s,o]),show:(s,o)=>call("page.show",[s,o]),title:t=>call("page.title",[t])});
 const AsyncFunction=Object.getPrototypeOf(async function(){}).constructor;
 (async()=>{ try{ await new AsyncFunction("qm",${JSON.stringify(code)})(qm); call("ready"); }catch(e){ call("crash",[String(e&&e.stack||e)]); } })();`;
   return `<!doctype html><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="${csp}"><script>${bootJs.replace(/<\/script/gi, "<\\/script")}<\/script>`;
@@ -47,16 +77,17 @@ const AsyncFunction=Object.getPrototypeOf(async function(){}).constructor;
 const need = (run, perm) => { if (!run.plugin.permissions.includes(perm)) throw new Error(`Needs the "${perm}" permission (add it to the plugin).`); };
 
 function frames() { return [...document.querySelectorAll("iframe")].filter(f => { try { return !!f.contentDocument; } catch (_) { return false; } }); }
+const styleText = run => (Object.keys(run.vars).length ? ":root{" + Object.entries(run.vars).map(([k, v]) => k + ":" + v + ";").join("") + "}\n" : "") + [...run.sheets.values()].join("\n") + "\n" + run.css;
 function applyStyle(run) {
-  const targets = [document, ...frames().map(f => f.contentDocument)];
+  const css = styleText(run).trim(), targets = [document, ...frames().map(f => f.contentDocument)];
   for (const d of targets) {
     let s = d.querySelector(`style[data-qm-plugin="${run.plugin.id}"]`);
-    if (!run.css) { s?.remove(); continue; }
+    if (!css) { s?.remove(); continue; }
     if (!s) { s = d.createElement("style"); s.dataset.qmPlugin = run.plugin.id; (d.head || d.documentElement).appendChild(s); }
-    s.textContent = run.css;
+    s.textContent = css;
   }
 }
-document.addEventListener("load", e => { if (e.target && e.target.tagName === "IFRAME") { for (const r of runs.values()) { if (r.css) setTimeout(() => applyStyle(r), 0); if (r.buttons.size) setTimeout(() => injectButtons(r), 100); } emit("page-load", { frame: e.target.id === "callFrame" ? "call" : "detail" }); } }, true);
+document.addEventListener("load", e => { if (e.target && e.target.tagName === "IFRAME") { attachKeys(); for (const r of runs.values()) { if (styleText(r).trim()) setTimeout(() => applyStyle(r), 0); if (r.buttons.size) setTimeout(() => injectButtons(r), 100); } emit("page-load", { frame: e.target.id === "callFrame" ? "call" : "detail" }); } }, true);
 
 function paintPanel(run, o) {
   if (!panelsHost) { panelsHost = document.createElement("div"); panelsHost.className = "plugin-panels"; document.body.appendChild(panelsHost); }
@@ -67,6 +98,7 @@ function paintPanel(run, o) {
   const h = document.createElement("strong"); h.textContent = String(o.title || run.plugin.name).slice(0, 60); el.appendChild(h);
   const x = document.createElement("button"); x.type = "button"; x.className = "plugin-x"; x.textContent = "×"; x.setAttribute("aria-label", "Close panel"); x.onclick = () => paintPanel(run, null); el.appendChild(x);
   for (const l of (Array.isArray(o.lines) ? o.lines : []).slice(0, 30)) { const p = document.createElement("div"); p.textContent = String(l).slice(0, 300); el.appendChild(p); }
+  if (typeof o.progress === "number" && isFinite(o.progress)) { const b = document.createElement("div"); b.className = "up-bar"; b.innerHTML = "<i></i>"; b.firstChild.style.width = Math.round(Math.max(0, Math.min(1, o.progress)) * 100) + "%"; el.appendChild(b); }
   for (const b of (Array.isArray(o.buttons) ? o.buttons : []).slice(0, 8)) {
     const bt = document.createElement("button"); bt.type = "button"; bt.className = "btn small"; bt.textContent = String(b).slice(0, 40);
     bt.onclick = () => send(run, "panel-button", { label: String(b) }); el.appendChild(bt);
@@ -164,7 +196,7 @@ function injectButtons(run) {
     sp.host.insertBefore(el, sp.before || null);
   }
 }
-setInterval(() => { for (const r of runs.values()) if (r.buttons.size) injectButtons(r); }, 1500);      // pages are replaced when you move around: put the buttons back
+setInterval(() => { attachKeys(); for (const r of runs.values()) if (r.buttons.size) injectButtons(r); }, 1500);      // pages are replaced when you move around: put the buttons back
 
 // ---------------------------------------------------------------- calls and developer views
 const callInfo = () => ctx.call ? { chatId: ctx.call.chatId || null, joined: !!ctx.call.joined, visible: !!ctx.call.visible, muted: !!ctx.call.muted, camOn: !!ctx.call.camOn, screenOn: !!ctx.call.screenOn, startedAt: ctx.call.startLocal || null, title: ctx.call.title || "" } : { chatId: null, joined: false, visible: false };
@@ -176,6 +208,77 @@ function devCards(scope) {
 }
 const lastView = {};
 function devView(scope) { const n = Date.now(); if (n - (lastView[scope] || 0) < 800) return; lastView[scope] = n; emit("dev-view", { scope }); }
+
+
+// ---------------------------------------------------------------- more host helpers (site 1.48.0)
+const clampN = (n, a, b, d) => { n = Number(n); return isFinite(n) ? Math.max(a, Math.min(b, n)) : d; };
+const msgWin = () => { const f = document.getElementById("detailFrame"); try { return f && f.contentWindow && f.contentWindow.__qmMsgs ? f.contentWindow : null; } catch (_) { return null; } };
+const needChat = () => { const w = msgWin(); if (!w || !w.__qmComposer) throw new Error("No chat is open."); return w; };
+const isDark = () => { const t = document.documentElement.dataset.theme; return t ? t === "dark" : !!(window.matchMedia && matchMedia("(prefers-color-scheme: dark)").matches); };
+const asText = m => (m.text == null ? "" : String(m.text));
+function msgFilter(list, o) {
+  o = o || {}; const needle = o.text ? String(o.text).toLowerCase() : "";
+  let re = null; if (o.regex) { try { re = new RegExp(String(o.regex).slice(0, 100), "i"); } catch (_) { throw new Error("Not a valid regular expression."); } }
+  return list.filter(m => (o.fromMe === undefined || m.fromMe === !!o.fromMe) && (!o.type || m.type === o.type) && (!needle || asText(m).toLowerCase().includes(needle)) && (!re || re.test(asText(m))));
+}
+// keyboard shortcuts (permission "keys")
+const RESERVED_KEYS = new Set(["ctrl+c", "ctrl+v", "ctrl+x", "ctrl+a", "ctrl+z", "ctrl+y", "ctrl+r", "ctrl+w", "ctrl+t", "ctrl+n", "ctrl+l", "ctrl+f", "ctrl+p", "ctrl+s", "meta+c", "meta+v", "meta+x", "meta+a", "meta+z", "meta+r", "meta+w", "meta+t", "meta+q", "alt+f4"]);
+function comboOf(e) {
+  const k = e.key === " " ? "space" : String(e.key || "").toLowerCase();
+  if (["control", "shift", "alt", "meta"].includes(k)) return "";
+  return [e.ctrlKey && "ctrl", e.altKey && "alt", e.shiftKey && "shift", e.metaKey && "meta", k].filter(Boolean).join("+");
+}
+function cleanCombo(c) {
+  const parts = String(c || "").toLowerCase().replace(/\s+/g, "").split("+").filter(Boolean);
+  if (!parts.length) throw new Error("Give a key combination such as ctrl+shift+k.");
+  const key = parts.pop(), mods = ["ctrl", "alt", "shift", "meta"].filter(m => parts.includes(m));
+  if (parts.some(m => !["ctrl", "alt", "shift", "meta"].includes(m))) throw new Error("Unknown modifier in the key combination (use ctrl, alt, shift, meta).");
+  if (!/^([a-z0-9]|f([1-9]|1[0-2])|space|escape|enter|tab|arrowup|arrowdown|arrowleft|arrowright|[,./;'\[\]\\=`-])$/.test(key)) throw new Error("Unknown key “" + key.slice(0, 12) + "”.");
+  if (!mods.some(m => m === "ctrl" || m === "alt" || m === "meta") && !/^f([1-9]|1[0-2])$/.test(key)) throw new Error("A shortcut needs ctrl, alt or meta (or be an F key), so typing keeps working.");
+  const out = [...mods, key].join("+");
+  if (RESERVED_KEYS.has(out)) throw new Error("That combination belongs to the browser (" + out + ").");
+  return out;
+}
+const keyDocs = new WeakSet();
+function onKey(e) {
+  const c = comboOf(e); if (!c) return;
+  for (const r of runs.values()) for (const k of r.keys.values()) if (k.combo === c) { e.preventDefault(); e.stopPropagation(); send(r, "key", { id: k.id, combo: c }); return; }
+}
+function attachKeys() {
+  for (const d of [document, ...frames().map(f => f.contentDocument)]) { if (!d || keyDocs.has(d)) continue; keyDocs.add(d); d.addEventListener("keydown", onKey, true); }
+}
+// slash commands (permission "commands"): the chat page asks here before it sends text that starts with "/"
+function runCommand(text, chatId) {
+  const m = /^\/([a-z][a-z0-9_-]{0,23})(?:\s+([\s\S]*))?$/i.exec(String(text || "").trim()); if (!m) return false;
+  const name = m[1].toLowerCase();
+  for (const r of runs.values()) if (r.commands.has(name)) { send(r, "command", { name, args: (m[2] || "").trim(), chatId: chatId || ctx.chatId || null }); return true; }
+  return false;
+}
+// a banner across the top (permission "panel")
+function paintBanner(run, o) {
+  if (!o) { run.bannerEl?.remove(); run.bannerEl = null; return; }
+  let el = run.bannerEl;
+  if (!el) { el = document.createElement("div"); el.className = "plugin-banner"; document.body.appendChild(el); run.bannerEl = el; }
+  el.className = "plugin-banner " + (["info", "success", "error"].includes(o.kind) ? o.kind : "info");
+  el.replaceChildren();
+  const t = document.createElement("span"); t.textContent = String(o.text || "").slice(0, 200); el.appendChild(t);
+  for (const b of (Array.isArray(o.buttons) ? o.buttons : []).slice(0, 3)) { const bt = document.createElement("button"); bt.type = "button"; bt.className = "btn small"; bt.textContent = String(b).slice(0, 30); bt.onclick = () => send(run, "banner-button", { label: String(b) }); el.appendChild(bt); }
+  const x = document.createElement("button"); x.type = "button"; x.className = "plugin-x"; x.textContent = "×"; x.setAttribute("aria-label", "Close"); x.onclick = () => paintBanner(run, null); el.appendChild(x);
+}
+const CSS_VAR = /^--[\w-]{1,40}$/, CSS_VAL = /^[^;{}<>\\]{1,100}$/;
+function restoreHidden(run) { for (const [el, prev] of run.hidden) { try { el.style.display = prev; } catch (_) { /* gone */ } } run.hidden.clear(); }
+// the page-level helpers share these
+async function waitForEl(run, sel, o) {
+  o = o || {}; const until = Date.now() + clampN(o.timeout, 100, 30000, 5000);
+  while (!run.dead) {
+    let list = []; try { list = queryPage(sel, { ...o, limit: 200 }); } catch (e) { if (/not open/.test(e.message)) list = []; else throw e; }
+    const hit = list[Number(o.index) || 0];
+    if (hit) return describe(hit.el, hit.i);
+    if (Date.now() > until) return null;
+    await sleep(120);
+  }
+  return null;
+}
 
 const api = {
   toast: (run, [t, k]) => { need(run, "toast"); localToast(`${run.plugin.name}: ${String(t).slice(0, 200)}`, ["info", "success", "error"].includes(k) ? k : "info"); },
@@ -261,12 +364,115 @@ const api = {
     try { return await promptDialog({ title: String(title || "Question").slice(0, 80), message: "Asked by the plugin “" + run.plugin.name + "”.", input: { placeholder: String(placeholder || "").slice(0, 80), maxLength: 500 }, okText: "OK" }); }
     finally { run.asking = false; }
   },
+  // ---- more of everything (site 1.48.0) ----
+  "app.info": run => ({ site: SITE_VERSION, api: API_VERSION, platform: window.QMApp ? "android" : window.__qmIosApp ? "ios" : "web", online: navigator.onLine, dark: isDark(), language: navigator.language || "", ...(run.plugin.permissions.includes("chat") ? { chatId: ctx.chatId } : {}) }),
+  "plugins.list": () => [...runs.values()].map(r => ({ id: r.plugin.id, name: r.plugin.name, version: r.plugin.version, state: r.state })),
+  "bus.emit": (run, [topic, data]) => {
+    topic = String(topic || "").slice(0, 60); if (!topic) throw new Error("Give a topic.");
+    const s = JSON.stringify(data ?? null); if (s.length > 20000) throw new Error("That message is too big (20 KB at most).");
+    let n = 0; for (const r of runs.values()) if (r !== run) { send(r, "bus", { topic, data: JSON.parse(s), from: run.plugin.name }); n++; }
+    return n;
+  },
+  "storage.keys": run => Object.keys(readStore(run.plugin.id)),
+  "storage.clear": run => { writeStore(run.plugin.id, {}); },
+  "storage.usage": run => ({ bytes: JSON.stringify(readStore(run.plugin.id)).length, limit: 100000 }),
+  // chat (permission "chat"; sending needs "send")
+  "chat.getText": run => { need(run, "chat"); return needChat().__qmComposer.get(); },
+  "chat.setText": (run, [t]) => { need(run, "chat"); needChat().__qmComposer.set(String(t ?? "").slice(0, 4000)); },
+  "chat.focus": run => { need(run, "chat"); needChat().__qmComposer.focus(); },
+  "chat.list": run => {
+    need(run, "chat"); const withPreview = run.plugin.permissions.includes("messages");
+    return [...document.querySelectorAll(".chat-item")].slice(0, 100).map(a => ({ id: a.dataset.chat || null, title: (a.querySelector(".chat-title")?.textContent || "").trim().slice(0, 100), unread: a.classList.contains("unread"), ...(withPreview ? { preview: (a.querySelector(".chat-preview")?.textContent || "").trim().slice(0, 160) } : {}) }));
+  },
+  "chat.info": run => {
+    need(run, "chat"); if (!ctx.chatId) return null;
+    const a = [...document.querySelectorAll(".chat-item")].find(x => x.dataset.chat === ctx.chatId);
+    return { chatId: ctx.chatId, title: a ? (a.querySelector(".chat-title")?.textContent || "").trim().slice(0, 100) : "" };
+  },
+  "chat.send": (run, [t, o]) => {
+    need(run, "send"); const w = needChat(), text = String(t ?? "").trim().slice(0, 4000); if (!text) throw new Error("Nothing to send.");
+    const now = Date.now(); run.sent = (run.sent || []).filter(x => now - x < 10000);
+    if (run.sent.length >= 5) throw new Error("Slow down: a plugin can send 5 messages per 10 seconds.");
+    run.sent.push(now);
+    const ok = w.__qmComposer.send(text, o && o.replyTo ? String(o.replyTo) : null);
+    if (ok) localToast(`${run.plugin.name} sent a message`, "info", 1500);
+    return !!ok;
+  },
+  // messages (permission "messages")
+  "messages.list": (run, [o]) => { need(run, "messages"); const w = msgWin(); if (!w) throw new Error("No chat is open."); o = o || {}; return msgFilter(w.__qmMsgs(), o).slice(-clampN(o.limit, 1, 300, 50)); },
+  "messages.find": (run, [o]) => { need(run, "messages"); const w = msgWin(); if (!w) throw new Error("No chat is open."); o = o || {}; if (!o.text && !o.regex && !o.type && o.fromMe === undefined) throw new Error("Give text, regex, type or fromMe to look for."); return msgFilter(w.__qmMsgs(), o).slice(-clampN(o.limit, 1, 300, 20)); },
+  "messages.get": (run, [k]) => { need(run, "messages"); const w = msgWin(); if (!w) throw new Error("No chat is open."); return w.__qmMsgs().find(m => m.key === String(k)) || null; },
+  "messages.jump": (run, [k]) => { need(run, "messages"); const d = targetDoc("detail"), el = d && d.getElementById("msg-" + String(k).replace(/[^\w-]/g, "")); if (!el) return false; flash(el); return true; },
+  "messages.reply": (run, [k, t]) => api["chat.send"](run, [t, { replyTo: k }]),
+  // clipboard, notifications, vibration
+  "clipboard.write": async (run, [t]) => { need(run, "clipboard"); try { await navigator.clipboard.writeText(String(t ?? "").slice(0, 20000)); return true; } catch (_) { throw new Error("The browser did not allow clipboard access right now."); } },
+  notify: (run, [t, b]) => {
+    need(run, "notify"); const title = `${run.plugin.name}: ${String(t ?? "").slice(0, 80)}`, body = String(b ?? "").slice(0, 200);
+    if (document.hidden && typeof Notification !== "undefined" && Notification.permission === "granted") { try { new Notification(title, { body }); return "system"; } catch (_) { /* fall through */ } }
+    localToast(body ? `${title} - ${body}` : title, "info", 5000); return "toast";
+  },
+  vibrate: (run, [p]) => { need(run, "notify"); const pat = (Array.isArray(p) ? p : [p]).slice(0, 8).map(n => clampN(n, 0, 2000, 0)); try { return !!(navigator.vibrate && navigator.vibrate(pat)); } catch (_) { return false; } },
+  // keyboard shortcuts
+  "keys.add": (run, [o]) => {
+    need(run, "keys"); o = o || {}; const id = String(o.id || "").slice(0, 40); if (!/^[\w.-]{1,40}$/.test(id)) throw new Error("A shortcut needs an id (letters, numbers, - _ .).");
+    if (run.keys.size >= 10 && !run.keys.has(id)) throw new Error("A plugin can add up to 10 shortcuts.");
+    const combo = cleanCombo(o.combo);
+    for (const r of runs.values()) for (const k of r.keys.values()) if (k.combo === combo && !(r === run && k.id === id)) throw new Error(combo + " is already used by " + (r === run ? "another shortcut of this plugin" : "the plugin “" + r.plugin.name + "”") + ".");
+    run.keys.set(id, { id, combo, label: String(o.label || "").slice(0, 60) }); attachKeys(); return combo;
+  },
+  "keys.remove": (run, [id]) => { need(run, "keys"); run.keys.delete(String(id)); },
+  "keys.clear": run => { need(run, "keys"); run.keys.clear(); },
+  "keys.list": run => { need(run, "keys"); return [...run.keys.values()]; },
+  // slash commands
+  "commands.add": (run, [o]) => {
+    need(run, "commands"); o = o || {}; const name = String(o.name || "").toLowerCase().replace(/^\//, "");
+    if (!/^[a-z][a-z0-9_-]{0,23}$/.test(name)) throw new Error("A command name is letters, numbers, - and _ (24 at most), starting with a letter.");
+    if (run.commands.size >= 10 && !run.commands.has(name)) throw new Error("A plugin can add up to 10 commands.");
+    for (const r of runs.values()) if (r !== run && r.commands.has(name)) throw new Error("/" + name + " is already used by the plugin “" + r.plugin.name + "”.");
+    run.commands.set(name, { name, description: String(o.description || "").slice(0, 100) }); return name;
+  },
+  "commands.remove": (run, [n]) => { need(run, "commands"); run.commands.delete(String(n).toLowerCase().replace(/^\//, "")); },
+  "commands.clear": run => { need(run, "commands"); run.commands.clear(); },
+  "commands.list": run => { need(run, "commands"); return [...run.commands.values()]; },
+  // banner (permission "panel")
+  "banner.show": (run, [o]) => { need(run, "panel"); paintBanner(run, o || {}); },
+  "banner.hide": run => { need(run, "panel"); paintBanner(run, null); },
+  // styles (permission "style")
+  "style.vars": (run, [o]) => {
+    need(run, "style"); o = o || {}; const next = {};
+    for (const [k, v] of Object.entries(o).slice(0, 40)) { if (!CSS_VAR.test(k)) throw new Error("A CSS variable name looks like --accent."); if (v === null) continue; if (!CSS_VAL.test(String(v))) throw new Error("That value for " + k + " is not allowed."); next[k] = String(v); }
+    run.vars = next; applyStyle(run);
+  },
+  "style.get": run => { need(run, "style"); return { css: run.css, vars: { ...run.vars }, sheets: [...run.sheets.keys()] }; },
+  "style.sheet": (run, [id, css]) => {
+    need(run, "style"); id = String(id || "").slice(0, 40); if (!/^[\w.-]{1,40}$/.test(id)) throw new Error("A stylesheet needs an id (letters, numbers, - _ .).");
+    if (run.sheets.size >= 10 && !run.sheets.has(id)) throw new Error("A plugin can have up to 10 stylesheets.");
+    run.sheets.set(id, String(css ?? "").slice(0, 50000)); applyStyle(run);
+  },
+  "style.removeSheet": (run, [id]) => { need(run, "style"); run.sheets.delete(String(id)); applyStyle(run); },
+  // page control (permission "page")
+  "page.waitFor": (run, [sel, o]) => { need(run, "page"); return waitForEl(run, sel, o); },
+  "page.text": (run, [sel, o]) => { need(run, "page"); const e = pick(sel, o); return (e.innerText || e.textContent || "").trim().slice(0, 5000); },
+  "page.attr": (run, [sel, name, o]) => { need(run, "page"); const e = pick(sel, o), n = String(name || ""); if (!/^[a-z][\w:-]{0,40}$/i.test(n)) throw new Error("Not an attribute name."); if (/^on/i.test(n)) throw new Error("Event attributes are not readable."); if (n === "value" && e.type === "password") return null; return e.getAttribute(n); },
+  "page.count": (run, [sel, o]) => { need(run, "page"); return queryPage(sel, { ...(o || {}), limit: 200 }).length; },
+  "page.focus": (run, [sel, o]) => { need(run, "page"); pick(sel, o).focus(); return true; },
+  "page.press": (run, [key, sel, o]) => {
+    need(run, "page"); key = String(key || ""); if (!/^[\w -]{1,20}$/.test(key) && !["Enter", "Escape", "Tab", "Backspace", "ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight"].includes(key)) throw new Error("Unknown key.");
+    const doc = targetDoc((o || {}).frame), e = sel ? pick(sel, o) : (doc && doc.activeElement) || (doc && doc.body); if (!e) throw new Error("That part of the page is not open.");
+    const init = { key, bubbles: true, cancelable: true, shiftKey: !!(o || {}).shift, ctrlKey: !!(o || {}).ctrl, altKey: !!(o || {}).alt };
+    const W = e.ownerDocument.defaultView; e.dispatchEvent(new W.KeyboardEvent("keydown", init)); e.dispatchEvent(new W.KeyboardEvent("keyup", init)); return true;
+  },
+  "page.select": (run, [sel, v, o]) => { need(run, "page"); const e = pick(sel, o); if (e.tagName !== "SELECT") throw new Error("That element is not a drop-down list."); e.value = String(v); e.dispatchEvent(new Event("input", { bubbles: true })); e.dispatchEvent(new Event("change", { bubbles: true })); return e.value === String(v); },
+  "page.check": (run, [sel, v, o]) => { need(run, "page"); const e = pick(sel, o); if (!(e.tagName === "INPUT" && /^(checkbox|radio)$/.test(e.type))) throw new Error("That element is not a checkbox."); if (e.checked !== !!v) e.click(); return e.checked; },
+  "page.hide": (run, [sel, o]) => { need(run, "page"); const list = queryPage(sel, { ...(o || {}), limit: 200 }); for (const { el } of list) { if (!run.hidden.has(el)) run.hidden.set(el, el.style.display); el.style.display = "none"; } return list.length; },
+  "page.show": (run, [sel, o]) => { need(run, "page"); const list = queryPage(sel, { ...(o || {}), limit: 200 }); let n = 0; for (const { el } of list) if (run.hidden.has(el)) { el.style.display = run.hidden.get(el); run.hidden.delete(el); n++; } return n; },
+  "page.title": (run, [t]) => { need(run, "page"); if (t === undefined || t === null) return document.title; if (run.origTitle == null) run.origTitle = document.title; document.title = String(t).slice(0, 120); return document.title; },
   ready: run => { run.state = "running"; },
   crash: (run, [e]) => { run.state = "crashed"; run.error = String(e).slice(0, 600); api.log(run, ["crashed: " + run.error]); localToast(`Plugin “${run.plugin.name}” crashed: ${run.error.split("\n")[0]}`, "error", 6000); }
 };
 
 function send(run, event, data) { try { run.frame.contentWindow.postMessage({ qm: 1, event, data }, "*"); } catch (_) { /* frame gone */ } }
-const PERM_OF = { message: "messages", "chat-open": "chat", "chat-close": "chat", button: "buttons", "call-state": "calls", "dev-view": "devinfo", "page-load": "page" };
+const PERM_OF = { message: "messages", "chat-open": "chat", "chat-close": "chat", button: "buttons", "call-state": "calls", "dev-view": "devinfo", "page-load": "page", key: "keys", command: "commands", "banner-button": "panel" };
 const wants = (run, event) => !PERM_OF[event] || run.plugin.permissions.includes(PERM_OF[event]);
 
 addEventListener("message", async e => {
@@ -286,20 +492,29 @@ export function startPlugin(p) {
   frame.setAttribute("aria-hidden", "true"); frame.tabIndex = -1; frame.title = "Plugin: " + p.name;
   frame.style.cssText = "position:fixed;width:0;height:0;border:0;opacity:0;pointer-events:none";
   frame.srcdoc = boot(p.code, p);
-  runs.set(p.id, { frame, plugin: p, state: "starting", error: "", logs: [], css: "", panelEl: null, buttons: new Map(), cards: new Map(), search: null });
+  runs.set(p.id, { frame, plugin: p, sig: pluginSig(p), state: "starting", error: "", logs: [], css: "", vars: {}, sheets: new Map(), panelEl: null, bannerEl: null, buttons: new Map(), cards: new Map(), keys: new Map(), commands: new Map(), hidden: new Map(), origTitle: null, sent: [], dead: false, search: null });
   document.body.appendChild(frame);
 }
+const pluginSig = p => JSON.stringify([p.code, p.permissions, p.name, p.version]);
+/** Stops a plugin and takes back everything it put on the screen. */
 export function stopPlugin(id) {
   const r = runs.get(id); if (!r) return;
-  r.css = ""; applyStyle(r); paintPanel(r, null); if (r.search) r.search.stop = true; r.buttons.clear(); injectButtons(r); r.frame.remove(); runs.delete(id);
+  r.dead = true; r.css = ""; r.vars = {}; r.sheets.clear(); applyStyle(r); paintPanel(r, null); paintBanner(r, null); restoreHidden(r);
+  if (r.origTitle != null) document.title = r.origTitle;
+  if (r.search) r.search.stop = true; pill(null);
+  r.buttons.clear(); r.keys.clear(); r.commands.clear(); r.cards.clear(); injectButtons(r); r.frame.remove(); runs.delete(id);
 }
 export const stopAll = () => [...runs.keys()].forEach(stopPlugin);
+/** Makes what is running match what is saved: plugins that were switched off, deleted or blocked are stopped, changed ones restart, new ones start,
+ *  and unchanged ones are left alone. (This used to only start plugins, so switching one off did nothing until Developer mode was toggled.) */
 export function startAll() {
-  if (!devOn()) return;
+  if (!devOn()) { stopAll(); return; }
   const list = loadPlugins();
-  const warn = list.filter(p => p.enabled && pluginIssues(p).length);
-  for (const p of list) if (p.enabled) startPlugin(p);
-  for (const p of warn) { const i = pluginIssues(p)[0]; localToast(`Plugin “${p.name}”: ${i.text}`, i.level === "error" ? "error" : "info", 8000); }
+  const want = new Map(list.filter(p => p.enabled && !isBlocked(p) && p.code.length <= MAX_CODE).map(p => [p.id, p]));
+  for (const id of [...runs.keys()]) if (!want.has(id)) stopPlugin(id);
+  const started = [];
+  for (const p of want.values()) { const r = runs.get(p.id); if (r && r.sig === pluginSig(p)) { r.plugin = p; continue; } startPlugin(p); started.push(p); }
+  for (const p of started.filter(p => pluginIssues(p).length)) { const i = pluginIssues(p)[0]; localToast(`Plugin “${p.name}”: ${i.text}`, i.level === "error" ? "error" : "info", 8000); }
 }
 export function emit(event, data) { for (const r of runs.values()) if (wants(r, event)) send(r, event, data); }
 export const status = () => [...runs.values()].map(r => ({ id: r.plugin.id, name: r.plugin.name, state: r.state, error: r.error, logs: r.logs.slice(-20) }));
@@ -314,7 +529,11 @@ export function setContext(c) {
   if (chatChanged) { if (old) emit("chat-close", { chatId: old }); if (ctx.chatId) emit("chat-open", { chatId: ctx.chatId }); }
 }
 
+// events that need no permission
+addEventListener("online", () => emit("online", {})); addEventListener("offline", () => emit("offline", {}));
+document.addEventListener("visibilitychange", () => emit("visibility", { visible: !document.hidden }));
+try { new MutationObserver(() => emit("theme-change", { dark: isDark() })).observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme"] }); } catch (_) { /* ignore */ }
 onDev(on => { if (on) startAll(); else stopAll(); });
 addEventListener("storage", e => { if (e.key === "qm-plugins" && devOn()) startAll(); });
 if (devOn()) setTimeout(startAll, 800);
-export const plugins = { emit, setContext, startPlugin, stopPlugin, startAll, stopAll, status, devCards, devView };
+export const plugins = { emit, setContext, startPlugin, stopPlugin, startAll, stopAll, status, devCards, devView, command: runCommand };

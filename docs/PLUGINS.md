@@ -23,3 +23,12 @@ The complete reference is in the app: **`plugin-docs.html`** (also linked from t
 - **Add buttons**: `qm.buttons.add({id, label, where: 'chat' | 'list' | 'call'})`, then react to the `button` event (for example by asking with `qm.ask` and running a search).
 - **Calls**: `qm.calls.state()` and the `call-state` event.
 - **Developer info**: `qm.dev.read('env' | 'state' | 'call')` and `qm.dev.addCard('app' | 'chat' | 'message' | 'call', {id, title, rows})`; update cards on the `dev-view` event.
+
+## What plugins can do (1.48.0+)
+- Permissions added: `send`, `clipboard`, `notify`, `keys`, `commands`.
+- **Messages**: `qm.messages.list / find / get / jump / reply`. **Chat**: `getText / setText / clearText / focus / list / info / send`.
+- **Slash commands** (`qm.commands.add`, event `command`) and **keyboard shortcuts** (`qm.keys.add`, event `key`).
+- **Look and feel**: CSS variables and named stylesheets, a top banner, panel progress bars, notifications, vibration, clipboard.
+- **More page control**: `waitFor / text / attr / count / focus / press / select / check / hide / show / title`.
+- **No permission needed**: `qm.every / after / now`, `qm.util.*`, `qm.bus.*` (plugin to plugin), `qm.app.info`, `qm.plugins.list`, `qm.storage.keys / clear / usage`.
+- Switching a plugin off, deleting or editing it now takes effect immediately and removes everything it added.

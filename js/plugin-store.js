@@ -13,7 +13,12 @@ export const PERMISSIONS = {
   page:     { label: "Control the page: read what is on screen, click, type, scroll, search the chat", risk: "high" },
   buttons:  { label: "Add buttons to the chat, chat list and call screens", risk: "low" },
   calls:    { label: "Know when you are in a call", risk: "medium" },
-  devinfo:  { label: "Read developer info and add cards to developer views", risk: "medium" }
+  devinfo:  { label: "Read developer info and add cards to developer views", risk: "medium" },
+  send:      { label: "Send messages in the open chat for you", risk: "high" },
+  clipboard: { label: "Copy text to the clipboard", risk: "medium" },
+  notify:    { label: "Show notifications and vibrate", risk: "low" },
+  keys:      { label: "Add keyboard shortcuts", risk: "low" },
+  commands:  { label: "Add slash commands (/name) to the message box", risk: "low" }
 };
 export const MAX_CODE = 200000;
 
