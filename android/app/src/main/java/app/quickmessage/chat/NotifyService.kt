@@ -84,11 +84,20 @@ class NotifyService : Service() {
         @Volatile var uploadPct = -1          // 0..100, or -1 when the progress can't be measured
         @Volatile var uploadText = ""
 
-        /** The page reports its running uploads (count 0 = none left). */
-        fun setUploads(ctx: Context, count: Int, pct: Int, text: String) {
-            if (count == uploadCount && pct == uploadPct && text == uploadText) return
+        // Several pages can upload at once: the page in front, and one that was closed with the app but is still uploading in the background (MainActivity "headless").
+        // Each reports under its own [source]; the notification adds them up.
+        private val upSources = java.util.concurrent.ConcurrentHashMap<Int, Triple<Int, Int, String>>()      // source -> (files, percent or -1, names)
+        fun uploadsFrom(source: Int): Int = upSources[source]?.first ?: 0
+
+        /** A page reports its running uploads (count 0 = none left). */
+        fun setUploads(ctx: Context, source: Int, count: Int, pct: Int, text: String) {
+            if (count <= 0) upSources.remove(source) else upSources[source] = Triple(count, pct, text)
+            var n = 0; var sum = 0; var known = 0; var names = ""
+            for (v in upSources.values) { n += v.first; if (v.second >= 0) { sum += v.second * v.first; known += v.first }; if (names.isEmpty()) names = v.third }
+            val p = if (n > 0 && known == n) sum / n else -1
+            if (n == uploadCount && p == uploadPct && names == uploadText) return
             val was = uploadCount
-            uploadCount = count.coerceAtLeast(0); uploadPct = pct; uploadText = text
+            uploadCount = n; uploadPct = p; uploadText = names
             if (uploadCount == 0 && was == 0) return
             val i = Intent(ctx, NotifyService::class.java)
             try { if (Build.VERSION.SDK_INT >= 26) ctx.startForegroundService(i) else ctx.startService(i) } catch (_: Exception) {}

@@ -26,3 +26,9 @@ Messages: new-message notifications are `MessagingStyle` notifications with the 
 Calls: ringing and running calls are also registered with Android's Telecom framework as self-managed calls (`Telecomm.kt`, `QmConnectionService`), next to the existing incoming-call / ongoing-call notifications. The car, a Bluetooth headset or the system can then show the call, **answer**, **decline**, **hang up** and **mute**; those requests do exactly what the notification buttons do. If the system refuses (old Android, missing permission) nothing else changes.
 
 Honest limits: Android Auto only offers third-party voice-call screens to apps approved for it by Google, so how much of the call UI shows in a given car can differ; the call itself still runs in the app (WebView), and the audio goes through the phone's normal call audio. None of this was compiled or tried in a car here — please test it with the Android Auto desktop head unit or a real car and report what is missing.
+
+
+## Uploads when the app is closed
+
+- **Android:** closing the app from the recent-apps list while a file uploads leaves the uploading page running in the background (foreground notification) until it finishes; reopening shows the file as "Uploading…".
+- **iPhone:** uploads continue while the app is in the background (the silent-audio trick), but not after the app is swiped away in the app switcher: iOS does not allow that for a web page. The next start says which file was not finished.

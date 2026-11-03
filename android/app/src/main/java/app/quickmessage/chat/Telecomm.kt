@@ -6,6 +6,7 @@ import android.content.Intent
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.telecom.CallAudioState
 import android.telecom.Connection
 import android.telecom.ConnectionRequest
 import android.telecom.ConnectionService
@@ -70,6 +71,23 @@ object Telecomm {
         } catch (_: Throwable) { /* ignore */ }
     }
 
+    /** Where the sound of the current call should go (a CallAudioState.ROUTE_*). Calls start on the speaker. */
+    @Volatile var wantRoute = CallAudioState.ROUTE_SPEAKER
+
+    /** The user (or the call start) chose an output (an AudioDeviceInfo.TYPE_*). Telecom owns the call's audio once a call is registered, and it resets
+     *  to the earpiece when the call becomes active, which is why calls stopped coming out of the speaker: so it has to be told as well. */
+    fun route(audioDeviceType: Int) {
+        wantRoute = when (audioDeviceType) {
+            android.media.AudioDeviceInfo.TYPE_BUILTIN_SPEAKER -> CallAudioState.ROUTE_SPEAKER
+            android.media.AudioDeviceInfo.TYPE_BUILTIN_EARPIECE -> CallAudioState.ROUTE_EARPIECE
+            android.media.AudioDeviceInfo.TYPE_BLUETOOTH_SCO, android.media.AudioDeviceInfo.TYPE_BLUETOOTH_A2DP -> CallAudioState.ROUTE_BLUETOOTH
+            android.media.AudioDeviceInfo.TYPE_WIRED_HEADSET, android.media.AudioDeviceInfo.TYPE_WIRED_HEADPHONES,
+            android.media.AudioDeviceInfo.TYPE_USB_HEADSET, android.media.AudioDeviceInfo.TYPE_USB_DEVICE -> CallAudioState.ROUTE_WIRED_HEADSET
+            else -> CallAudioState.ROUTE_SPEAKER
+        }
+        current?.pushRoute()
+    }
+
     /** The call ended (or was declined). [chat] null = whatever call is current. */
     fun end(chat: String?, rejected: Boolean) {
         val c = current ?: return
@@ -91,8 +109,17 @@ class QmConnection(private val ctx: Context, val chat: String, who: String, inco
         } else setDialing()
     }
     private var done = false
+    private var routed = false          // the route for this call was set once (after that the car / headset / user decide)
 
-    fun goActive() { if (!done) setActive() }
+    /** Asks Telecom to send the call's sound where [Telecomm.wantRoute] says. */
+    @Suppress("DEPRECATION")
+    fun pushRoute() {
+        if (done) return
+        routed = true
+        try { setAudioRoute(Telecomm.wantRoute) } catch (_: Throwable) {}
+    }
+
+    fun goActive() { if (!done) { setActive(); pushRoute() } }
     fun finish(cause: Int) {
         if (done) return
         done = true
@@ -118,6 +145,12 @@ class QmConnection(private val ctx: Context, val chat: String, who: String, inco
     }
     override fun onAbort() { finish(DisconnectCause.CANCELED) }
     override fun onCallAudioStateChanged(state: android.telecom.CallAudioState?) {
+        // The first audio state of a call arrives with Telecom's default (the earpiece): move it to where the app wants it, unless a headset
+        // or Bluetooth device is already the route (then it stays there).
+        if (state != null && !routed && state.route != CallAudioState.ROUTE_WIRED_HEADSET && state.route != CallAudioState.ROUTE_BLUETOOTH) {
+            routed = true
+            if (state.route != Telecomm.wantRoute && (state.supportedRouteMask and Telecomm.wantRoute) != 0) pushRoute()
+        }
         if (state != null && state.isMuted != NotifyService.callMuted && NotifyService.inCall)
             startSvc(Intent(ctx, NotifyService::class.java).setAction(NotifyService.ACT_MIC))          // muted from the car: follow it
     }

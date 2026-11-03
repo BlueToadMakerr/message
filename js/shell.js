@@ -135,6 +135,7 @@ function uploadsChanged() {
   const pct = known.length ? Math.round(known.reduce((a, j) => a + j.pct, 0) / known.length * 100) : -1;
   const text = act.slice(0, 3).map(j => j.name).join(", ") + (act.length > 3 ? " +" + (act.length - 3) : "");
   const key = act.length + "/" + pct + "/" + text;
+  persistUploads(act.map(j => j));
   if (key !== lastNative) {
     lastNative = key;
     try { window.QMApp?.setUploads?.(act.length, pct, text); } catch (_) { /* ignore */ }
@@ -154,6 +155,63 @@ function uploadsChanged() {
     }
   }
 }
+// ---- uploads that belong to ANOTHER page of this app. In the Android app, closing the app from the recent apps list leaves the page that is
+// uploading running quietly in the background (see MainActivity "headless"); the app you open next is a new page. Each page writes what it is
+// uploading into localStorage (shared by both), so the new page can show those files as "Uploading…" with their progress, and can tell when
+// an upload was cut off (the iPhone app has no way to keep going once it was force-quit): that page's entry stops being refreshed.
+const IN_APP = !!(window.QMApp || window.__qmIosApp);
+const INST = Math.random().toString(36).slice(2, 10), UP_KEY = "qm-up:", UP_FRESH = 90000;
+function persistUploads(act) {
+  if (!IN_APP) return;
+  try {
+    if (act.length) localStorage.setItem(UP_KEY + INST, JSON.stringify({ t: Date.now(), list: act.map(j => ({ chat: j.chat, id: String(j.id), name: String(j.name || "File").slice(0, 80), size: j.size || 0, pct: typeof j.pct === "number" ? j.pct : null })) }));
+    else localStorage.removeItem(UP_KEY + INST);
+  } catch (_) { /* storage blocked */ }
+}
+/** What other pages are uploading right now: [{ key, chat, id, name, size, pct }] (only entries that were refreshed lately). */
+function foreignUploads(chat) {
+  const out = [];
+  if (!IN_APP) return out;
+  try {
+    for (let i = 0; i < localStorage.length; i++) {
+      const k = localStorage.key(i);
+      if (!k || !k.startsWith(UP_KEY) || k === UP_KEY + INST) continue;
+      let v = null; try { v = JSON.parse(localStorage.getItem(k)); } catch (_) { /* ignore */ }
+      if (!v || !Array.isArray(v.list) || Date.now() - v.t > UP_FRESH) continue;
+      for (const j of v.list) if (j && typeof j.chat === "string" && (!chat || j.chat === chat)) out.push({ ...j, key: k });
+    }
+  } catch (_) { /* ignore */ }
+  return out;
+}
+/** An entry nobody refreshes any more belongs to a page that is gone (the app was force-quit): that upload did not finish. Tell the user once. */
+function sweepUploads() {
+  if (!IN_APP || nested) return;
+  const dead = [];
+  try {
+    const keys = [];
+    for (let i = 0; i < localStorage.length; i++) { const k = localStorage.key(i); if (k && k.startsWith(UP_KEY) && k !== UP_KEY + INST) keys.push(k); }
+    for (const k of keys) {
+      let v = null; try { v = JSON.parse(localStorage.getItem(k)); } catch (_) { /* ignore */ }
+      if (v && Array.isArray(v.list) && Date.now() - v.t <= UP_FRESH) continue;
+      if (v && Array.isArray(v.list)) for (const j of v.list) if (j && j.name) dead.push(String(j.name));
+      localStorage.removeItem(k);
+    }
+  } catch (_) { /* ignore */ }
+  if (dead.length) localToast(`${dead.slice(0, 3).join(", ")}${dead.length > 3 ? " +" + (dead.length - 3) : ""} wasn't finished uploading because the app was closed. Open the chat and send it again.`, "error", 9000);
+  const sig = JSON.stringify(foreignUploads().map(j => [j.key, j.id, Math.floor((j.pct || 0) * 100)]));
+  if (sig !== lastForeign) { lastForeign = sig; try { window.dispatchEvent(new CustomEvent("qm-uploads")); } catch (_) { /* ignore */ } }
+}
+let lastForeign = "[]";
+if (IN_APP && !nested) {
+  setTimeout(sweepUploads, 2500); setInterval(sweepUploads, 3000);
+  setInterval(() => { const a = activeUploads(); if (a.length) persistUploads(a); }, 5000);        // keeps the entry "fresh" while a long upload makes no visible progress
+  addEventListener("pagehide", e => { if (!e.persisted) { try { localStorage.removeItem(UP_KEY + INST); } catch (_) { /* ignore */ } } });
+}
+const allUploads = () => {
+  const m = new Map(upl);
+  for (const j of foreignUploads()) m.set(j.chat, [...(m.get(j.chat) || []), { id: "bg-" + j.key + j.id, name: j.name, size: j.size, pct: j.pct, state: "sending" }]);
+  return m;
+};
 function setUploads(chatId, list) {
   if (!chatId || !/^[\w-]{1,64}$/.test(chatId)) return;
   list = Array.isArray(list) ? list.slice(0, 50) : [];
@@ -427,7 +485,7 @@ function wire() {
 export const QM = (window.QM = {
   declined: (chatId, by) => { try { els().callFrame.contentWindow.__qmDeclined?.(chatId, by); } catch (_) { /* ignore */ } },
   plugins: pluginHost,
-  setUploads, uploads: () => new Map(upl), activeUploads, showUploadsPopup,
+  setUploads, uploads: allUploads, foreignUploads, activeUploads, showUploadsPopup,
   openChat, openPane, closeDetail, androidBack, openCall, minimizeCall, callEnded, setCallState, frameReady, frameEscaped,
   isSplit: () => split.matches,
   toggleMute: () => callWin()?.toggleMute(), toggleDeafen: () => callWin()?.toggleDeafen(), toggleScreen: () => callWin()?.toggleScreen(), hangup: () => leaveCall(),

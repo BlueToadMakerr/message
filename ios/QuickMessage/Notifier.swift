@@ -94,7 +94,7 @@ final class Notifier: NSObject, UNUserNotificationCenterDelegate {
         let pct = (m["pct"] as? Int) ?? -1
         let c = UNMutableNotificationContent()
         c.title = n == 1 ? "Uploading a file" : "Uploading \(n) files"
-        c.body = (pct >= 0 ? "\(pct)% - " : "") + ((m["text"] as? String) ?? "")
+        c.body = (pct >= 0 ? "\(pct)% - " : "") + ((m["text"] as? String) ?? "") + "\nLeave QuickMessage in the app switcher: swiping it away stops the upload."
         UNUserNotificationCenter.current().add(UNNotificationRequest(identifier: "qm-upload", content: c, trigger: nil), withCompletionHandler: nil)
     }
 

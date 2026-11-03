@@ -2,6 +2,13 @@
 
 Newest first. Older rounds (1–43) are kept below exactly as they were written.
 
+## 1.47.3 — Uploads survive closing the app (Android), speaker fix
+
+- **Android: closing the app no longer cancels an upload.** If you swipe the app away while a file is uploading, the page that is doing the upload is kept running quietly in the background (the "Uploading a file" notification stays), and it is released as soon as the upload is done (or after 30 minutes). When you open the app again, the chat shows the file as an uploading message with its percentage, and the chat list shows "Uploading". Both pages share what they are uploading through `localStorage` (`qm-up:*`), and the upload notification adds the pages up.
+- **An upload that was cut off is reported.** If the page that was uploading is gone (the app was force-stopped, or on iPhone), the next start tells you which file was not finished so you can send it again.
+- **iPhone:** an upload keeps going when you switch to another app (as before) and the chat still shows it uploading when you come back. iOS does not let a web page keep uploading after the app is swiped away in the app switcher, so the upload notification now says so.
+- **Android: calls start on the speaker again.** Android's call system (Telecom, added with Android Auto support) reset the sound to the earpiece when the call became active; the app now asks Telecom for the speaker (and for whatever output you pick) as well, and uses the Android 12+ routing API for the starting speaker.
+
 ## 1.47.2 — Scrolling fix
 
 - **Chat scrolling no longer jumps when pictures, videos or link previews load.** The browser's own scroll anchoring is off for the message list (it was fighting the app's correction and moving things twice), and the app now keeps the message you are reading exactly where it is on screen whatever grows above it or inside it. At the bottom it stays at the bottom, and "am I at the bottom" is no longer flipped by the growth itself. The chat also stays at the bottom when its area changes size (keyboard, composer growing, rotating).

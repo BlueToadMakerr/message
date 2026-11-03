@@ -3,6 +3,7 @@ package app.quickmessage.chat
 import android.Manifest
 import android.annotation.SuppressLint
 import android.app.Activity
+import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.graphics.Color
@@ -40,9 +41,25 @@ class MainActivity : Activity() {
         private const val REQ_PERMS = 1
         private const val REQ_FILE = 2
         private const val REQ_PROJECTION = 3
+
+        /** When the app is closed (swiped away) while files are still uploading, the page that is uploading must not die with the screen:
+         *  its WebView is kept running, detached, until its uploads are done (or 30 minutes). The next start is a new page that shows them
+         *  as "Uploading…" (js/shell.js + js/message.js read what this one writes to localStorage). Main thread only. */
+        private val headless = HashMap<Int, WebView>()          // upload source (that page's bridge) -> its WebView
+        private fun keepHeadless(app: Context, source: Int, w: WebView) {
+            headless[source] = w
+            android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({ releaseHeadless(app, source) }, 30 * 60_000L)
+        }
+        fun releaseHeadless(app: Context, source: Int) {
+            val w = headless.remove(source) ?: return
+            try { w.stopLoading(); w.destroy() } catch (_: Exception) {}
+            NotifyService.setUploads(app, source, 0, -1, "")
+        }
     }
 
     private lateinit var web: WebView
+    private val bridge = Bridge()          // one per activity; its identity is the "source" of this page's uploads
+    private val uploadSource get() = System.identityHashCode(bridge)
     private lateinit var root: FrameLayout
     private var pendingWebPerm: PermissionRequest? = null
     private var fileCb: ValueCallback<Array<Uri>>? = null
@@ -113,7 +130,7 @@ class MainActivity : Activity() {
         }
         CookieManager.getInstance().apply { setAcceptCookie(true); setAcceptThirdPartyCookies(web, true) }
         web.isLongClickable = false; web.setOnLongClickListener { true }; web.isHapticFeedbackEnabled = false
-        web.addJavascriptInterface(Bridge(), "QMApp")
+        web.addJavascriptInterface(bridge, "QMApp")
         // New / removed headsets, Bluetooth and USB audio are picked up straight from Android (no microphone access needed) and pushed to the page.
         try { (getSystemService(AUDIO_SERVICE) as AudioManager).registerAudioDeviceCallback(audioCb, android.os.Handler(android.os.Looper.getMainLooper())) } catch (_: Exception) {}
         web.webViewClient = object : WebViewClient() {
@@ -250,7 +267,12 @@ class MainActivity : Activity() {
         override fun onAudioDevicesAdded(added: Array<out android.media.AudioDeviceInfo>?) = ping()
         override fun onAudioDevicesRemoved(removed: Array<out android.media.AudioDeviceInfo>?) = ping()
     }
-    override fun onDestroy() { try { (getSystemService(AUDIO_SERVICE) as AudioManager).unregisterAudioDeviceCallback(audioCb) } catch (_: Exception) {}; if (instance === this) instance = null; if (pipReceiverOn) try { unregisterReceiver(pipReceiver) } catch (_: Exception) {}; web.destroy(); super.onDestroy() }
+    override fun onDestroy() { try { (getSystemService(AUDIO_SERVICE) as AudioManager).unregisterAudioDeviceCallback(audioCb) } catch (_: Exception) {}; if (instance === this) instance = null; if (pipReceiverOn) try { unregisterReceiver(pipReceiver) } catch (_: Exception) {}
+        // Closed while a file is still uploading: keep this page (and so the upload) running in the background instead of destroying it.
+        if (NotifyService.uploadsFrom(uploadSource) > 0) { try { root.removeView(web) } catch (_: Exception) {}; keepHeadless(applicationContext, uploadSource, web) }
+        else web.destroy()
+        super.onDestroy()
+    }
 
     override fun onUserLeaveHint() { if (inCall && callVisible && !protectedMode) enterPipNow() }
 
@@ -461,8 +483,13 @@ class MainActivity : Activity() {
             try { startActivity(Intent(this@MainActivity, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_REORDER_TO_FRONT or Intent.FLAG_ACTIVITY_SINGLE_TOP)) } catch (_: Exception) {}
         }
         @JavascriptInterface fun setCallDeaf(deafened: Boolean, useDeafenButton: Boolean) { NotifyService.setCallDeaf(this@MainActivity, deafened, useDeafenButton) }
-        @JavascriptInterface fun setUploads(count: Int, pct: Int, text: String) { NotifyService.setUploads(this@MainActivity, count, pct, text.take(120)) }
-        @JavascriptInterface fun uploadFailed(text: String) { NotifyService.uploadFailed(this@MainActivity, text.take(200)) }
+        @JavascriptInterface fun setUploads(count: Int, pct: Int, text: String) {
+            val src = System.identityHashCode(this)
+            NotifyService.setUploads(applicationContext, src, count, pct, text.take(120))
+            // a page that was kept alive only for its uploads is finished with them: let it go
+            if (count <= 0) android.os.Handler(android.os.Looper.getMainLooper()).post { releaseHeadless(applicationContext, src) }
+        }
+        @JavascriptInterface fun uploadFailed(text: String) { NotifyService.uploadFailed(applicationContext, text.take(200)) }
         @JavascriptInterface fun setCallWho(who: String) { NotifyService.setCallWho(this@MainActivity, who.take(120)) }
         @JavascriptInterface fun setCallInfo(title: String, muted: Boolean, screen: Boolean, canScreen: Boolean, photo: String, startMs: Double) { NotifyService.setCallInfo(this@MainActivity, title.take(60), muted, screen, canScreen, if (photo.startsWith("https://") || photo.startsWith("data:image/")) photo.take(3_000_000) else "", startMs.toLong()) }
 
@@ -500,7 +527,10 @@ class MainActivity : Activity() {
             NotifyService.setCall(this@MainActivity, joined)
             val am = getSystemService(AUDIO_SERVICE) as AudioManager
             am.mode = if (joined) AudioManager.MODE_IN_COMMUNICATION else AudioManager.MODE_NORMAL
-            if (joined) @Suppress("DEPRECATION") am.isSpeakerphoneOn = true
+            if (joined) {          // calls start on the speaker (the page may switch to the saved output a moment later)
+                Telecomm.route(android.media.AudioDeviceInfo.TYPE_BUILTIN_SPEAKER)
+                routeCall(am, android.media.AudioDeviceInfo.TYPE_BUILTIN_SPEAKER, null)
+            }
             updatePip()
         }
 
@@ -542,6 +572,7 @@ class MainActivity : Activity() {
         @JavascriptInterface fun setAudioOutput(key: String): Boolean {
             val am = getSystemService(AUDIO_SERVICE) as AudioManager
             val dev = am.getDevices(AudioManager.GET_DEVICES_OUTPUTS).firstOrNull { audioKey(it) == key } ?: return false
+            Telecomm.route(dev.type)
             return routeCall(am, dev.type, dev.id)
         }
 
@@ -552,8 +583,10 @@ class MainActivity : Activity() {
             if (dev.type == android.media.AudioDeviceInfo.TYPE_BUILTIN_MIC) {          // the phone's own microphone: leave a headset if one is in use
                 val cur = if (Build.VERSION.SDK_INT >= 31) am.communicationDevice?.type else null
                 val builtIn = cur == android.media.AudioDeviceInfo.TYPE_BUILTIN_SPEAKER || cur == android.media.AudioDeviceInfo.TYPE_BUILTIN_EARPIECE
+                if (!builtIn) Telecomm.route(android.media.AudioDeviceInfo.TYPE_BUILTIN_SPEAKER)
                 return if (builtIn) true else routeCall(am, android.media.AudioDeviceInfo.TYPE_BUILTIN_SPEAKER, null)
             }
+            Telecomm.route(callType(dev.type))
             return routeCall(am, callType(dev.type), null)
         }
 

@@ -840,6 +840,33 @@ function reportUploads() {
 }
 window.addEventListener("pagehide", () => { try { const q = !IS_PANEL && window.top !== window && window.top.QM; q && q.setUploads && q.setUploads(chatId, []); } catch (_) { /* ignore */ } });
 
+// Files that ANOTHER page of the app is still uploading (the Android app keeps the page that was uploading when you closed it running in the
+// background): show them here as pending messages with their progress, until the real message arrives.
+const bgUploads = new Map();            // "key:id" -> { job, ts }
+function syncBgUploads() {
+  if (!me) return;
+  let list = [];
+  try { const q = window.top !== window && window.top.QM; list = (q && q.foreignUploads && q.foreignUploads(chatId)) || []; } catch (_) { list = []; }
+  const seen = new Set();
+  for (const j of list) {
+    const k = j.key + ":" + j.id; seen.add(k);
+    let b = bgUploads.get(k);
+    if (!b) {
+      const el = buildMessage("bg-" + k.replace(/[^\w-]/g, "_"), { fromUid: me, type: "text", text: "", timestamp: Date.now() });
+      el.classList.add("pending");
+      const btn = el.querySelector(".msg-menu"); if (btn) btn.hidden = true;
+      const job = { id: "bg", spec: { type: "file", extra: { name: j.name, kind: "file" } }, file: { name: j.name, size: j.size || 0, type: "" }, state: "sending", progress: j.pct, error: null,
+        localUrl: null, litter: true, el, btn: btn || document.createElement("button") };
+      messagesDiv.insertBefore(el, typingRow);
+      paintJob(job);
+      b = { job }; bgUploads.set(k, b);
+      if (stick) scrollToBottom();
+    } else { b.job.progress = j.pct; paintJobProgress(b.job); }
+  }
+  for (const [k, b] of bgUploads) if (!seen.has(k)) { b.job.el.remove(); bgUploads.delete(k); }
+}
+setTimeout(syncBgUploads, 900); setInterval(syncBgUploads, 1500);
+
 const buildPayload = (spec, timestamp) => ({
   ...(spec.type === "text" ? { fromUid: me, text: spec.text, timestamp }
   : spec.type === "file" ? { fromUid: me, type: "file", text: spec.extra.name, ...spec.extra, timestamp }
