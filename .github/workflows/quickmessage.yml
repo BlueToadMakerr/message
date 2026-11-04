@@ -132,7 +132,36 @@ jobs:
         id: d
         run: d="${FTP_DIR_RAW:-./}"; case "$d" in */) ;; *) d="$d/";; esac; echo "dir=$d" >> "$GITHUB_OUTPUT"
       - name: Upload the website
+        id: up1
         if: env.HAS_FTP == 'true'
+        continue-on-error: true       # free hosts drop FTP data connections now and then: one more try below
+        uses: SamKirkland/FTP-Deploy-Action@v4.3.5
+        with:
+          server: ${{ secrets.FTP_SERVER }}
+          username: ${{ secrets.FTP_USERNAME }}
+          password: ${{ secrets.FTP_PASSWORD }}
+          protocol: ${{ secrets.FTP_PROTOCOL || 'ftp' }}
+          port: ${{ secrets.FTP_PORT || '21' }}
+          server-dir: ${{ steps.d.outputs.dir }}
+          local-dir: ./
+          exclude: |
+            **/.git*
+            **/.git*/**
+            .github/**
+            android/**
+            ios/**
+            incoming/**
+            **/*.zip
+            README.md
+            docs/**
+            server/**
+            functions/**
+            firebase.json
+            .firebaserc
+            database.rules.json
+            secrets.php
+      - name: Upload the website (second try, only the files still missing)
+        if: env.HAS_FTP == 'true' && steps.up1.outcome == 'failure'
         uses: SamKirkland/FTP-Deploy-Action@v4.3.5
         with:
           server: ${{ secrets.FTP_SERVER }}
