@@ -2,6 +2,16 @@
 
 Newest first. Older rounds (1–43) are kept below exactly as they were written.
 
+## 1.49.0 — Plugin windows, message-menu items, call banners, add by URL
+
+- **Fixed: plugin panels and banners were unreadable in dark mode and always floated in the bottom-right corner.** They used a colour variable the site never defined. They now use the site's own theme colours. The old floating panel is gone: `qm.panel.set` now opens a window (a sheet on phones, a card on wide screens) that you can close with ×, Escape or a tap outside.
+- **New: `qm.ui` windows** (permission `ui`). A plugin describes a window as blocks (`heading`, `text`, `kv`, `badge`, `input`, `toggle`, `select`, `progress`, `list`, `image`, `button`, `buttons`, `divider`) and the site draws it, so every plugin looks like the rest of the app and cannot inject its own HTML. `qm.ui.open / update / close / list`, plus `qm.ui.confirm` and `qm.ui.prompt` (the site's own dialogs). Events `ui-action` (with all field values) and `ui-close`. Images only from https or data URLs.
+- **New: `qm.messageMenu`** (permission `menu`): add up to 8 choices to the "⋯" menu of every message (`add / remove / clear / list`; options `mine`, `textOnly`, `danger`, `icon`). The `menu-click` event carries the message; its text is included only if the plugin also holds `messages`.
+- **New: call and chat banners.** `qm.banner.show({where: "app" | "call" | "chat", kind: info/success/error/warn, dismiss})`, `qm.banner.hide({where})`, `qm.banner.clear()`. Call banners are drawn on the call screen and come back if the page reloads.
+- **New: add a plugin by URL.** Plugins page → "Add from URL…". Paste a link to a plugin .json file (GitHub page links are converted to raw links). You see its name, author and permissions first, it is added switched off, and its address is kept for update checks. https only (http for localhost). The host site must allow cross-site reading (GitHub raw and jsDelivr do).
+- New templates: Notes window, Message menu, Banner on calls.
+- Plugin API number stays 1 (additive); set `minSite` to 1.49.0 when you use these.
+
 ## 1.48.0 — Many more plugin functions; disabling a plugin works at once
 
 - **Fixed: switching a plugin off did not fully switch it off until Developer mode was toggled.** The Plugins page asked the host to "start all enabled plugins", which never stopped the disabled ones. The host now makes what is running match what is saved: switched-off, deleted or blocked plugins are stopped (and everything they put on screen is taken back: CSS, panels, banners, buttons, hidden elements, the page title, shortcuts, commands, timers), edited ones restart, new ones start, unchanged ones are left alone.

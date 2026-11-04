@@ -28,6 +28,7 @@ The complete reference is in the app: **`plugin-docs.html`** (also linked from t
 - Permissions added: `send`, `clipboard`, `notify`, `keys`, `commands`.
 - **Messages**: `qm.messages.list / find / get / jump / reply`. **Chat**: `getText / setText / clearText / focus / list / info / send`.
 - **Slash commands** (`qm.commands.add`, event `command`) and **keyboard shortcuts** (`qm.keys.add`, event `key`).
+- **Windows and menus (1.49.0)**: `qm.ui.open/update/close/confirm/prompt` (block-based windows that follow the theme), `qm.messageMenu.add`, banners on the call screen (`qm.banner.show({where:"call"})`). Plugins can be added from a URL on the Plugins page.
 - **Look and feel**: CSS variables and named stylesheets, a top banner, panel progress bars, notifications, vibration, clipboard.
 - **More page control**: `waitFor / text / attr / count / focus / press / select / check / hide / show / title`.
 - **No permission needed**: `qm.every / after / now`, `qm.util.*`, `qm.bus.*` (plugin to plugin), `qm.app.info`, `qm.plugins.list`, `qm.storage.keys / clear / usage`.

@@ -1,1 +1,0 @@
-{ "version": "1.48.0", "apiVersion": 1, "released": "2026-11-02", "notes": "Many more plugin functions (messages, slash commands, shortcuts, clipboard, notifications, banners, more page control) and plugins now switch off immediately." }

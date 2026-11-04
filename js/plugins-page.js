@@ -1,6 +1,6 @@
-import { hydrateIcons, toast, confirmDialog, copyText } from "./ui.js";
+import { hydrateIcons, toast, confirmDialog, promptDialog, copyText } from "./ui.js";
 import { devOn, setDev } from "./dev.js";
-import { loadPlugins, savePlugins, normalize, newPluginId, PERMISSIONS, pluginIssues, isBlocked, checkPluginUpdate } from "./plugin-store.js";
+import { loadPlugins, savePlugins, normalize, newPluginId, PERMISSIONS, pluginIssues, isBlocked, checkPluginUpdate, fetchPluginFromUrl } from "./plugin-store.js";
 import { SITE_VERSION, API_VERSION, checkSiteVersion, lastCheck } from "./version.js";
 import { QM, markReady } from "./embed.js";
 
@@ -19,6 +19,9 @@ const TEMPLATES = {
   callinfo: { label: "Extra call info (developer view)", perms: ["devinfo", "calls"], code: "const paint = async () => {\n  const c = await qm.calls.state();\n  let extra = [];\n  if (c.joined) { try { const s = await qm.dev.read('call'); extra = [['Connections', Object.keys(s.links || {}).length], ['Online', s.online === false ? 'no' : 'yes', s.online === false ? 'bad' : 'ok']]; } catch (e) {} }\n  await qm.dev.addCard('call', { id: 'extra', title: 'Call extras', rows: [['In a call', c.joined ? 'yes' : 'no', c.joined ? 'ok' : ''], ...extra] });\n};\nqm.on('dev-view', paint); qm.on('call-state', paint); paint();\n" },
   appinfo: { label: "Extra app info (developer view)", perms: ["devinfo"], code: "const paint = async () => {\n  const env = await qm.dev.read('env');\n  await qm.dev.addCard('app', { id: 'env', title: 'Quick facts', rows: [['Online', env.online ? 'yes' : 'no', env.online ? 'ok' : 'bad'], ['Screen', env.viewport.w + ' x ' + env.viewport.h], ['Memory (MB)', env.memoryMB ?? 'n/a']] });\n};\nqm.on('dev-view', paint); paint();\n" },
   slash: { label: "Slash commands and a shortcut", perms: ["commands", "keys", "send", "chat", "toast"], code: "await qm.commands.add({ name: 'shrug', description: 'Send a shrug' });\nawait qm.commands.add({ name: 'time', description: 'Send the time' });\nqm.on('command', async c => {\n  if (c.name === 'shrug') await qm.chat.send((c.args ? c.args + ' ' : '') + '¯\\\\_(ツ)_/¯');\n  if (c.name === 'time') await qm.chat.send('It is ' + new Date().toLocaleTimeString());\n});\nawait qm.keys.add({ id: 'draft', combo: 'ctrl+shift+d' });\nqm.on('key', async () => qm.toast('Draft: ' + (await qm.chat.getText())));\n" },
+  notes: { label: "Notes window (custom UI)", perms: ["ui", "buttons", "toast"], code: "const draw = async () => qm.ui.open({ id: 'notes', title: 'Notes', size: 'md', blocks: [\n  { type: 'input', id: 'text', label: 'Write a note', multiline: true, value: '' },\n  { type: 'button', id: 'save', label: 'Save note', kind: 'primary' },\n  { type: 'divider' },\n  { type: 'list', empty: 'No notes yet', items: ((await qm.storage.get('notes')) || []).map((t, i) => ({ id: 'del:' + i, title: t, sub: 'Tap to delete' })) }\n] });\nawait qm.buttons.add({ id: 'open', where: 'list', label: 'Notes' });\nqm.on('button', draw);\nqm.on('ui-action', async a => {\n  const notes = (await qm.storage.get('notes')) || [];\n  if (a.id === 'save' && a.values.text) { notes.push(a.values.text); await qm.storage.set('notes', notes); qm.toast('Saved', 'success'); await qm.ui.close('notes'); draw(); }\n  if (a.id.startsWith('del:')) { notes.splice(Number(a.id.slice(4)), 1); await qm.storage.set('notes', notes); await qm.ui.close('notes'); draw(); }\n});" },
+  menu: { label: "Message menu: save to notes", perms: ["menu", "messages", "toast"], code: "await qm.messageMenu.add({ id: 'save', label: 'Save text', icon: 'copy', textOnly: true });\nqm.on('menu-click', async m => {\n  if (m.id !== 'save') return;\n  const saved = (await qm.storage.get('saved')) || [];\n  saved.push(m.message.text); await qm.storage.set('saved', saved.slice(-50));\n  qm.toast('Saved (' + saved.length + ')', 'success');\n});" },
+  callbanner: { label: "Banner on calls", perms: ["panel", "calls"], code: "qm.on('call-state', c => {\n  if (c.joined) qm.banner.show({ where: 'call', text: 'Call timer running', kind: 'info', dismiss: false });\n  else qm.banner.hide({ where: 'call' });\n});" },
   mine: { label: "Copy my recent messages (shortcut)", perms: ["messages", "clipboard", "keys", "toast"], code: "await qm.keys.add({ id: 'copy', combo: 'ctrl+shift+m' });\nqm.on('key', async () => {\n  const mine = await qm.messages.find({ fromMe: true, limit: 10 });\n  await qm.clipboard.write(mine.map(m => m.text).filter(Boolean).join('\\n'));\n  qm.toast('Copied ' + mine.length + ' messages');\n});\n" },
   quick: { label: "Quick reply buttons", perms: ["panel", "chat"], code: "qm.on('chat-open', () => qm.panel.set({ title: 'Quick text', buttons: ['On my way', 'Call you later', 'Thanks!'] }));\nqm.on('chat-close', () => qm.panel.hide());\nqm.on('panel-button', b => qm.chat.insertText(b.label));\n" }
 };
@@ -115,6 +118,20 @@ $("importFile").onchange = async e => {
     sync(); paintList();
     toast(same ? `Updated “${p.name}” to ${p.version}.` : `Imported “${p.name}” (switched off: check its permissions, then turn it on).`, "success", 4000);
   } catch (err) { toast("Couldn't import: " + err.message, "error", 5000); }
+};
+$("urlBtn").onclick = async () => {
+  const u = await promptDialog({ title: "Add a plugin from a web address", message: "Paste the link to a plugin file (.json). GitHub page links work too. Nothing runs until you review the permissions and switch it on.", input: { type: "url", placeholder: "https://…/my-plugin.json" }, okText: "Download" });
+  if (!u || !String(u).trim()) return;
+  try {
+    const { plugin: p, url } = await fetchPluginFromUrl(u);
+    const list = loadPlugins(), same = list.find(x => x.id === p.id || (x.name === p.name && x.author === p.author));
+    const perms = p.permissions.length ? p.permissions.map(k => `• ${PERMISSIONS[k]?.label || k}${PERMISSIONS[k]?.risk === "high" ? "  (high risk)" : ""}`).join("\n") : "• none";
+    const ok = await confirmDialog({ title: same ? `Update “${p.name}”?` : `Add “${p.name}”?`, message: `Version ${p.version}${p.author ? " by " + p.author : ""}\nFrom ${url}\n\nIt asks to:\n${perms}\n\nIt will be added switched off. Only continue if you trust the author.`, okText: same ? "Update" : "Add" });
+    if (!ok) return;
+    if (same) { p.id = same.id; p.enabled = same.enabled; }
+    savePlugins(same ? list.map(x => x.id === same.id ? p : x) : [...list, p]);
+    sync(); paintList(); toast(same ? `Updated “${p.name}” to ${p.version}.` : `Added “${p.name}” (switched off).`, "success", 4000);
+  } catch (err) { toast(err.message, "error", 6000); }
 };
 $("updAll").onclick = async () => { for (const p of loadPlugins()) if (p.updateUrl) updates.set(p.id, await checkPluginUpdate(p)); paintList(); toast("Checked.", "success", 1500); };
 $("verCheck").onclick = async () => { const r = await checkSiteVersion(); verLine(); toast(!r.ok ? "Couldn't reach the site to check (offline copy or no connection)." : r.newer ? "A new version is available: " + r.latest : "You're up to date.", r.ok ? "success" : "error", 3500); };

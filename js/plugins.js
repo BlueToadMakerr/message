@@ -4,11 +4,10 @@
 import { devOn, onDev, envInfo } from "./dev.js";
 import { loadPlugins, pluginIssues, isBlocked, MAX_CODE } from "./plugin-store.js";
 import { SITE_VERSION, API_VERSION } from "./version.js";
-import { localToast, promptDialog } from "./ui.js";
+import { localToast, promptDialog, confirmDialog } from "./ui.js";
 
 const runs = new Map();                 // plugin id -> { frame, plugin, handlers, panelEl, styles }
 let ctx = { uid: null, name: "", chatId: null, call: null };
-let panelsHost = null;
 const store = id => "qm-pstore-" + id;
 const readStore = id => { try { return JSON.parse(localStorage.getItem(store(id)) || "{}"); } catch (_) { return {}; } };
 const writeStore = (id, o) => { const s = JSON.stringify(o); if (s.length > 100000) throw new Error("Plugin storage is full (100 KB)."); localStorage.setItem(store(id), s); };
@@ -61,7 +60,9 @@ Object.assign(qm,{
   notify:(t,b)=>call("notify",[t,b]), vibrate:p=>call("vibrate",[p]),
   keys:{add:o=>call("keys.add",[o]),remove:id=>call("keys.remove",[id]),clear:()=>call("keys.clear"),list:()=>call("keys.list")},
   commands:{add:o=>call("commands.add",[o]),remove:n=>call("commands.remove",[n]),clear:()=>call("commands.clear"),list:()=>call("commands.list")},
-  banner:{show:o=>call("banner.show",[o]),hide:()=>call("banner.hide")}
+  banner:{show:o=>call("banner.show",[o]),hide:o=>call("banner.hide",[o]),clear:()=>call("banner.clear")},
+  ui:{open:o=>call("ui.open",[o]),update:(id,o)=>call("ui.update",[id,o]),close:id=>call("ui.close",[id]),list:()=>call("ui.list"),confirm:o=>call("ui.confirm",[o]),prompt:o=>call("ui.prompt",[o])},
+  messageMenu:{add:o=>call("menu.add",[o]),remove:id=>call("menu.remove",[id]),clear:()=>call("menu.clear"),list:()=>call("menu.list")}
 });
 Object.assign(qm.chat,{getText:()=>call("chat.getText"),setText:t=>call("chat.setText",[t]),clearText:()=>call("chat.setText",[""]),focus:()=>call("chat.focus"),list:()=>call("chat.list"),info:()=>call("chat.info"),send:(t,o)=>call("chat.send",[t,o])});
 Object.assign(qm.style,{vars:o=>call("style.vars",[o]),get:()=>call("style.get"),sheet:(id,css)=>call("style.sheet",[id,css]),removeSheet:id=>call("style.removeSheet",[id])});
@@ -89,20 +90,103 @@ function applyStyle(run) {
 }
 document.addEventListener("load", e => { if (e.target && e.target.tagName === "IFRAME") { attachKeys(); for (const r of runs.values()) { if (styleText(r).trim()) setTimeout(() => applyStyle(r), 0); if (r.buttons.size) setTimeout(() => injectButtons(r), 100); } emit("page-load", { frame: e.target.id === "callFrame" ? "call" : "detail" }); } }, true);
 
-function paintPanel(run, o) {
-  if (!panelsHost) { panelsHost = document.createElement("div"); panelsHost.className = "plugin-panels"; document.body.appendChild(panelsHost); }
-  let el = run.panelEl;
-  if (!o) { el?.remove(); run.panelEl = null; return; }
-  if (!el) { el = document.createElement("section"); el.className = "plugin-panel"; panelsHost.appendChild(el); run.panelEl = el; }
-  el.replaceChildren();
-  const h = document.createElement("strong"); h.textContent = String(o.title || run.plugin.name).slice(0, 60); el.appendChild(h);
-  const x = document.createElement("button"); x.type = "button"; x.className = "plugin-x"; x.textContent = "×"; x.setAttribute("aria-label", "Close panel"); x.onclick = () => paintPanel(run, null); el.appendChild(x);
-  for (const l of (Array.isArray(o.lines) ? o.lines : []).slice(0, 30)) { const p = document.createElement("div"); p.textContent = String(l).slice(0, 300); el.appendChild(p); }
-  if (typeof o.progress === "number" && isFinite(o.progress)) { const b = document.createElement("div"); b.className = "up-bar"; b.innerHTML = "<i></i>"; b.firstChild.style.width = Math.round(Math.max(0, Math.min(1, o.progress)) * 100) + "%"; el.appendChild(b); }
-  for (const b of (Array.isArray(o.buttons) ? o.buttons : []).slice(0, 8)) {
-    const bt = document.createElement("button"); bt.type = "button"; bt.className = "btn small"; bt.textContent = String(b).slice(0, 40);
-    bt.onclick = () => send(run, "panel-button", { label: String(b) }); el.appendChild(bt);
+// ---------------------------------------------------------------- plugin windows (qm.ui) and the old panel
+// A window is a themed dialog (a sheet on phones) that is drawn from "blocks" the plugin describes. The plugin never gets
+// to put its own HTML on the page: it only picks block types, and the host draws them with the site's own colours.
+const BLOCK_TYPES = ["text", "heading", "kv", "button", "buttons", "input", "toggle", "select", "progress", "list", "image", "divider", "badge"];
+const el$ = (tag, cls, txt) => { const e = document.createElement(tag); if (cls) e.className = cls; if (txt != null) e.textContent = String(txt); return e; };
+const safeSrc = u => /^(https:\/\/|data:image\/(png|jpe?g|gif|webp);base64,)/i.test(String(u)) ? String(u) : "";
+function winValues(w) { return { ...w.values }; }
+function renderBlocks(run, w, root, blocks) {
+  const act = (id, value) => w.id === "panel" && String(id).startsWith("panel:") ? send(run, "panel-button", { label: String(id).slice(6) }) : send(run, "ui-action", { window: w.id, id: String(id), value: value === undefined ? null : value, values: winValues(w) });
+  for (const b of (Array.isArray(blocks) ? blocks : []).slice(0, 80)) {
+    if (!b || typeof b !== "object" || !BLOCK_TYPES.includes(b.type)) continue;
+    const id = String(b.id || "").slice(0, 60);
+    if (b.type === "text") root.appendChild(el$("p", "pw-text" + (b.muted ? " muted" : "") + (b.bold ? " bold" : ""), String(b.text || "").slice(0, 2000)));
+    else if (b.type === "heading") root.appendChild(el$("h3", "pw-heading", String(b.text || "").slice(0, 120)));
+    else if (b.type === "badge") root.appendChild(el$("span", "pw-badge " + (["success", "error", "warn"].includes(b.kind) ? b.kind : ""), String(b.text || "").slice(0, 40)));
+    else if (b.type === "divider") root.appendChild(el$("hr", "pw-hr"));
+    else if (b.type === "kv") {
+      const d = el$("dl", "pw-kv");
+      for (const r of (Array.isArray(b.rows) ? b.rows : []).slice(0, 40)) { if (!Array.isArray(r)) continue; d.appendChild(el$("dt", "", String(r[0]).slice(0, 60))); d.appendChild(el$("dd", "", String(r[1]).slice(0, 200))); }
+      root.appendChild(d);
+    } else if (b.type === "progress") {
+      const bar = el$("div", "up-bar"); const i = document.createElement("i"); const v = Number(b.value); i.style.width = Math.round(Math.max(0, Math.min(1, isFinite(v) ? v : 0)) * 100) + "%"; bar.appendChild(i);
+      if (b.label) root.appendChild(el$("div", "pw-label", String(b.label).slice(0, 100))); root.appendChild(bar);
+    } else if (b.type === "image") {
+      const src = safeSrc(b.src); if (!src) continue; const im = document.createElement("img"); im.className = "pw-img"; im.src = src; im.alt = String(b.alt || "").slice(0, 100); im.loading = "lazy"; root.appendChild(im);
+    } else if (b.type === "button") {
+      const bt = el$("button", "btn" + (b.kind === "primary" ? " primary" : "") + (b.kind === "danger" ? " danger" : "") + " pw-btn", String(b.label || id || "OK").slice(0, 40)); bt.type = "button";
+      bt.onclick = () => act(id || b.label); root.appendChild(bt);
+    } else if (b.type === "buttons") {
+      const row = el$("div", "pw-row");
+      for (const x of (Array.isArray(b.items) ? b.items : []).slice(0, 8)) {
+        const o = typeof x === "object" && x ? x : { label: x, id: x };
+        const bt = el$("button", "btn small" + (o.kind === "primary" ? " primary" : "") + (o.kind === "danger" ? " danger" : ""), String(o.label || o.id || "").slice(0, 30)); bt.type = "button";
+        bt.onclick = () => act(o.id || o.label); row.appendChild(bt);
+      }
+      root.appendChild(row);
+    } else if (b.type === "input") {
+      const lab = el$("label", "pw-field"); if (b.label) lab.appendChild(el$("span", "pw-label", String(b.label).slice(0, 80)));
+      const inp = document.createElement(b.multiline ? "textarea" : "input"); if (!b.multiline) inp.type = b.password ? "password" : "text"; else inp.rows = 3;
+      inp.value = id in w.values ? w.values[id] : String(b.value ?? "").slice(0, 2000); inp.placeholder = String(b.placeholder || "").slice(0, 80); inp.maxLength = 2000;
+      if (id) { w.values[id] = inp.value; inp.oninput = () => { w.values[id] = inp.value; }; inp.onchange = () => { if (b.live) act(id, inp.value); }; }
+      inp.onkeydown = e => { if (e.key === "Enter" && !b.multiline && b.submit) { e.preventDefault(); act(b.submit, inp.value); } };
+      lab.appendChild(inp); root.appendChild(lab);
+    } else if (b.type === "toggle") {
+      const lab = el$("label", "pw-toggle"); const cb = document.createElement("input"); cb.type = "checkbox"; cb.checked = id in w.values ? !!w.values[id] : !!b.value;
+      if (id) { w.values[id] = cb.checked; cb.onchange = () => { w.values[id] = cb.checked; if (b.live) act(id, cb.checked); }; }
+      lab.appendChild(cb); lab.appendChild(el$("span", "", String(b.label || "").slice(0, 100))); root.appendChild(lab);
+    } else if (b.type === "select") {
+      const lab = el$("label", "pw-field"); if (b.label) lab.appendChild(el$("span", "pw-label", String(b.label).slice(0, 80)));
+      const sel = document.createElement("select");
+      for (const o of (Array.isArray(b.options) ? b.options : []).slice(0, 40)) { const v = typeof o === "object" && o ? o : { value: o, label: o }; const op = document.createElement("option"); op.value = String(v.value); op.textContent = String(v.label ?? v.value).slice(0, 60); sel.appendChild(op); }
+      sel.value = id in w.values ? w.values[id] : String(b.value ?? sel.value); if (id) { w.values[id] = sel.value; sel.onchange = () => { w.values[id] = sel.value; if (b.live) act(id, sel.value); }; }
+      lab.appendChild(sel); root.appendChild(lab);
+    } else if (b.type === "list") {
+      const ul = el$("div", "pw-list");
+      for (const it of (Array.isArray(b.items) ? b.items : []).slice(0, 100)) {
+        const o = typeof it === "object" && it ? it : { title: it };
+        const row = el$(o.id != null ? "button" : "div", "pw-item"); if (o.id != null) { row.type = "button"; row.onclick = () => act(o.id, o.title); }
+        row.appendChild(el$("span", "pw-item-t", String(o.title ?? "").slice(0, 120))); if (o.sub) row.appendChild(el$("span", "pw-item-s", String(o.sub).slice(0, 160)));
+        ul.appendChild(row);
+      }
+      if (!ul.children.length && b.empty) ul.appendChild(el$("div", "pw-text muted", String(b.empty).slice(0, 100)));
+      root.appendChild(ul);
+    }
   }
+}
+function paintWindow(run, w) {
+  const o = w.o;
+  if (!w.el) {
+    const back = el$("div", "pw-backdrop"); const box = el$("section", "pw"); box.setAttribute("role", "dialog"); box.setAttribute("aria-modal", "true");
+    back.appendChild(box); document.body.appendChild(back); w.el = back; w.box = box;
+    back.addEventListener("pointerdown", e => { if (e.target === back && o.dismiss !== false) closeWindow(run, w.id, "backdrop"); });
+  }
+  const box = w.box; box.className = "pw " + (["sm", "md", "lg"].includes(o.size) ? o.size : "md"); box.replaceChildren();
+  const head = el$("header", "pw-head"); const t = el$("div", "pw-title"); t.appendChild(el$("strong", "", String(o.title || run.plugin.name).slice(0, 60))); t.appendChild(el$("span", "pw-by", run.plugin.name)); head.appendChild(t);
+  if (o.dismiss !== false) { const x = el$("button", "pw-close", "×"); x.type = "button"; x.setAttribute("aria-label", "Close"); x.onclick = () => closeWindow(run, w.id, "button"); head.appendChild(x); }
+  box.appendChild(head);
+  const body = el$("div", "pw-body"); renderBlocks(run, w, body, o.blocks); box.appendChild(body);
+}
+function openWindow(run, o) {
+  o = o || {}; const id = String(o.id || "main").slice(0, 40);
+  let w = run.windows.get(id);
+  if (!w) { if (run.windows.size >= 4) throw new Error("Too many windows are open."); w = { id, o: {}, values: {}, el: null, box: null }; run.windows.set(id, w); }
+  w.o = o; paintWindow(run, w); return id;
+}
+function closeWindow(run, id, why) { const w = run.windows.get(id); if (!w) return false; w.el?.remove(); run.windows.delete(id); if (why) send(run, "ui-close", { window: id, reason: why }); return true; }
+function closeAllWindows(run) { for (const id of [...run.windows.keys()]) closeWindow(run, id, null); }
+document.addEventListener("keydown", e => { if (e.key !== "Escape") return; for (const r of runs.values()) { const ids = [...r.windows.keys()].filter(i => r.windows.get(i).o.dismiss !== false); if (ids.length) { closeWindow(r, ids[ids.length - 1], "escape"); e.preventDefault(); return; } } });
+/** The older qm.panel.set({title, lines, progress, buttons}) now opens a window too, so nothing floats in a corner any more. */
+function paintPanel(run, o) {
+  if (!o) { closeWindow(run, "panel", null); return; }
+  const blocks = [];
+  for (const l of (Array.isArray(o.lines) ? o.lines : []).slice(0, 30)) blocks.push({ type: "text", text: l });
+  if (typeof o.progress === "number" && isFinite(o.progress)) blocks.push({ type: "progress", value: o.progress });
+  const bs = (Array.isArray(o.buttons) ? o.buttons : []).slice(0, 8); if (bs.length) blocks.push({ type: "buttons", items: bs.map(x => ({ id: "panel:" + String(x), label: String(x) })) });
+  const w0 = run.windows.get("panel"); if (w0) w0.values = {};
+  openWindow(run, { id: "panel", title: o.title, blocks, size: "sm", dismiss: true });
 }
 
 
@@ -196,7 +280,7 @@ function injectButtons(run) {
     sp.host.insertBefore(el, sp.before || null);
   }
 }
-setInterval(() => { attachKeys(); for (const r of runs.values()) if (r.buttons.size) injectButtons(r); }, 1500);      // pages are replaced when you move around: put the buttons back
+setInterval(() => { attachKeys(); for (const r of runs.values()) { if (r.buttons.size) injectButtons(r); for (const [wh, bn] of r.banners) if (wh !== "app" && !bn.el.isConnected) { try { paintBanner(r, bn.o); } catch (_) { /* page gone */ } } } }, 1500);      // pages are replaced when you move around: put the buttons back
 
 // ---------------------------------------------------------------- calls and developer views
 const callInfo = () => ctx.call ? { chatId: ctx.call.chatId || null, joined: !!ctx.call.joined, visible: !!ctx.call.visible, muted: !!ctx.call.muted, camOn: !!ctx.call.camOn, screenOn: !!ctx.call.screenOn, startedAt: ctx.call.startLocal || null, title: ctx.call.title || "" } : { chatId: null, joined: false, visible: false };
@@ -255,15 +339,25 @@ function runCommand(text, chatId) {
   return false;
 }
 // a banner across the top (permission "panel")
-function paintBanner(run, o) {
-  if (!o) { run.bannerEl?.remove(); run.bannerEl = null; return; }
-  let el = run.bannerEl;
-  if (!el) { el = document.createElement("div"); el.className = "plugin-banner"; document.body.appendChild(el); run.bannerEl = el; }
-  el.className = "plugin-banner " + (["info", "success", "error"].includes(o.kind) ? o.kind : "info");
+function bannerHost(where) {
+  if (where === "call") { if (!ctx.call) return null; const d = targetDoc("call"); return d && d.body ? { doc: d, host: d.body } : null; }
+  if (where === "chat") { const d = targetDoc("detail"); return d && d.body ? { doc: d, host: d.body } : null; }
+  return { doc: document, host: document.body };
+}
+function paintBanner(run, o, whereArg) {
+  const where = ["app", "call", "chat"].includes(o && o.where) ? o.where : (whereArg || "app");
+  const cur = run.banners.get(where);
+  if (!o) { cur && cur.el.remove(); run.banners.delete(where); if (where === "app") run.bannerEl = null; return; }
+  const h = bannerHost(where); if (!h) throw new Error("That part of the page is not open.");
+  const d = h.doc;
+  let el = cur && cur.el;
+  if (!el || el.ownerDocument !== d || !el.isConnected) { el = d.createElement("div"); h.host.appendChild(el); }
+  el.className = "plugin-banner " + where + " " + (["info", "success", "error", "warn"].includes(o.kind) ? o.kind : "info"); el.setAttribute("role", "status");
   el.replaceChildren();
-  const t = document.createElement("span"); t.textContent = String(o.text || "").slice(0, 200); el.appendChild(t);
-  for (const b of (Array.isArray(o.buttons) ? o.buttons : []).slice(0, 3)) { const bt = document.createElement("button"); bt.type = "button"; bt.className = "btn small"; bt.textContent = String(b).slice(0, 30); bt.onclick = () => send(run, "banner-button", { label: String(b) }); el.appendChild(bt); }
-  const x = document.createElement("button"); x.type = "button"; x.className = "plugin-x"; x.textContent = "×"; x.setAttribute("aria-label", "Close"); x.onclick = () => paintBanner(run, null); el.appendChild(x);
+  const t = d.createElement("span"); t.className = "pb-text"; t.textContent = String(o.text || "").slice(0, 200); el.appendChild(t);
+  for (const b of (Array.isArray(o.buttons) ? o.buttons : []).slice(0, 3)) { const bt = d.createElement("button"); bt.type = "button"; bt.className = "btn small"; bt.textContent = String(b).slice(0, 30); bt.onclick = () => send(run, "banner-button", { label: String(b), where }); el.appendChild(bt); }
+  if (o.dismiss !== false) { const x = d.createElement("button"); x.type = "button"; x.className = "plugin-x"; x.textContent = "×"; x.setAttribute("aria-label", "Close"); x.onclick = () => paintBanner(run, null, where); el.appendChild(x); }
+  run.banners.set(where, { el, o: { ...o, where } }); if (where === "app") run.bannerEl = el;
 }
 const CSS_VAR = /^--[\w-]{1,40}$/, CSS_VAL = /^[^;{}<>\\]{1,100}$/;
 function restoreHidden(run) { for (const [el, prev] of run.hidden) { try { el.style.display = prev; } catch (_) { /* gone */ } } run.hidden.clear(); }
@@ -436,7 +530,24 @@ const api = {
   "commands.list": run => { need(run, "commands"); return [...run.commands.values()]; },
   // banner (permission "panel")
   "banner.show": (run, [o]) => { need(run, "panel"); paintBanner(run, o || {}); },
-  "banner.hide": run => { need(run, "panel"); paintBanner(run, null); },
+  "banner.hide": (run, [o]) => { need(run, "panel"); paintBanner(run, null, (o && o.where) || "app"); },
+  "banner.clear": run => { need(run, "panel"); for (const k of [...run.banners.keys()]) paintBanner(run, null, k); },
+  // windows drawn from blocks (permission "ui")
+  "ui.open": (run, [o]) => { need(run, "ui"); return openWindow(run, o); },
+  "ui.update": (run, [id, o]) => { need(run, "ui"); const w = run.windows.get(String(id)); if (!w) throw new Error("That window is not open."); w.o = { ...w.o, ...(o || {}) }; paintWindow(run, w); },
+  "ui.close": (run, [id]) => { need(run, "ui"); return closeWindow(run, String(id || "main"), null); },
+  "ui.list": run => { need(run, "ui"); return [...run.windows.keys()]; },
+  "ui.confirm": async (run, [o]) => { need(run, "ui"); o = o || {}; return !!(await confirmDialog({ title: String(o.title || run.plugin.name).slice(0, 80), message: String(o.message || "").slice(0, 400), okText: String(o.ok || "OK").slice(0, 20), danger: !!o.danger })); },
+  "ui.prompt": async (run, [o]) => { need(run, "ui"); o = o || {}; const v = await promptDialog({ title: String(o.title || run.plugin.name).slice(0, 80), message: String(o.message || "").slice(0, 400), input: { value: String(o.value || "").slice(0, 500), placeholder: String(o.placeholder || "").slice(0, 80) } }); return v == null || v === false ? null : String(v); },
+  // extra choices in the message menu (permission "menu")
+  "menu.add": (run, [o]) => {
+    need(run, "menu"); o = o || {}; const id = String(o.id || "").slice(0, 40); if (!id) throw new Error("A menu item needs an id.");
+    if (!run.menu.has(id) && run.menu.size >= 8) throw new Error("A plugin can add up to 8 message menu items.");
+    run.menu.set(id, { id, label: String(o.label || id).slice(0, 30), icon: String(o.icon || "more").slice(0, 20), mine: o.mine === true ? true : o.mine === false ? false : null, textOnly: !!o.textOnly, danger: !!o.danger }); return true;
+  },
+  "menu.remove": (run, [id]) => { need(run, "menu"); run.menu.delete(String(id)); },
+  "menu.clear": run => { need(run, "menu"); run.menu.clear(); },
+  "menu.list": run => { need(run, "menu"); return [...run.menu.values()]; },
   // styles (permission "style")
   "style.vars": (run, [o]) => {
     need(run, "style"); o = o || {}; const next = {};
@@ -472,7 +583,7 @@ const api = {
 };
 
 function send(run, event, data) { try { run.frame.contentWindow.postMessage({ qm: 1, event, data }, "*"); } catch (_) { /* frame gone */ } }
-const PERM_OF = { message: "messages", "chat-open": "chat", "chat-close": "chat", button: "buttons", "call-state": "calls", "dev-view": "devinfo", "page-load": "page", key: "keys", command: "commands", "banner-button": "panel" };
+const PERM_OF = { message: "messages", "chat-open": "chat", "chat-close": "chat", button: "buttons", "call-state": "calls", "dev-view": "devinfo", "page-load": "page", key: "keys", command: "commands", "banner-button": "panel", "ui-action": "ui", "ui-close": "ui", "menu-click": "menu" };
 const wants = (run, event) => !PERM_OF[event] || run.plugin.permissions.includes(PERM_OF[event]);
 
 addEventListener("message", async e => {
@@ -492,14 +603,14 @@ export function startPlugin(p) {
   frame.setAttribute("aria-hidden", "true"); frame.tabIndex = -1; frame.title = "Plugin: " + p.name;
   frame.style.cssText = "position:fixed;width:0;height:0;border:0;opacity:0;pointer-events:none";
   frame.srcdoc = boot(p.code, p);
-  runs.set(p.id, { frame, plugin: p, sig: pluginSig(p), state: "starting", error: "", logs: [], css: "", vars: {}, sheets: new Map(), panelEl: null, bannerEl: null, buttons: new Map(), cards: new Map(), keys: new Map(), commands: new Map(), hidden: new Map(), origTitle: null, sent: [], dead: false, search: null });
+  runs.set(p.id, { frame, plugin: p, sig: pluginSig(p), state: "starting", error: "", logs: [], css: "", vars: {}, sheets: new Map(), panelEl: null, bannerEl: null, banners: new Map(), windows: new Map(), menu: new Map(), buttons: new Map(), cards: new Map(), keys: new Map(), commands: new Map(), hidden: new Map(), origTitle: null, sent: [], dead: false, search: null });
   document.body.appendChild(frame);
 }
 const pluginSig = p => JSON.stringify([p.code, p.permissions, p.name, p.version]);
 /** Stops a plugin and takes back everything it put on the screen. */
 export function stopPlugin(id) {
   const r = runs.get(id); if (!r) return;
-  r.dead = true; r.css = ""; r.vars = {}; r.sheets.clear(); applyStyle(r); paintPanel(r, null); paintBanner(r, null); restoreHidden(r);
+  r.dead = true; r.css = ""; r.vars = {}; r.sheets.clear(); applyStyle(r); paintPanel(r, null); closeAllWindows(r); for (const k of [...r.banners.keys()]) paintBanner(r, null, k); r.menu.clear(); restoreHidden(r);
   if (r.origTitle != null) document.title = r.origTitle;
   if (r.search) r.search.stop = true; pill(null);
   r.buttons.clear(); r.keys.clear(); r.commands.clear(); r.cards.clear(); injectButtons(r); r.frame.remove(); runs.delete(id);
@@ -536,4 +647,18 @@ try { new MutationObserver(() => emit("theme-change", { dark: isDark() })).obser
 onDev(on => { if (on) startAll(); else stopAll(); });
 addEventListener("storage", e => { if (e.key === "qm-plugins" && devOn()) startAll(); });
 if (devOn()) setTimeout(startAll, 800);
-export const plugins = { emit, setContext, startPlugin, stopPlugin, startAll, stopAll, status, devCards, devView, command: runCommand };
+/** Extra message-menu choices from plugins that hold the "menu" permission; message.js asks for these when the menu opens. */
+function menuItems(m) {
+  const out = [];
+  for (const r of runs.values()) {
+    if (r.dead || r.state === "error" || !r.plugin.permissions.includes("menu")) continue;
+    for (const it of r.menu.values()) {
+      if (it.mine !== null && it.mine !== !!m.fromMe) continue;
+      if (it.textOnly && (m.text == null || m.type !== "text")) continue;
+      out.push({ plugin: r.plugin.id, by: r.plugin.name, id: it.id, label: it.label, icon: it.icon, danger: it.danger });
+    }
+  }
+  return out;
+}
+function menuClick(pluginId, id, m) { const r = runs.get(pluginId); if (r && !r.dead) send(r, "menu-click", { id: String(id), message: r.plugin.permissions.includes("messages") ? m : { ...m, text: null } }); }       // the text only goes to plugins that may read messages
+export const plugins = { menuItems, menuClick, emit, setContext, startPlugin, stopPlugin, startAll, stopAll, status, devCards, devView, command: runCommand };

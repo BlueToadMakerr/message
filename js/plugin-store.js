@@ -8,7 +8,7 @@ export const PERMISSIONS = {
   me:       { label: "Read your name and account id", risk: "medium" },
   chat:     { label: "Know which chat is open; put text in the message box", risk: "medium" },
   messages: { label: "Read the text of messages shown on your screen", risk: "high" },
-  panel:    { label: "Show a small panel on the screen", risk: "low" },
+  panel:    { label: "Show small panels and banners (including on the call screen)", risk: "low" },
   network:  { label: "Contact other websites (can send data out)", risk: "high" },
   page:     { label: "Control the page: read what is on screen, click, type, scroll, search the chat", risk: "high" },
   buttons:  { label: "Add buttons to the chat, chat list and call screens", risk: "low" },
@@ -18,7 +18,9 @@ export const PERMISSIONS = {
   clipboard: { label: "Copy text to the clipboard", risk: "medium" },
   notify:    { label: "Show notifications and vibrate", risk: "low" },
   keys:      { label: "Add keyboard shortcuts", risk: "low" },
-  commands:  { label: "Add slash commands (/name) to the message box", risk: "low" }
+  commands:  { label: "Add slash commands (/name) to the message box", risk: "low" },
+  ui:        { label: "Open its own windows with forms, lists and buttons", risk: "low" },
+  menu:      { label: "Add choices to the message menu (and receive the message you pick)", risk: "medium" }
 };
 export const MAX_CODE = 200000;
 
@@ -68,4 +70,29 @@ export async function checkPluginUpdate(p) {
     if (!r.ok || !validVer(j.version)) throw new Error("Unexpected answer");
     return { ok: true, newer: cmpVer(j.version, p.version) > 0, latest: j.version, info: j };
   } catch (e) { return { ok: false, error: String(e && e.message || e) }; }
+}
+
+/** Turns what people paste (a GitHub page link, say) into the address of the plain file. */
+export function directPluginUrl(u) {
+  u = String(u || "").trim();
+  let x; try { x = new URL(u); } catch (_) { throw new Error("That doesn't look like a web address."); }
+  const local = /^(localhost|127\.0\.0\.1|\[::1\])$/.test(x.hostname);
+  if (x.protocol !== "https:" && !(x.protocol === "http:" && local)) throw new Error("The address must start with https://");
+  const m = x.hostname === "github.com" && x.pathname.match(/^\/([^/]+)\/([^/]+)\/blob\/(.+)$/);
+  if (m) return `https://raw.githubusercontent.com/${m[1]}/${m[2]}/${m[3]}`;
+  return x.href;
+}
+/** Downloads a plugin file from a web address and checks it. It comes back switched OFF; the person reviews permissions first. */
+export async function fetchPluginFromUrl(url) {
+  const href = directPluginUrl(url);
+  let r;
+  try { r = await fetch(href, { cache: "no-store", credentials: "omit", redirect: "follow" }); }
+  catch (_) { throw new Error("Couldn't download it. The site may be offline, or it doesn't allow other websites to read the file (GitHub raw links and jsDelivr work)."); }
+  if (!r.ok) throw new Error("The site answered " + r.status + ".");
+  const text = await r.text();
+  if (text.length > MAX_CODE + 20000) throw new Error("That file is too big for a plugin.");
+  let raw; try { raw = JSON.parse(text); } catch (_) { throw new Error("That isn't a plugin file (expected JSON exported from the Plugins page)."); }
+  if (!raw || typeof raw !== "object") throw new Error("That isn't a plugin file.");
+  const p = normalize({ ...raw, updateUrl: raw.updateUrl || href, enabled: false });
+  return { plugin: p, url: href };
 }

@@ -1144,6 +1144,11 @@ function showMenu(key, btn) {
   }
   if (msg.fromUid === me) add("Delete", "close", () => deleteMessage(key), true);
   if (msg._enc) add("What's this?", "info", () => explainEncrypted(msg));
+  try {                                   // choices added by plugins (Developer mode)
+    const q = window.top !== window && window.top.QM;
+    const info = { chatId, key, fromMe: msg.fromUid === me, text: isText(msg) && !msg._locked ? String(msg.text ?? msg.content ?? "").slice(0, 2000) : null, type: msg.type || "text", time: msg.timestamp || null };
+    for (const it of (q && q.plugins && q.plugins.menuItems ? q.plugins.menuItems(info) : [])) add(it.label, ["info", "send", "copy", "close", "more"].includes(it.icon) ? it.icon : "more", () => q.plugins.menuClick(it.plugin, it.id, info), it.danger);
+  } catch (_) { /* a plugin must never break the menu */ }
   if (devOn()) add("Developer info", "more", () => showMessageDev(key, msg));
 
   menuEl.classList.remove("hidden");
