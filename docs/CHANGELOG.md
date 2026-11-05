@@ -2,6 +2,17 @@
 
 Newest first. Older rounds (1–43) are kept below exactly as they were written.
 
+## 1.50.0 — Friend codes replace UIDs
+
+- **Adding someone by UID is gone.** In "New chat" and "Add someone" you now paste a **friend code** (like `QM-K7R2D-9WBX4`) or an email address. Typing is forgiving (any case, spaces instead of dashes, without `QM`).
+- **Friend codes are random, not derived from anything.** They use another alphabet and shape than the encryption **recovery code** (5 groups of 4), so the two can't be confused, and they are unrelated to your UID. Everyone gets one automatically the next time they open the app.
+- **Account → Friend code**: copy your code, **switch it off** (it stops working until you turn it on again), make it **private** (public by default), or **make a new code** (the old one stops working immediately).
+- **Copy button in the member list**: the old "Copy UID" button is gone. Another person's row only has a copy button if they made their friend code public (and it is on). Your own row always has one.
+- Database: new nodes `friend/{uid}` (only you can read it), `friendCodes/{code}` (lookup; can't be listed, only asked for one code; you can claim a free code for yourself and release only your own) and `friendPub/{uid}` (your code while it's on and public). Deleting your account removes them. The private server enforces the same rules.
+- **Deploy: publish the new `database.rules.json` to Firebase** (Realtime Database → Rules). Until you do, friend codes can't be created and nobody can be added by code (email still works).
+- Plugin templates that used the panel now open on a button press: **Message counter** and **Quick replies** add a button to the chat header and open a window (Quick replies lets you save your own), and the **Call timer** banner is toggled from a button on the call screen. `qm.ui.open` has a new `reset: true` option that clears typed values.
+- The Legacy page only ever added chats by email, so nothing changed there.
+
 ## 1.49.0 — Plugin windows, message-menu items, call banners, add by URL
 
 - **Fixed: plugin panels and banners were unreadable in dark mode and always floated in the bottom-right corner.** They used a colour variable the site never defined. They now use the site's own theme colours. The old floating panel is gone: `qm.panel.set` now opens a window (a sheet on phones, a card on wide screens) that you can close with ×, Escape or a tap outside.

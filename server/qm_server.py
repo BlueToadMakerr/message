@@ -156,9 +156,13 @@ def member(chat, uid, new_tree=None):
         return isinstance(np_, dict) and bool(np_.get(uid))
     return False
 
+FRIEND_RE = re.compile(r"^QM-[BCDFGHJKMNPQRSTVWXZ2-9]{5}-[BCDFGHJKMNPQRSTVWXZ2-9]{5}$")
+
 def can_read(uid, pp):
     if not pp: return False
     t = pp[0]
+    if t == "friend": return len(pp) > 1 and pp[1] == uid
+    if t in ("friendPub", "friendCodes"): return len(pp) > 1                 # one entry at a time, never the whole list
     if t in ("accsettings", "userKeys", "linkPreviews"): return len(pp) > 1
     if t in ("chatList", "live", "FCM"): return len(pp) > 1 and pp[1] == uid
     if t in ("privateChats", "calls"): return len(pp) > 1 and member(pp[1], uid)
@@ -167,6 +171,11 @@ def can_read(uid, pp):
 def can_write(uid, pp, value, newtree):
     if not pp: return False
     t = pp[0]
+    if t in ("friend", "friendPub"): return len(pp) > 1 and pp[1] == uid
+    if t == "friendCodes":                                                    # claim a free code for yourself, release only your own
+        if len(pp) != 2 or not FRIEND_RE.match(pp[1]): return False
+        cur = get_at(["friendCodes", pp[1]])
+        return (cur is None and value == uid) or (cur == uid and value is None)
     if t in ("accsettings", "userKeys", "FCM"): return len(pp) > 1 and pp[1] == uid
     if t == "chatList":
         if len(pp) < 2: return False
@@ -520,7 +529,7 @@ class H(BaseHTTPRequestHandler):
             if not hmac.compare_digest(u["hash"], hash_pw(d.get("password") or "", bytes.fromhex(u["salt"]))): return self.send_json(401, {"error": "Wrong password."})
             with LOCK:
                 USERS.pop(uid, None); BY_EMAIL.pop(u["email"].lower(), None)
-                apply_update(uid, {"accsettings/" + uid: None, "userKeys/" + uid: None, "chatList/" + uid: None, "live/" + uid: None, "FCM/" + uid: None}, trusted=True)
+                apply_update(uid, {"accsettings/" + uid: None, "userKeys/" + uid: None, "chatList/" + uid: None, "live/" + uid: None, "FCM/" + uid: None, "friend/" + uid: None, "friendPub/" + uid: None}, trusted=True)
             return self.send_json(200, {"ok": True})
         if name == "lookup":                         # replaces email-lookup.php
             e = (q.get("email", [""])[0] or "").strip().lower(); t = BY_EMAIL.get(e)

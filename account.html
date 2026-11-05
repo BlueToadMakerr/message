@@ -29,10 +29,18 @@
             <div id="headEmail" class="muted" style="word-break:break-all"></div>
           </div>
         </div>
-        <label class="lbl">Your UID <span style="font-weight:400">— share this so people can start a chat with you</span></label>
-        <div class="uid-box"><span id="uidText"></span>
-          <button id="copyUidBtn" class="icon-btn" type="button" aria-label="Copy UID" data-icon="copy" data-size="18"></button>
+      </section>
+
+      <section class="card" id="friendCard">
+        <h2>Friend code</h2>
+        <p class="muted" style="margin-top:0">Give this to someone so they can start a chat with you. It is random, it is not your account id, and it is not your encryption recovery code.</p>
+        <div class="uid-box"><span id="friendText">…</span>
+          <button id="copyFriendBtn" class="icon-btn" type="button" aria-label="Copy friend code" data-icon="copy" data-size="18"></button>
         </div>
+        <label class="switch-row" style="margin-top:.8rem"><input type="checkbox" id="friendOnToggle"> <span><strong>Let people add me with my friend code</strong><br><small class="muted">When this is off, the code stops working until you turn it back on.</small></span></label>
+        <label class="switch-row" style="margin-top:.8rem"><input type="checkbox" id="friendPubToggle"> <span><strong>Show my friend code to people I chat with</strong><br><small class="muted">When this is on, people in your chats get a button to copy it. When it's off, only you can see it.</small></span></label>
+        <div class="row wrap" style="margin-top:.8rem"><button id="friendNewBtn" class="btn" type="button">Make a new friend code</button></div>
+        <p id="friendMsg" class="muted" style="margin:.5rem 0 0"></p>
       </section>
 
       <section class="card">
@@ -118,7 +126,7 @@
 
       <section class="card">
         <h2>Privacy</h2>
-        <label class="switch-row" data-nopriv><input type="checkbox" id="emailAddToggle"> <span><strong>Let people add me by email</strong><br><small class="muted">Your email is never shown to anyone. When this is off, people need your UID to add you.</small></span></label>
+        <label class="switch-row" data-nopriv><input type="checkbox" id="emailAddToggle"> <span><strong>Let people add me by email</strong><br><small class="muted">Your email is never shown to anyone. When this is off, people need your friend code to add you.</small></span></label>
         <label class="switch-row" data-nopriv style="margin-top:.8rem"><input type="checkbox" id="previewToggle"> <span><strong>Link previews</strong><br><small class="muted">Shows what links in messages are (title, picture, video). Fetching a preview asks this site's server to open the link; nothing is stored.</small></span></label>
       </section>
 

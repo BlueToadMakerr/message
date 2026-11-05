@@ -32,6 +32,7 @@ import { DEFAULT_DB_URL, customDbUrl, cleanDbUrl, setDbUrl } from "./dburl.js";
 import { openPreview } from "./msgcrypto.js";
 import { requireVerified, isVerified, refreshVerified, resendVerification, watchVerified } from "./verify.js";
 import { resolveRecipient } from "./recipient.js";
+import { ensureFriend } from "./friend.js";
 
 import "./serverbox.js";
 window.__qmBooted = true;      // js/legacy.js: the app's scripts did start
@@ -291,7 +292,7 @@ function renderList() {
   if (!items.length) {
     const empty = document.createElement("div");
     empty.className = "empty";
-    empty.innerHTML = `<div class="big">${icon("chat", 30)}</div><strong>No chats yet</strong><p>Tap “New chat” and paste a friend's UID to say hello.</p>`;
+    empty.innerHTML = `<div class="big">${icon("chat", 30)}</div><strong>No chats yet</strong><p>Tap “New chat” and paste a friend's friend code to say hello.</p>`;
     chatListEl.append(empty);
     return;
   }
@@ -403,7 +404,7 @@ ncForm.addEventListener("submit", async e => {
 
   if (!ncTarget) {
     const fail = msg => { ncError.textContent = msg; ncError.classList.remove("hidden"); };
-    if (!ncInput.value.trim()) return fail("Enter a UID or an email address.");
+    if (!ncInput.value.trim()) return fail("Enter a friend code or an email address.");
     if (!requireVerified("start chats")) return;
 
     ncGo.disabled = true;
@@ -681,6 +682,7 @@ onAuthStateChanged(auth, async user => {
 
   try {
     const profile = await ensureProfile(user);
+    ensureFriend(user.uid).catch(() => {});                 // everyone gets a friend code (needed to be found by others)
     accountLink.replaceChildren(avatarEl(profile.displayName, profile.pfp, "avatar sm"));
     if (profile.theme && profile.theme !== (localStorage.getItem("theme") || "system")) applyTheme(profile.theme);
   } catch (err) {

@@ -12,6 +12,7 @@ import {
   toast, confirmDialog, promptDialog, avatarEl, hydrateIcons, copyText, authErrorMessage
 } from "./ui.js";
 import { ensureProfile, invalidateProfile } from "./users.js";
+import { ensureFriend, setFriendOn, setFriendPublic, regenerateFriend, friendDeletePaths } from "./friend.js";
 import { applyTheme, getTheme, getAppearance, setAppearance, materialAvailable, ACCENT_PRESETS, COLOR_ROLES, getColors, setColor, resetColors, activeScheme } from "./theme.js";
 import { refreshSite } from "./refresh.js";
 import { updatesSupported, installedVersion, checkForUpdate } from "./update.js";
@@ -58,7 +59,7 @@ onAuthStateChanged(auth, async u => {
   catch (err) { console.error(err); toast("Couldn't load your profile.", "error"); profile = { displayName: u.displayName || "", pfp: "", theme: null }; }
 
   $("headEmail").textContent = u.email || "";
-  $("uidText").textContent = u.uid;
+  paintFriend(u.uid);
   $("displayName").value = profile.displayName === "Unknown user" ? "" : profile.displayName;
   $("pfpUrl").value = profile.pfp || "";
   // Bug fix: the old page read an undefined `info.theme` here and crashed.
@@ -197,9 +198,40 @@ $("suggestCopy").onclick = async () => {
 };
 $("tourBtn").onclick = () => showTour({ uid: user.uid });
 $("emailAddToggle").addEventListener("change", async e => {
-  try { await update(ref(db, `accsettings/${user.uid}/settings`), { emailAdd: e.target.checked }); invalidateProfile(user.uid); toast(e.target.checked ? "People can add you by email." : "People need your UID to add you.", "success", 2500); }
+  try { await update(ref(db, `accsettings/${user.uid}/settings`), { emailAdd: e.target.checked }); invalidateProfile(user.uid); toast(e.target.checked ? "People can add you by email." : "People need your friend code to add you.", "success", 2500); }
   catch (_) { e.target.checked = !e.target.checked; toast("Couldn't save that.", "error"); }
 });
+// ---------- friend code ----------
+let friend = null;
+function paintFriendUI() {
+  const ok = !!friend;
+  $("friendText").textContent = ok ? friend.code : "Not available right now";
+  $("friendText").style.opacity = ok && friend.on ? "1" : ".55";
+  $("copyFriendBtn").disabled = !ok;
+  $("friendOnToggle").checked = ok && friend.on; $("friendPubToggle").checked = ok && friend.public;
+  for (const id of ["friendOnToggle", "friendPubToggle", "friendNewBtn"]) $(id).disabled = !ok;
+  $("friendMsg").textContent = !ok ? "" : !friend.on ? "Switched off: nobody can add you with this code." : friend.public ? "People you chat with can copy this code." : "Private: only you can see it.";
+}
+async function paintFriend(uid) {
+  try { friend = await ensureFriend(uid); } catch (e) { console.warn("friend code", e); friend = null; $("friendMsg").textContent = "Couldn't load your friend code. Check your connection and reload."; }
+  paintFriendUI();
+}
+$("copyFriendBtn").onclick = async () => { if (friend) { await copyText(friend.code); toast("Friend code copied.", "success", 1800); } };
+$("friendOnToggle").addEventListener("change", async e => {
+  try { friend = await setFriendOn(user.uid, e.target.checked); toast(friend.on ? "People can add you with your friend code." : "Your friend code is switched off.", "success", 2500); }
+  catch (_) { toast("Couldn't save that.", "error"); }
+  paintFriendUI();
+});
+$("friendPubToggle").addEventListener("change", async e => {
+  try { friend = await setFriendPublic(user.uid, e.target.checked); toast(friend.public ? "People you chat with can copy your friend code." : "Your friend code is private.", "success", 2500); }
+  catch (_) { toast("Couldn't save that.", "error"); }
+  paintFriendUI();
+});
+$("friendNewBtn").onclick = async () => {
+  if (!(await confirmDialog({ title: "Make a new friend code?", message: "Your current code stops working right away. Anyone who has it will need the new one. Chats you already have are not affected.", okText: "Make new code" }))) return;
+  try { friend = await regenerateFriend(user.uid); toast("New friend code ready.", "success", 2500); } catch (_) { toast("Couldn't make a new code.", "error"); }
+  paintFriendUI();
+};
 try { $("fpsToggle").checked = localStorage.getItem("qm-show-fps") === "1"; } catch (_) { /* ignore */ }
 $("fpsToggle").addEventListener("change", e => { try { localStorage.setItem("qm-show-fps", e.target.checked ? "1" : "0"); } catch (_) { /* ignore */ } toast(e.target.checked ? "Frame rate shown in calls." : "Frame rate hidden.", "success", 2000); });
 $("previewToggle").addEventListener("change", e => { setPreviews(e.target.checked); toast(e.target.checked ? "Link previews on." : "Link previews off (reload chats to apply).", "success", 2500); });
@@ -477,6 +509,7 @@ $("deleteBtn").onclick = async () => {
       } catch (err) { console.warn("Couldn't clean up chat", chatId, err); }
     }
     await Promise.allSettled([
+      friendDeletePaths(uid).then(o => update(ref(db), o)),
       remove(ref(db, `chatList/${uid}`)),
       remove(ref(db, `FCM/${uid}`)),
       remove(ref(db, `userKeys/${uid}`)),

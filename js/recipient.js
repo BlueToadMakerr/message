@@ -1,17 +1,23 @@
-// Turns what the user typed in an "add someone" box into a UID: either a UID, or an email address.
+// Turns what the user typed in an "add someone" box into a UID: either a friend code (QM-XXXXX-XXXXX) or an email address.
 // Emails are never stored or shown: the server looks the account up and only hands back the UID (and only if that person allows it).
+// A friend code is looked up in the database; it only resolves while its owner has it switched on. UIDs are not accepted any more.
 import { auth } from "./firebase.js";
 import { PRIVATE, privateBase } from "./mode.js";
+import { normalizeCode, resolveFriendCode } from "./friend.js";
 
 export const looksLikeEmail = s => (PRIVATE ? /^[^\s@]+@[^\s@]+$/ : /^[^\s@]+@[^\s@]+\.[^\s@]+$/).test(String(s).trim());
 
 /** @returns {Promise<string>} uid. Throws Error with a user-facing message. */
 export async function resolveRecipient(input) {
   const v = String(input || "").trim();
-  if (!v) throw new Error("Enter a UID or an email address.");
+  if (!v) throw new Error("Enter a friend code or an email address.");
   if (!v.includes("@")) {
-    if (!/^[\w-]{6,128}$/.test(v)) throw new Error("That doesn't look like a valid UID or email address.");
-    return v;
+    const code = normalizeCode(v);
+    if (!code) throw new Error("That doesn't look like a friend code (it looks like QM-K7R2D-9WBX4) or an email address.");
+    let uid = null;
+    try { uid = await resolveFriendCode(code); } catch (_) { throw new Error("Couldn't look that friend code up. Check your connection and try again."); }
+    if (!uid) throw new Error("No one can be added with that friend code. It may have been typed wrong, changed, or turned off.");
+    return uid;
   }
   if (!looksLikeEmail(v)) throw new Error("That doesn't look like a valid email address.");
   const idToken = await auth.currentUser.getIdToken();

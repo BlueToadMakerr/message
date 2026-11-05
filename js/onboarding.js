@@ -53,7 +53,7 @@ function pWhere(ctx) {
   const tip = h("div", "tour-tip", "Tap a highlighted spot.");
   const T = tasks([["acc", "Tap your picture (top right)"], ["new", "Tap “+ New chat”"]]);
   av.onclick = () => { tip.textContent = "Your picture opens Account: your profile, colours, privacy, encryption, notifications and more."; T.tick("acc"); };
-  fab.onclick = () => { tip.textContent = "Start a chat by pasting a friend's UID (they copy it from their Account page) or their email address."; T.tick("new"); };
+  fab.onclick = () => { tip.textContent = "Start a chat by pasting a friend's friend code (they find it on their Account page) or their email address."; T.tick("new"); };
   const cA = call("Account & settings", "left"); cA.classList.add("c-acc");
   const cN = call("Start a chat", "down"); cN.classList.add("c-new");
   phone.append(cA, cN);
@@ -155,8 +155,8 @@ function pPrivacy(ctx) {
     const s = h("span"); const b = h("strong", "", title); s.append(b, h("br"), h("small", "muted", sub)); l.append(c, s); return l;
   };
   getProfile(ctx.uid).then(p => {
-    slot.append(row("Let people add me by email", "When this is off, people need your UID (copy it from Account) to start a chat with you.", p.emailAdd !== false, async v => {
-      try { await update(ref(db, `accsettings/${ctx.uid}/settings`), { emailAdd: v }); invalidateProfile(ctx.uid); status.textContent = v ? "✓ People can add you by email." : "✓ People need your UID to add you."; } catch (_) { status.textContent = "Couldn't save that right now."; }
+    slot.append(row("Let people add me by email", "When this is off, people need your friend code (it's on your Account page) to start a chat with you.", p.emailAdd !== false, async v => {
+      try { await update(ref(db, `accsettings/${ctx.uid}/settings`), { emailAdd: v }); invalidateProfile(ctx.uid); status.textContent = v ? "✓ People can add you by email." : "✓ People need your friend code to add you."; } catch (_) { status.textContent = "Couldn't save that right now."; }
     }));
   });
   w.append(row("Link previews", "Shows what a link is (title, picture, video). Fetching one asks this site's server to open the link, so turn it off if you prefer.", previewsOn(), v => { setPreviews(v); status.textContent = v ? "✓ Link previews on." : "✓ Link previews off."; }), status,

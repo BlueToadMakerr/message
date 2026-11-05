@@ -172,6 +172,7 @@ function paintWindow(run, w) {
 function openWindow(run, o) {
   o = o || {}; const id = String(o.id || "main").slice(0, 40);
   let w = run.windows.get(id);
+  if (w && o.reset) w.values = {};
   if (!w) { if (run.windows.size >= 4) throw new Error("Too many windows are open."); w = { id, o: {}, values: {}, el: null, box: null }; run.windows.set(id, w); }
   w.o = o; paintWindow(run, w); return id;
 }

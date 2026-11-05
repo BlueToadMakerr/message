@@ -26,6 +26,7 @@ import { downloadMedia } from "./download.js";
 import { audioPlayer, videoPlayer, waveFromFile } from "./player.js";
 import { devOn, devButton, showDev, envInfo, devCard, devGrid, devPill, devWho } from "./dev.js";
 import { resolveRecipient } from "./recipient.js";
+import { ensureFriend, publicCodeOf } from "./friend.js";
 import { requireVerified, isVerified, watchVerified } from "./verify.js";
 
 hydrateIcons();
@@ -1541,13 +1542,19 @@ async function renderParticipants() {
       k.textContent = has ? "🔑 Has key" : "🔑 No key"; k.title = has ? "Has a copy of this chat's encryption key." : "Doesn't have this chat's encryption key yet. It is shared automatically when someone who has it opens the chat.";
       name.append(k);
     }
+    // The copy button is only here when that person made their friend code public (and it is switched on). Yours is always copyable.
     const copy = document.createElement("button");
     copy.type = "button";
     copy.className = "icon-btn";
-    copy.setAttribute("aria-label", `Copy ${p.displayName}'s UID`);
-    copy.title = "Copy UID";
+    copy.hidden = true;
+    copy.setAttribute("aria-label", `Copy ${p.displayName}'s friend code`);
+    copy.title = "Copy friend code";
     copy.innerHTML = icon("copy", 18);
-    copy.onclick = async () => { await copyText(p.uid); toast("UID copied.", "success", 1800); };
+    (p.uid === me ? ensureFriend(me).then(f => f && f.code) : publicCodeOf(p.uid)).then(code => {
+      if (!code) return;
+      copy.hidden = false;
+      copy.onclick = async () => { await copyText(code); toast("Friend code copied.", "success", 1800); };
+    }).catch(() => { /* no code to show */ });
     const btn = document.createElement("button");
     btn.type = "button";
     btn.className = "btn small" + (p.uid === me ? " danger" : "");
