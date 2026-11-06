@@ -186,6 +186,7 @@ class MainActivity : Activity() {
         }
         if (Build.VERSION.SDK_INT >= 33 && checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED)
             requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), REQ_PERMS)
+        Push.register(this)
         NotifyService.start(this)
         if (b != null) web.restoreState(b) else if (intent?.data?.scheme == "quickmessage") { open(null); web.postDelayed({ handleAuth(intent.data!!) }, 2500) } else open(intent)
     }
@@ -256,7 +257,7 @@ class MainActivity : Activity() {
 
     override fun onSaveInstanceState(o: Bundle) { super.onSaveInstanceState(o); web.saveState(o) }
     override fun onStart() { super.onStart(); visible = true; NotifyService.cancelAll(this) }
-    override fun onStop() { super.onStop(); if (!pip) visible = false }
+    override fun onStop() { super.onStop(); if (!pip) { visible = false; NotifyService.sync(this, null) } }       // a bubble / notification left behind is refreshed to the real thread
     override fun onResume() { super.onResume(); web.onResume(); web.resumeTimers() }
     // Never paused at all: a paused WebView freezes JavaScript timers and the page's live connections, which is what made the app drop
     // offline after a while in the background. (The foreground service + wake lock keep the process itself alive.)
@@ -288,6 +289,7 @@ class MainActivity : Activity() {
     /** Asks once to be exempt from battery optimisation, so Android doesn't cut the connection when the app is unused for a while. */
     @android.annotation.SuppressLint("BatteryLife")
     private fun askBatteryOnce() {
+        if (Push.available(this) && Config.privateServer.isEmpty()) return       // push wakes the app even in Doze: no battery exemption needed
         val prefs = getSharedPreferences("quickmessage", MODE_PRIVATE)
         if (prefs.getBoolean("batteryAsked", false)) return
         val pm = getSystemService(POWER_SERVICE) as android.os.PowerManager
@@ -737,7 +739,7 @@ class MainActivity : Activity() {
             var u = url.trim()
             if (u.isNotEmpty() && !Regex("^https?://[^\\s/@]+(/[^\\s]*)?$").matches(u)) return
             if (u.isNotEmpty() && !u.endsWith("/")) u += "/"
-            Crypt.forget(); Store(this@MainActivity).forget(); NotifyService.stop(this@MainActivity)
+            Push.unregister(this@MainActivity); Crypt.forget(); Store(this@MainActivity).forget(); NotifyService.stop(this@MainActivity)
             Config.setServer(this@MainActivity, u)
             runOnUiThread { web.loadUrl(Config.SITE_URL + "index.html") }
         }
@@ -748,6 +750,7 @@ class MainActivity : Activity() {
         @JavascriptInterface fun setSession(uid: String, refreshToken: String) {
             val s = Store(this@MainActivity)
             if (s.uid != uid || s.refreshToken != refreshToken) { s.uid = uid; s.refreshToken = refreshToken }
+            Push.register(this@MainActivity)                // registers this phone for push (once); the live connection ends when that works
             NotifyService.start(this@MainActivity)
             runOnUiThread { askBatteryOnce() }
         }
@@ -757,7 +760,9 @@ class MainActivity : Activity() {
             if (s.uid == uid && jwk.length < 2000 && s.cryptoJwk != jwk) { s.cryptoJwk = jwk; Crypt.forget() }
         }
 
-        @JavascriptInterface fun logout() { Crypt.forget(); Store(this@MainActivity).forget(); NotifyService.stop(this@MainActivity) }
+        @JavascriptInterface fun logout() { Push.unregister(this@MainActivity); Crypt.forget(); Store(this@MainActivity).forget(); NotifyService.stop(this@MainActivity) }
+        /** The page sent or read something in this chat: the notification / bubble for it is refreshed to match. */
+        @JavascriptInterface fun chatSync(chatId: String) { if (chatId.length in 1..80) NotifyService.sync(this@MainActivity, chatId) }
 
         @JavascriptInterface fun clearCache() = runOnUiThread { web.clearCache(true) }   // HTTP cache only: signing in lives in site storage, which stays
 

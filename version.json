@@ -1,1 +1,1 @@
-{ "version": "1.50.0", "apiVersion": 1, "released": "2026-11-03", "notes": "Friend codes replace UIDs for adding people (can be switched off, made private or regenerated); plugin templates open from buttons." }
+{ "version": "1.51.0", "apiVersion": 1, "released": "2026-11-05", "notes": "Android: push notifications instead of a standing connection, and notification threads now always match the chat." }

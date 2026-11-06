@@ -47,6 +47,16 @@ class Store(ctx: Context) {
     var dbUrl: String
         get() = p.getString("dburl", null)?.takeIf { Regex("^https://[a-z0-9.-]+\\.(firebaseio\\.com|firebasedatabase\\.app)$").matches(it) } ?: Config.DB_URL
         set(v) { p.edit().putString("dburl", v).apply() }
+    /** Push (FCM) registration of this device: the token, the account it was registered for, and "uid|token" once the database has it. */
+    var pushToken: String?
+        get() = p.getString("ptok", null)
+        set(v) { p.edit().putString("ptok", v).apply() }
+    var pushUid: String?
+        get() = p.getString("puid", null)
+        set(v) { p.edit().putString("puid", v).apply() }
+    var pushOk: String?
+        get() = p.getString("pok", null)
+        set(v) { p.edit().putString("pok", v).apply() }
     val signedIn: Boolean get() = uid != null && refreshToken != null
     fun forget() {
         val n = notify; val d = p.getString("dburl", null); val sv = p.getString("server", null)

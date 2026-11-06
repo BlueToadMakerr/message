@@ -214,6 +214,16 @@ jobs:
           echo "QM_STORE_PASS=${{ secrets.ANDROID_STORE_PASS }}" >> "$GITHUB_ENV"
           echo "QM_KEY_ALIAS=${{ secrets.ANDROID_KEY_ALIAS }}" >> "$GITHUB_ENV"
           echo "QM_KEY_PASS=${{ secrets.ANDROID_KEY_PASS }}" >> "$GITHUB_ENV"
+      - name: Push notifications (optional secret GOOGLE_SERVICES_JSON)
+        env:
+          GS_JSON: ${{ secrets.GOOGLE_SERVICES_JSON }}
+        run: |
+          # The file from Firebase console > Project settings > Your apps > Android (package app.quickmessage.chat). Paste the JSON, or its base64.
+          # Without it the app still builds and works, but keeps a live connection for notifications instead of using push.
+          if [ -n "$GS_JSON" ]; then
+            if echo "$GS_JSON" | head -c1 | grep -q '{'; then printf '%s' "$GS_JSON" > android/app/google-services.json; else echo "$GS_JSON" | base64 -d > android/app/google-services.json; fi
+            python3 -c "import json;d=json.load(open('android/app/google-services.json'));print('google-services.json ok for', d['project_info']['project_id'])"
+          else echo "No GOOGLE_SERVICES_JSON secret: building without push (live connection is used)."; fi
       # The runner image already ships the Android SDK (ANDROID_HOME) and accepts its licences; the gradle cache from setup-gradle speeds up later builds.
       - name: Build debug APK
         working-directory: android

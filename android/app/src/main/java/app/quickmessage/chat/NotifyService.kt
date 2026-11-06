@@ -23,6 +23,8 @@ class NotifyService : Service() {
         private const val ACT_REPLY = "app.quickmessage.REPLY"
         const val ACT_DECLINE = "app.quickmessage.DECLINE"
         private const val ACT_READ = "app.quickmessage.READ"
+        private const val ACT_PUSH = "app.quickmessage.PUSH"
+        private const val ACT_SYNC = "app.quickmessage.SYNC"
         private const val KEY_REPLY = "reply"
         private const val ID_FG = 1
         private const val MAX_CHATS = 40
@@ -117,9 +119,37 @@ class NotifyService : Service() {
             } catch (_: Exception) { /* ignore */ }
         }
 
+        @Volatile var instance: NotifyService? = null
+
+        /** A push arrived (see [Push]): wake the service, which fetches what it needs and shows the notification. */
+        fun push(ctx: Context, data: HashMap<String, String>) {
+            val i = Intent(ctx, NotifyService::class.java).setAction(ACT_PUSH)
+            for ((k, v) in data) i.putExtra("d_$k", v)
+            if (Build.VERSION.SDK_INT >= 26) ctx.startForegroundService(i) else ctx.startService(i)
+        }
+
+        /** The page sent / read something in [chat] (null = the app was just left): refresh its notification (and bubble) so it matches the database. */
+        fun sync(ctx: Context, chat: String?) {
+            val st = Store(ctx)
+            if (!st.signedIn || !st.notify) return
+            // nothing to refresh unless a notification / bubble of this chat (or any chat) is showing: don't wake the service for nothing
+            try {
+                val nmgr = ctx.getSystemService(NOTIFICATION_SERVICE) as NotificationManager
+                val any = if (chat != null) nmgr.activeNotifications.any { it.id == chat.hashCode() } else nmgr.activeNotifications.any { it.notification.extras.getString("qm_chat") != null }
+                if (!any) return
+            } catch (_: Exception) { return }
+            val i = Intent(ctx, NotifyService::class.java).setAction(ACT_SYNC)
+            if (chat != null) i.putExtra("chat", chat)
+            try { if (Build.VERSION.SDK_INT >= 26) ctx.startForegroundService(i) else ctx.startService(i) } catch (_: Exception) {}
+        }
+
+        /** Push has just become usable (token saved): a running live connection can end. */
+        fun recheck(ctx: Context) { instance?.applyMode() }
+
         fun start(ctx: Context) {
             val st = Store(ctx)
             if (!st.signedIn || (!st.notify && !inCall)) return
+            if (!inCall && uploadCount == 0 && Push.active(ctx, st)) { instance?.applyMode(); return }      // push does the waking: nothing to keep running
             val i = Intent(ctx, NotifyService::class.java)
             try { if (Build.VERSION.SDK_INT >= 26) ctx.startForegroundService(i) else ctx.startService(i) } catch (_: Exception) {}
         }
@@ -193,9 +223,11 @@ class NotifyService : Service() {
         store = Store(this)
         fb = Firebase(store)
         when (intent?.action) {
-            ACT_REPLY -> { handleReply(intent); return START_STICKY }
-            ACT_DECLINE -> { handleDecline(intent); return START_STICKY }
-            ACT_READ -> { handleRead(intent); return START_STICKY }
+            ACT_PUSH -> { foreground(); holdWake(); handlePush(intent); return START_NOT_STICKY }
+            ACT_SYNC -> { foreground(); holdWake(); handleSync(intent); return START_NOT_STICKY }
+            ACT_REPLY -> { handleReply(intent); scheduleIdle(30_000); return if (pushMode()) START_NOT_STICKY else START_STICKY }
+            ACT_DECLINE -> { handleDecline(intent); scheduleIdle(30_000); return if (pushMode()) START_NOT_STICKY else START_STICKY }
+            ACT_READ -> { handleRead(intent); scheduleIdle(30_000); return if (pushMode()) START_NOT_STICKY else START_STICKY }
             ACT_MIC -> { MainActivity.instance?.runJs("window.QM&&QM.toggleMute&&QM.toggleMute()"); return START_STICKY }
             ACT_HANGUP -> { MainActivity.instance?.runJs("window.QM&&QM.hangup&&QM.hangup()"); return START_STICKY }
             ACT_SCREEN -> { MainActivity.instance?.runJs("window.QM&&QM.toggleScreen&&QM.toggleScreen()"); return START_STICKY }
@@ -206,8 +238,10 @@ class NotifyService : Service() {
         fb = Firebase(store)
         foreground()
         holdWake()
-        if (!inCall && uploadCount == 0 && !store.notify) { running = false; stopForeground(STOP_FOREGROUND_REMOVE); stopSelf(); return START_NOT_STICKY }
-        if (!running && store.signedIn && (store.notify || inCall)) {
+        if (!inCall && uploadCount == 0 && busy.get() == 0 && (!store.notify || pushMode())) { running = false; stopForeground(STOP_FOREGROUND_REMOVE); releaseWake(); stopSelf(); return START_NOT_STICKY }
+        // With push working there is no standing connection at all. The live stream + polling below are the fallback for builds without
+        // google-services.json, private servers, phones without Google Play services, or until the push token is registered.
+        if (!running && store.signedIn && store.notify && !pushMode()) {
             running = true
             Thread({ liveLoop() }, "live").start()
             Thread({ pollLoop() }, "poll").start()
@@ -215,13 +249,37 @@ class NotifyService : Service() {
         return START_STICKY
     }
 
-    // Keeps the CPU awake so the live connections (and the page's own) keep running while the screen is off.
+    // Live-connection fallback: keeps the CPU awake so the stream keeps running with the screen off. With push, the lock is held only while a push is handled.
     private fun holdWake() {
-        if (wake?.isHeld == true) return
-        wake = (getSystemService(POWER_SERVICE) as android.os.PowerManager).newWakeLock(android.os.PowerManager.PARTIAL_WAKE_LOCK, "quickmessage:listen").also { it.setReferenceCounted(false); it.acquire() }
+        if (wake == null) wake = (getSystemService(POWER_SERVICE) as android.os.PowerManager).newWakeLock(android.os.PowerManager.PARTIAL_WAKE_LOCK, "quickmessage:listen").also { it.setReferenceCounted(false) }
+        val w = wake ?: return
+        if (pushMode() && !inCall) w.acquire(30_000) else if (!w.isHeld) w.acquire()
+    }
+    private fun releaseWake() { try { if (wake?.isHeld == true) wake?.release() } catch (_: Exception) {} }
+
+    private fun pushMode() = ::store.isInitialized && Push.active(this, store)
+    private val busy = java.util.concurrent.atomic.AtomicInteger(0)
+    private val idleH by lazy { android.os.Handler(mainLooper) }
+
+    /** Push mode: when nothing is being handled, no call and no upload, stop the service (and its notification) until the next push. */
+    private fun scheduleIdle(ms: Long) { idleH.removeCallbacks(idleCheck); idleH.postDelayed(idleCheck, ms) }
+    private val idleCheck = Runnable {
+        if (busy.get() == 0 && pushMode() && !inCall && uploadCount == 0) { running = false; try { stopForeground(STOP_FOREGROUND_REMOVE) } catch (_: Exception) {}; releaseWake(); stopSelf() }
+        else if (busy.get() > 0) scheduleIdle(5_000)
+    }
+    /** Called when push becomes usable while the live connection is running: let the connection end. */
+    fun applyMode() { if (pushMode() && !inCall && uploadCount == 0) { running = false; scheduleIdle(500) } }
+
+    private fun work(body: () -> Unit) {
+        busy.incrementAndGet()
+        Thread {
+            try { body() } catch (_: Exception) {}
+            finally { busy.decrementAndGet(); if (pushMode()) scheduleIdle(4_000) }
+        }.start()
     }
 
-    override fun onDestroy() { try { wake?.release() } catch (_: Exception) {}; running = false; super.onDestroy() }
+    override fun onCreate() { super.onCreate(); instance = this }
+    override fun onDestroy() { releaseWake(); running = false; if (instance === this) instance = null; super.onDestroy() }
 
     @Suppress("DEPRECATION")
     private fun builder(ch: String) = if (Build.VERSION.SDK_INT >= 26) Notification.Builder(this, ch) else Notification.Builder(this)
@@ -265,7 +323,8 @@ class NotifyService : Service() {
         } else if (uploading) {
             b.setContentTitle(if (uploadCount == 1) "Uploading a file" else "Uploading $uploadCount files").setContentText(uploadText.ifBlank { "Keep going in the background" }).setOnlyAlertOnce(true)
             if (uploadPct >= 0) b.setProgress(100, uploadPct.coerceIn(0, 100), false) else b.setProgress(0, 0, true)
-        } else b.setContentTitle("QuickMessage").setContentText("Listening for messages and calls")
+        } else if (pushMode()) b.setContentTitle("QuickMessage").setContentText("Checking for new messages…")
+        else b.setContentTitle("QuickMessage").setContentText("Listening for messages and calls")
         val n = b.build()
         if (Build.VERSION.SDK_INT >= 34) {
             var t = ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE
@@ -294,7 +353,7 @@ class NotifyService : Service() {
     /** Runs [body] again (with a growing pause) whenever the stream ends or fails; stops when the service stops or we sign out. */
     private fun forever(body: () -> Unit) {
         var backoff = 2000L
-        while (running && store.signedIn && store.notify) {
+        while (running && store.signedIn && store.notify && !pushMode()) {
             try { body(); backoff = 2000L }
             catch (e: ApiException) { if (e.code == 401 || e.code == 403) backoff = 60_000L }
             catch (_: Exception) {}
@@ -363,7 +422,7 @@ class NotifyService : Service() {
     // missed or never-sent ping can't mean a missed notification.
     private fun pollLoop() {
         var first = true
-        while (running && store.signedIn && store.notify) {
+        while (running && store.signedIn && store.notify && !pushMode()) {
             if (!MainActivity.visible) {
                 try {
                     val me = store.uid ?: return
@@ -445,7 +504,86 @@ class NotifyService : Service() {
         }.start()
     }
 
+    // ------------------------------------------------------------------ push
+    /** A push from the Cloud Function: one short burst of plain requests, then the service goes back to sleep. */
+    private fun handlePush(i: Intent) {
+        val type = i.getStringExtra("d_type") ?: ""
+        val chat = i.getStringExtra("d_chatId") ?: ""
+        if (chat.isEmpty() || !store.signedIn || !store.notify) { scheduleIdle(1_000); return }
+        work {
+            when (type) {
+                "ring" -> {
+                    val ringId = i.getStringExtra("d_ringId").orEmpty(); val from = i.getStringExtra("d_from").orEmpty()
+                    val created = i.getStringExtra("d_createdAt")?.toLongOrNull() ?: System.currentTimeMillis()
+                    // the push is the ring: no need to read it from the database first
+                    ring(chat, JSONObject().put("ringId", ringId).put("fromUid", from).put("createdAt", created))
+                }
+                "msg" -> {
+                    val last = fb.get("privateChats/$chat/lastMessage") as? JSONObject
+                    if (last != null) consider(chat, last, false)
+                }
+            }
+        }
+    }
+
+    /** The page sent or read something (or the app was left): make the notification / bubble match what the database says now. */
+    private fun handleSync(i: Intent) {
+        val only = i.getStringExtra("chat")
+        work {
+            val nmgr = nm()
+            val chats = ArrayList<String>()
+            if (only != null) chats.add(only)
+            else try { for (sbn in nmgr.activeNotifications) sbn.notification.extras.getString("qm_chat")?.let { chats.add(it) } } catch (_: Exception) {}
+            for (c in chats.distinct()) {
+                // only chats that are showing right now (a notification or bubble): this never creates a new one
+                val showing = try { nmgr.activeNotifications.any { it.id == c.hashCode() } } catch (_: Exception) { false }
+                if (!showing) continue
+                try { settle(c, null) } catch (_: Exception) {}
+            }
+        }
+    }
+
     // ------------------------------------------------------------------ messages
+    /**
+     * Rebuilds the thread shown in a chat's notification from the DATABASE (the newest messages, yours included), instead of trusting what
+     * earlier notifications happened to add. A missed push, a message that arrived while the app was open, or a reply typed in the app
+     * can therefore no longer leave the notification showing a thread that doesn't match the chat.
+     * Also refreshes [readIds] from messageRead (what you have marked read, possibly in the app or on another device).
+     */
+    private fun refreshThread(chatId: String, m: JSONObject?) {
+        val me = store.uid ?: return
+        val fresh = ArrayList<Msg>()
+        try {
+            fb.recent("privateChats/$chatId/messages", 14).filter { it.second.optString("type") != "event" }.takeLast(8).forEach { (k, o) ->
+                val f = o.optString("fromUid"); fresh.add(Msg(k, textOf(chatId, o), o.optLong("timestamp"), if (f == me) null else f))
+            }
+        } catch (_: Exception) { return }                         // offline: keep what we have
+        val list = history.getOrPut(chatId) { java.util.Collections.synchronizedList(ArrayList<Msg>()) }
+        synchronized(list) {
+            val pending = list.filter { it.id.startsWith("local") && fresh.none { f -> f.from == null && f.text == it.text } }
+            list.clear(); list.addAll(fresh); list.addAll(pending)
+            if (m != null) { val id = m.optString("id"); if (id.isNotEmpty() && list.none { it.id == id }) list.add(Msg(id, textOf(chatId, m, preview = true), m.optLong("timestamp", System.currentTimeMillis()), m.optString("fromUid").takeIf { it != me })) }
+            while (list.size > 8) list.removeAt(0)
+        }
+        try { (fb.get("privateChats/$chatId/messageRead/$me") as? String)?.let { readIds[chatId] = it } } catch (_: Exception) {}
+    }
+
+    /**
+     * After the thread was refreshed: nothing left to answer (you already read the newest message, or the newest message is yours) means the
+     * notification goes away, unless it is a bubble, which stays and just shows the up-to-date thread.
+     */
+    private fun settle(chatId: String, m: JSONObject?): Boolean {
+        refreshThread(chatId, m)
+        val list = history[chatId] ?: return false
+        val newest = synchronized(list) { list.lastOrNull() }
+        val lastIncoming = synchronized(list) { list.lastOrNull { it.from != null } }
+        val handled = newest == null || newest.from == null || (lastIncoming != null && readIds[chatId] == lastIncoming.id)
+        if (!handled) { postMessages(chatId, quiet = true); return false }
+        val isBubble = try { nm().activeNotifications.any { it.id == chatId.hashCode() && it.notification.bubbleMetadata != null } } catch (_: Exception) { false }
+        if (isBubble) postMessages(chatId, quiet = true) else nm().cancel(chatId.hashCode())
+        return true
+    }
+
     /** Notification text for a message. [preview] = the chat's lastMessage (whose encrypted text is the preview itself). */
     private fun textOf(chatId: String, m: JSONObject, preview: Boolean = false): String {
         val locked = "🔒 New message"
@@ -481,12 +619,13 @@ class NotifyService : Service() {
         } catch (_: Exception) {}
         titles[chatId] = title
         encChats[chatId] = m.optBoolean("enc", false)
-        // a little history for the notification: the last few messages of the chat (loaded once, then kept up to date)
-        val list = history.getOrPut(chatId) {
-            val l = java.util.Collections.synchronizedList(ArrayList<Msg>())
-            try { fb.recent("privateChats/$chatId/messages", 10).filter { it.second.optString("type") != "event" }.takeLast(6).forEach { (k, o) ->
-                val f = o.optString("fromUid"); l.add(Msg(k, textOf(chatId, o), o.optLong("timestamp"), if (f == me) null else f)) } } catch (_: Exception) {}
-            l
+        // The thread comes from the database every time (see refreshThread); if you already read it or answered it somewhere else, no notification.
+        refreshThread(chatId, m)
+        val list = history[chatId] ?: return
+        run {
+            val lastIn = synchronized(list) { list.lastOrNull { it.from != null } }
+            val newest = synchronized(list) { list.lastOrNull() }
+            if (newest != null && (newest.from == null || (lastIn != null && readIds[chatId] == lastIn.id))) { settle(chatId, null); return }
         }
         try {
             ensureChatLook(chatId, title)
@@ -531,6 +670,7 @@ class NotifyService : Service() {
         val lastText = last?.text ?: ""
         val b = builder(CH_MSG).setSmallIcon(android.R.drawable.stat_notify_chat).setAutoCancel(false).setCategory(Notification.CATEGORY_MESSAGE)
             .setContentIntent(open(chatId, false, chatId.hashCode())).setOnlyAlertOnce(quiet)
+        b.addExtras(android.os.Bundle().apply { putString("qm_chat", chatId) })          // lets handleSync find the chat of an active notification
         chatBmp[chatId]?.let { b.setLargeIcon(it) }
         if (Build.VERSION.SDK_INT >= 28) {
             val meP = android.app.Person.Builder().setName("You").apply { store.uid?.let { personBmp[it] }?.let { setIcon(android.graphics.drawable.Icon.createWithBitmap(it)) } }.build()
@@ -599,6 +739,11 @@ class NotifyService : Service() {
                 if (id.isNotEmpty()) {
                     fb.put("privateChats/$chat/messageRead/$me", JSONObject.quote(id))
                     readIds[chat] = id
+                    // this service may have just been woken (push mode) and know nothing about the chat: rebuild what the notification needs
+                    if (history[chat] == null) {
+                        refreshThread(chat, null)
+                        try { ensureChatLook(chat, titles[chat] ?: ""); store.uid?.let { ensurePerson(it) }; history[chat]?.let { l -> synchronized(l) { l.mapNotNull { it.from } }.distinct().forEach { ensurePerson(it) } } } catch (_: Exception) {}
+                    }
                     postMessages(chat, quiet = true)                  // same notification, without the button
                 }
             } catch (_: Exception) {}
@@ -611,32 +756,41 @@ class NotifyService : Service() {
         val me = store.uid
         if (text.isNullOrEmpty() || me == null) { nm().cancel(chat.hashCode()); return }
         val ts = System.currentTimeMillis()
-        val list = history.getOrPut(chat) { java.util.Collections.synchronizedList(ArrayList<Msg>()) }
-        list.add(Msg("local$ts", text, ts, null))
-        postMessages(chat)                                          // shows your reply in the thread right away
+        busy.incrementAndGet()
         Thread {
             try {
-                val enc = encChats[chat] == true
-                val ck = if (enc) (Crypt.chatKey(fb, store, chat) ?: throw IllegalStateException("no key")) else null
-                fun wire(t: String) = if (ck != null) Crypt.encrypt(ck, chat, t) else t
-                val msg = JSONObject().put("fromUid", me).put("text", wire(text.take(4000))).put("timestamp", ts).put("deliveredAt", JSONObject().put(".sv", "timestamp"))
-                if (enc) msg.put("enc", true)
-                val key = fb.post("privateChats/$chat/messages", msg.toString())
-                val last = JSONObject().put("fromUid", me).put("text", wire(text.take(300))).put("timestamp", ts).put("id", key)
-                if (enc) last.put("enc", true)
-                fb.put("privateChats/$chat/lastMessage", last.toString())
-                baselines[chat] = key
-                // wake the other members' live streams (the web app does the same when it sends)
+                // start from the real thread (this service may have just been woken and know nothing yet), then show your reply in it right away
+                refreshThread(chat, null)
+                val list = history.getOrPut(chat) { java.util.Collections.synchronizedList(ArrayList<Msg>()) }
+                val incoming = synchronized(list) { list.lastOrNull { it.from != null }?.id }
+                synchronized(list) { list.add(Msg("local$ts", text, ts, null)); while (list.size > 8) list.removeAt(0) }
+                try { ensureChatLook(chat, titles[chat] ?: ""); store.uid?.let { ensurePerson(it) }; synchronized(list) { list.mapNotNull { it.from } }.distinct().forEach { ensurePerson(it) } } catch (_: Exception) {}
+                postMessages(chat, quiet = true)
                 try {
-                    (fb.get("privateChats/$chat/participants") as? JSONObject)?.keys()?.forEach { u ->
-                        if (u != me) fb.put("live/$u/pings/$chat", JSONObject().put("id", key).put("ts", ts).put("from", me).toString())
-                    }
-                } catch (_: Exception) {}
-                synchronized(list) { list.removeAll { it.id == "local$ts" }; list.add(Msg(key, text, ts, null)) }
-            } catch (_: Exception) {
-                android.os.Handler(mainLooper).post { android.widget.Toast.makeText(this, "Couldn't send your reply", android.widget.Toast.LENGTH_SHORT).show() }
-            }
-            postMessages(chat)
+                    val enc = encChats[chat] == true
+                    val ck = if (enc) (Crypt.chatKey(fb, store, chat) ?: throw IllegalStateException("no key")) else null
+                    fun wire(t: String) = if (ck != null) Crypt.encrypt(ck, chat, t) else t
+                    val msg = JSONObject().put("fromUid", me).put("text", wire(text.take(4000))).put("timestamp", ts).put("deliveredAt", JSONObject().put(".sv", "timestamp"))
+                    if (enc) msg.put("enc", true)
+                    val key = fb.post("privateChats/$chat/messages", msg.toString())
+                    val last = JSONObject().put("fromUid", me).put("text", wire(text.take(300))).put("timestamp", ts).put("id", key)
+                    if (enc) last.put("enc", true)
+                    fb.put("privateChats/$chat/lastMessage", last.toString())
+                    baselines[chat] = key
+                    // answering means you've seen what you answered
+                    if (!incoming.isNullOrEmpty() && !incoming.startsWith("local")) { try { fb.put("privateChats/$chat/messageRead/$me", JSONObject.quote(incoming)); readIds[chat] = incoming } catch (_: Exception) {} }
+                    // wake the other members (the web app does the same when it sends); a push from the Cloud Function reaches the apps
+                    try {
+                        (fb.get("privateChats/$chat/participants") as? JSONObject)?.keys()?.forEach { u ->
+                            if (u != me) fb.put("live/$u/pings/$chat", JSONObject().put("id", key).put("ts", ts).put("from", me).toString())
+                        }
+                    } catch (_: Exception) {}
+                    synchronized(list) { list.removeAll { it.id == "local$ts" }; list.add(Msg(key, text, ts, null)) }
+                } catch (_: Exception) {
+                    android.os.Handler(mainLooper).post { android.widget.Toast.makeText(this, "Couldn't send your reply", android.widget.Toast.LENGTH_SHORT).show() }
+                }
+                postMessages(chat, quiet = true)
+            } finally { busy.decrementAndGet(); if (pushMode()) scheduleIdle(4_000) }
         }.start()
     }
 }

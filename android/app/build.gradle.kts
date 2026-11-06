@@ -2,6 +2,9 @@ plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
 }
+// Push notifications need Firebase's config file for the app (android/app/google-services.json, see docs/APPS.md). The GitHub build writes it from the
+// GOOGLE_SERVICES_JSON secret. Without it the app still builds and works: it just keeps its live connection for notifications instead of using push.
+if (file("google-services.json").exists()) apply(plugin = "com.google.gms.google-services")
 
 android {
     namespace = "app.quickmessage.chat"
@@ -37,5 +40,6 @@ android {
     kotlinOptions { jvmTarget = "17" }
 }
 dependencies {
-    // No libraries needed: the app is a WebView around the website plus a little native code.
+    // The app is a WebView around the website plus a little native code. The only library is Firebase Cloud Messaging (push).
+    implementation("com.google.firebase:firebase-messaging:24.1.0")
 }

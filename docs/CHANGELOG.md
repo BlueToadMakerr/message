@@ -2,6 +2,15 @@
 
 Newest first. Older rounds (1–43) are kept below exactly as they were written.
 
+## 1.51.0 — Android: push instead of a standing connection; notification threads always match the chat
+
+- **Android no longer keeps a connection open for notifications.** The app registers for Firebase Cloud Messaging push (token stored at `FCM/{uid}/{token} = "android"`). When a message or call arrives, the Cloud Function (`functions/index.js`) sends a **data-only, high-priority push**; the app wakes for a moment, makes the few plain requests it needs (sender, thread, picture, decrypting) and shows the full notification itself (names, pictures, reply, mark-as-read, bubbles, full-screen call alert). Then it goes back to sleep: no stream, no polling, no wake lock, no permanent "Listening" notification, and no battery-optimisation prompt.
+- **It falls back to the old live connection** (so nothing breaks) when push can't work: the build has no `google-services.json`, the phone has no Google Play services, the token isn't registered yet, or a private server is used.
+- **Fixed: notification threads that didn't match the chat.** The thread shown in a notification used to be loaded once and then only grew with the notifications that happened to arrive, so a missed notification, a message that came in while the app was open, or a reply typed in the app left it wrong (or showing only your reply). The thread is now rebuilt from the database (newest messages, yours included) every time. If you already read the newest message, or the newest message is yours (answered in the app or on another device), the notification is removed instead of being shown. A bubble stays but is refreshed. Replying from a notification now also marks what you answered as read.
+- The app is told when you send or read something in a chat (`QMApp.chatSync`) and when you leave the app, so a notification or bubble left behind is refreshed or cleared.
+- Needs: `google-services.json` for package `app.quickmessage.chat` (Firebase console → Project settings → Your apps → add Android app) saved as the GitHub secret **`GOOGLE_SERVICES_JSON`** (paste the JSON, or its base64), and **`firebase deploy --only functions`** plus the new `database.rules.json` (the `FCM` node now also accepts `"android"`). See docs/APPS.md.
+- **iPhone is unchanged.** Real push on iOS needs APNs, which needs a paid Apple Developer account and a different build setup; without it iOS keeps using the in-app keep-alive.
+
 ## 1.50.0 — Friend codes replace UIDs
 
 - **Adding someone by UID is gone.** In "New chat" and "Add someone" you now paste a **friend code** (like `QM-K7R2D-9WBX4`) or an email address. Typing is forgiving (any case, spaces instead of dashes, without `QM`).

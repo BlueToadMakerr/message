@@ -17,12 +17,25 @@ const isDead = e => {
   return c === "messaging/registration-token-not-registered" || c === "messaging/invalid-registration-token" || c === "messaging/invalid-argument";
 };
 
-/** Sends one payload to every token of a user; removes tokens FCM says are gone. Returns {accepted, failed}. */
-async function pushTo(uid, build) {
-  const tokens = Object.keys((await val(`FCM/${uid}`)) || {});
+/**
+ * Sends a payload to every token of a user; removes tokens FCM says are gone. Returns {accepted, failed}.
+ * Tokens registered by the Android app are stored as "android": they get [appData] as a DATA-ONLY, high priority message (no `notification` part),
+ * which wakes the app for a moment; the app then makes one short connection and builds the real notification itself (names, pictures,
+ * decrypted text, reply button, bubbles). Everything else (browsers / installed web app) gets the normal [build] payload.
+ */
+async function pushTo(uid, build, appData) {
+  const all = (await val(`FCM/${uid}`)) || {};
+  const tokens = Object.keys(all);
   let accepted = 0, failed = 0;
   await Promise.all(tokens.map(async token => {
-    try { await admin.messaging().send({ token, ...build() }); accepted++; }
+    const app = all[token] === "android";
+    if (app && !appData) return;
+    try {
+      await admin.messaging().send(app
+        ? { token, data: appData, android: { priority: "high", ttl: appData.type === "ring" ? 60000 : 86400000, collapseKey: `${appData.type}_${appData.chatId}` } }
+        : { token, ...build() });
+      accepted++;
+    }
     catch (e) {
       failed++;
       if (isDead(e)) await DB().ref(`FCM/${uid}/${token}`).remove().catch(() => {});
@@ -60,7 +73,7 @@ exports.onMessage = onValueCreated(trig("/privateChats/{chatId}/messages/{msgId}
       webpush: { headers: { TTL: "86400", Urgency: "high" }, notification: { tag: `chat_${chatId}`, renotify: true, requireInteraction: false, ...(imageUrl ? { image: imageUrl } : {}) }, fcmOptions: { link } },
       apns: { headers: { "apns-collapse-id": `chat_${chatId}`, "apns-priority": "10" }, payload: { aps: { alert: { title, body: text }, sound: "default" } } },
       data: { link, chatId, ...(imageUrl ? { image: imageUrl } : {}) }
-    }));
+    }), { type: "msg", chatId, msgId, from });
   }));
 });
 
@@ -81,7 +94,7 @@ exports.onRing = onValueCreated(trig("/calls/{chatId}/ringing/{uid}"), async eve
     webpush: { headers: { TTL: "60", Urgency: "high" }, notification: { tag: `call_${chatId}`, renotify: true, requireInteraction: true }, fcmOptions: { link } },
     apns: { headers: { "apns-priority": "10", "apns-expiration": String(Math.floor(Date.now() / 1000) + 60) }, payload: { aps: { alert: { title, body: text }, sound: "default" } } },
     data: { call: "1", chatId, sessionId: ring.ringId, link }
-  }));
+  }), self ? null : { type: "ring", chatId, ringId: String(ring.ringId), from: String(ring.fromUid), createdAt: String(ring.createdAt || Date.now()) });
   const cur = await val(`calls/${chatId}/ringing/${uid}/ringId`);
   if (cur !== ring.ringId) return;                                      // answered / replaced meanwhile
   await event.data.ref.update({ notifyStatus: r.accepted > 0 ? "sent" : r.tokens === 0 ? "no_token" : "failed" });

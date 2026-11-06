@@ -276,7 +276,8 @@
         // Only the user can read/write their tokens (write at this level lets them clear all on account deletion)
         ".read": "$uid === auth.uid",
         ".write": "$uid === auth.uid",
-        "$token": { ".validate": "newData.val() === true" }
+        // true = a browser / web app, "android" = the Android app (it gets data-only pushes and builds its own notification)
+        "$token": { ".validate": "newData.val() === true || newData.val() === 'android'" }
       }
     }
   }

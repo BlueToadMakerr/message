@@ -85,7 +85,11 @@
             android:foregroundServiceType="specialUse|camera|microphone">
             <property
                 android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
-                android:value="Listens for new messages and incoming calls so it can notify the user" />
+                android:value="Shows message and call notifications when a push arrives (and listens directly when push is not available)" />
+        </service>
+        <!-- Push (Firebase Cloud Messaging): wakes the app for a moment when a message or call arrives, so no standing connection is needed -->
+        <service android:name=".PushService" android:exported="false">
+            <intent-filter><action android:name="com.google.firebase.MESSAGING_EVENT" /></intent-filter>
         </service>
         <service
             android:name=".ScreenService"

@@ -32,3 +32,20 @@ Honest limits: Android Auto only offers third-party voice-call screens to apps a
 
 - **Android:** closing the app from the recent-apps list while a file uploads leaves the uploading page running in the background (foreground notification) until it finishes; reopening shows the file as "Uploading…".
 - **iPhone:** uploads continue while the app is in the background (the silent-audio trick), but not after the app is swiped away in the app switcher: iOS does not allow that for a web page. The next start says which file was not finished.
+
+## Android notifications: push (no standing connection)
+
+The Android app uses **Firebase Cloud Messaging** instead of keeping a connection open:
+
+1. After sign-in the app stores its FCM token at `FCM/{uid}/{token} = "android"` (`Push.kt`).
+2. A new message / ring makes the Cloud Function (`functions/index.js`) send a **data-only, high-priority** push to those tokens (browser tokens still get a normal notification push).
+3. `PushService` receives it and wakes `NotifyService` for a few seconds: it reads the newest message, rebuilds the thread from the database, loads names / pictures, decrypts, and posts the real notification (reply, mark as read, bubble, full-screen call alert). Then the service stops.
+
+Set-up (once):
+- Firebase console → Project settings → Your apps → **Add app → Android**, package `app.quickmessage.chat` → download `google-services.json`.
+- GitHub → Settings → Secrets → **`GOOGLE_SERVICES_JSON`** = the file's contents (or base64 of it). The Android build writes it to `android/app/`.
+- `firebase deploy --only functions` (Blaze plan, as before) and publish `database.rules.json`.
+
+Without `google-services.json` (or with a private server, or without Google Play services) the app still works and falls back to the earlier live connection (a quiet "Listening for messages and calls" notification). With push active that notification is gone.
+
+Notification threads are rebuilt from the database each time, so they match the chat even after a missed push or after answering in the app. iPhone still uses the in-app keep-alive (real push there needs APNs and a paid Apple Developer account).

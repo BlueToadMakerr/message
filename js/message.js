@@ -579,6 +579,12 @@ window.addEventListener("message", e => {
   if (!panelHidden) { maybeMarkRead(); scrollToBottom(); }
 });
 const IS_PANEL = new URLSearchParams(location.search).has("panel");
+// Android app: tell the app that this chat was read / answered here, so a notification or bubble it left behind is refreshed (or removed).
+let appSyncT = 0;
+function appSync() {
+  clearTimeout(appSyncT);
+  appSyncT = setTimeout(() => { try { const a = window.QMApp || (window.top && window.top.QMApp); if (a && a.chatSync) a.chatSync(chatId); } catch (_) { /* not the app */ } }, 1200);
+}
 function maybeMarkRead() {
   if (!ready || !latestKey || document.hidden || panelHidden) return;
   try { if (window.frameElement && window.frameElement.hidden) return; } catch (_) { /* ignore */ }     // a parked chat (still uploading) isn't being looked at
@@ -586,7 +592,7 @@ function maybeMarkRead() {
   if (!IS_PANEL) { try { if (QM && QM.state && QM.state.call && QM.state.call.visible) return; } catch (_) { /* ignore */ } }
   if (String(lastMarked) === String(latestKey)) return;
   lastMarked = latestKey;
-  set(ref(db, `${chatPath}/messageRead/${me}`), latestKey).catch(() => {});
+  set(ref(db, `${chatPath}/messageRead/${me}`), latestKey).then(appSync, () => {});
 }
 document.addEventListener("visibilitychange", () => { if (!document.hidden) maybeMarkRead(); });
 window.addEventListener("focus", maybeMarkRead);
@@ -1040,7 +1046,7 @@ async function writeJob(job) {
   const only = payload.mentions && typeof payload.mentions === "object" ? Object.keys(payload.mentions) : null;
   for (const u of participants) if (u !== me && (!only || only.includes(u))) multi[`live/${u}/pings/${chatId}`] = { id: key, ts: job.ts, from: me, ...(only ? { mention: true } : {}) };
   const p = update(ref(db), multi);
-  p.then(() => { if (jobs.has(job.id) && !job.cancelled) finishJob(job); }, () => {});
+  p.then(() => { appSync(); if (jobs.has(job.id) && !job.cancelled) finishJob(job); }, () => {});
   return p;
 }
 
