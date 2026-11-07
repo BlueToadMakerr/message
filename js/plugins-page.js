@@ -1,6 +1,6 @@
 import { hydrateIcons, toast, confirmDialog, promptDialog, copyText } from "./ui.js";
 import { devOn, setDev } from "./dev.js";
-import { loadPlugins, savePlugins, normalize, newPluginId, PERMISSIONS, pluginIssues, isBlocked, checkPluginUpdate, fetchPluginFromUrl } from "./plugin-store.js";
+import { loadPlugins, savePlugins, normalize, newPluginId, PERMISSIONS, PERM_INFO, UNSANDBOXED_WARNING, describePermissions, riskOf, unreviewed, pluginIssues, isBlocked, checkPluginUpdate, fetchPluginFromUrl } from "./plugin-store.js";
 import { SITE_VERSION, API_VERSION, checkSiteVersion, lastCheck } from "./version.js";
 import { QM, markReady } from "./embed.js";
 
@@ -28,6 +28,40 @@ const TEMPLATES = {
 
 function el(tag, props = {}, ...kids) { const e = Object.assign(document.createElement(tag), props); e.append(...kids); return e; }
 
+/** The permission review: what a plugin asks for, in plain words, most dangerous first. Resolves true when the person approves. */
+function permissionList(perms) {
+  const box = el("div", { className: "perm-review" });
+  const d = describePermissions(perms);
+  if (!d.length) box.append(el("p", { className: "muted", textContent: "This plugin asks for no permissions. It can't see or change anything." }));
+  for (const x of d) box.append(el("div", { className: "perm-item risk-" + x.risk }, el("strong", {}, el("span", { className: "risk-badge " + x.risk, textContent: x.risk.toUpperCase() }), " " + x.label), el("div", { className: "muted", textContent: x.info })));
+  return box;
+}
+const dangerBox = () => el("div", { className: "danger-box", role: "alert" }, el("strong", { textContent: "⛔ EXTREMELY DANGEROUS: UNSANDBOXED" }), el("p", { textContent: UNSANDBOXED_WARNING }));
+function reviewPermissions(p, perms, title) {
+  return new Promise(resolve => {
+    const all = p.permissions, unsafe = all.includes("unsandboxed"), viewOnly = !!title && !unreviewed(p).length;
+    const dlg = el("dialog", { className: "modal perm-dialog" }), form = el("form", { method: "dialog" });
+    form.append(el("h2", { textContent: title || `Review “${p.name}”` }));
+    form.append(el("p", { className: "muted", textContent: `Version ${p.version}${p.author ? " by " + p.author : ""}. Overall risk: ${riskOf(all)}. Plugins only get what you approve here.` }));
+    if (unsafe) form.append(dangerBox());
+    form.append(permissionList(all));
+    let field = null;
+    if (unsafe && !viewOnly) { field = el("input", { className: "field", placeholder: "Type UNSANDBOXED to allow", autocomplete: "off" }); form.append(el("label", {}, "To allow it, type UNSANDBOXED:", field)); }
+    const ok = el("button", { type: "submit", className: "btn " + (unsafe ? "danger" : "primary"), textContent: viewOnly ? "Close" : unsafe ? "Allow (dangerous)" : (title ? "Approve" : "Approve and switch on"), value: "ok" });
+    if (unsafe && !viewOnly) ok.disabled = true;
+    if (field) field.oninput = () => { ok.disabled = field.value.trim().toUpperCase() !== "UNSANDBOXED"; };
+    const cancel = el("button", { type: "button", className: "btn", textContent: "Cancel" }); cancel.onclick = () => dlg.close("cancel");
+    form.append(el("div", { className: "modal-actions" }, ...(viewOnly ? [] : [cancel]), ok));
+    dlg.append(form); document.body.append(dlg);
+    dlg.addEventListener("close", () => { const yes = dlg.returnValue === "ok"; dlg.remove(); resolve(yes); });
+    dlg.showModal();
+  });
+}
+/** Permissions of an edited or updated plugin that were already reviewed on the old copy stay reviewed; anything new needs a review. */
+const keepApproved = (old, perms) => old ? perms.filter(k => (Array.isArray(old.approved) ? old.approved : old.permissions.filter(x => x !== "unsandboxed")).includes(k)) : [];
+/** Saves "these permissions were reviewed" for a plugin. */
+function approve(id) { const l = loadPlugins(), q = l.find(x => x.id === id); if (q) { q.approved = [...q.permissions]; savePlugins(l); } }
+
 function verLine() {
   const l = lastCheck();
   $("verLine").textContent = `You have ${SITE_VERSION} (plugin API v${API_VERSION}).` + (l && l.ok ? (l.newer ? ` A newer version is available: ${l.latest}. Reload the page (or re-download your offline copy).` : ` Latest is ${l.latest}: you are up to date.`) + ` Checked ${new Date(l.at).toLocaleTimeString()}.` : " Not checked yet.");
@@ -43,9 +77,17 @@ function paintList() {
     row.dataset.id = p.id;
     const sw = el("input", { type: "checkbox", checked: p.enabled, disabled: isBlocked(p) });
     sw.setAttribute("aria-label", "Enable " + p.name);
-    sw.onchange = () => { const l = loadPlugins(); const q = l.find(x => x.id === p.id); if (q) { q.enabled = sw.checked; savePlugins(l); } sync(); toast(sw.checked ? "Plugin on" : "Plugin off", "success", 1500); setTimeout(paintList, 400); };
+    sw.onchange = async () => {
+      if (sw.checked && unreviewed(p).length && !(await reviewPermissions(p))) { sw.checked = false; return; }
+      if (sw.checked && unreviewed(p).length) approve(p.id);
+      const l = loadPlugins(); const q = l.find(x => x.id === p.id); if (q) { q.enabled = sw.checked; savePlugins(l); } sync(); toast(sw.checked ? "Plugin on" : "Plugin off", "success", 1500); setTimeout(paintList, 400);
+    };
     row.append(el("label", { className: "switch-row" }, sw, el("span", {}, el("strong", { textContent: p.name }), el("small", { className: "muted", textContent: `  v${p.version} · API v${p.apiVersion}${p.author ? " · " + p.author : ""}` }), el("br"), el("small", { className: "muted", textContent: p.description || "" }))));
-    row.append(el("div", { className: "muted", style: "font-size:.8rem", textContent: "Allowed: " + (p.permissions.length ? p.permissions.map(k => PERMISSIONS[k].label).join("; ") : "nothing") }));
+    const rk = riskOf(p.permissions), unsafe = p.permissions.includes("unsandboxed");
+    row.append(el("div", { className: "perm-summary" }, el("span", { className: "risk-badge " + (p.permissions.length ? rk : "low"), textContent: unsafe ? "UNSANDBOXED" : p.permissions.length ? rk + " risk" : "no permissions" }),
+      el("span", { className: "muted", textContent: " Asks for: " + (p.permissions.length ? p.permissions.join(", ") : "nothing") })));
+    if (unsafe) row.append(dangerBox());
+    if (p.enabled && unreviewed(p).length) row.append(el("div", { className: "plugin-issue warn", role: "alert", textContent: "⚠️ Its permissions changed. It stays off until you review and approve them (use the Permissions button)." }));
     for (const i of issues) row.append(el("div", { className: "plugin-issue " + i.level, role: "alert", textContent: (i.level === "error" ? "⛔ " : "⚠️ ") + i.text }));
     if (up && up.ok && up.newer) row.append(el("div", { className: "plugin-issue warn", textContent: `⬆️ Update available: ${up.latest}${up.info.downloadUrl ? " — " + up.info.downloadUrl : ""}. Import the new file to update (your settings stay).` }));
     if (up && up.ok && !up.newer && !up.none) row.append(el("div", { className: "muted", style: "font-size:.8rem", textContent: "Up to date." }));
@@ -54,6 +96,7 @@ function paintList() {
     if (p.enabled && run && run.logs.length) row.append(el("details", {}, el("summary", { textContent: "Log (" + run.logs.length + ")" }), el("pre", { className: "dev-pre", textContent: run.logs.join("\n") })));
     const btns = el("div", { className: "row wrap", style: "margin-top:.4rem" });
     const b = (t, fn) => { const x = el("button", { type: "button", className: "btn small", textContent: t }); x.onclick = fn; btns.append(x); };
+    b("Permissions", async () => { if (await reviewPermissions(p, p.permissions, `What “${p.name}” can do`)) { approve(p.id); sync(); paintList(); } });
     b("Edit", () => openEditor(p));
     b("Export", () => exportPlugin(p));
     if (p.updateUrl) b("Check update", async () => { updates.set(p.id, await checkPluginUpdate(p)); paintList(); });
@@ -82,10 +125,12 @@ function openEditor(p) {
   $("editor").classList.remove("hidden"); $("editor").scrollIntoView({ block: "start" });
 }
 function paintPerms(on) {
-  const box = $("edPerms"); box.replaceChildren();
+  const box = $("edPerms"); box.replaceChildren(); if (!$("edUnsafe")) { const d = dangerBox(); d.id = "edUnsafe"; box.after(d); }
+  $("edUnsafe").hidden = !on.includes("unsandboxed");
   for (const [k, v] of Object.entries(PERMISSIONS)) {
     const cb = el("input", { type: "checkbox", checked: on.includes(k), id: "perm-" + k });
-    box.append(el("label", { className: "switch-row" }, cb, el("span", {}, el("strong", { textContent: k }), " — " + v.label, el("small", { className: "muted", textContent: "  [" + v.risk + " risk]" }))));
+    box.append(el("label", { className: "switch-row perm-opt risk-" + v.risk }, cb, el("span", {}, el("strong", { textContent: k }), " — " + v.label, el("small", { className: "muted", textContent: "  [" + v.risk + " risk]" }), el("br"), el("small", { className: "muted", textContent: PERM_INFO[k] || "" }))));
+    if (k === "unsandboxed") cb.addEventListener("change", () => { $("edUnsafe").hidden = !cb.checked; });
   }
 }
 const chosenPerms = () => Object.keys(PERMISSIONS).filter(k => $("perm-" + k)?.checked);
@@ -101,6 +146,7 @@ $("edSave").onclick = () => {
       id: old?.id, name: $("edName").value, version: $("edVersion").value, apiVersion: Number($("edApi").value) || API_VERSION, minSite: $("edMin").value, description: $("edDesc").value,
       author: $("edAuthor").value, updateUrl: $("edUpd").value, permissions: chosenPerms(), code: $("edCode").value, enabled: old ? old.enabled : false, added: old?.added
     });
+    p.approved = keepApproved(old, p.permissions);
     savePlugins(old ? list.map(x => x.id === old.id ? p : x) : [...list, p]);
     $("editor").classList.add("hidden"); editing = null; sync(); paintList();
     toast(old ? "Plugin saved." : "Plugin added. Switch it on when you're ready.", "success", 2500);
@@ -113,7 +159,7 @@ $("importFile").onchange = async e => {
     const raw = JSON.parse(await f.text());
     const p = normalize({ ...raw, enabled: false });
     const list = loadPlugins(), same = list.find(x => x.id === p.id || (x.name === p.name && x.author === p.author));
-    if (same) { p.id = same.id; p.enabled = same.enabled; }
+    if (same) { p.id = same.id; p.enabled = same.enabled; p.approved = keepApproved(same, p.permissions); }
     savePlugins(same ? list.map(x => x.id === same.id ? p : x) : [...list, p]);
     sync(); paintList();
     toast(same ? `Updated “${p.name}” to ${p.version}.` : `Imported “${p.name}” (switched off: check its permissions, then turn it on).`, "success", 4000);
@@ -125,10 +171,11 @@ $("urlBtn").onclick = async () => {
   try {
     const { plugin: p, url } = await fetchPluginFromUrl(u);
     const list = loadPlugins(), same = list.find(x => x.id === p.id || (x.name === p.name && x.author === p.author));
-    const perms = p.permissions.length ? p.permissions.map(k => `• ${PERMISSIONS[k]?.label || k}${PERMISSIONS[k]?.risk === "high" ? "  (high risk)" : ""}`).join("\n") : "• none";
-    const ok = await confirmDialog({ title: same ? `Update “${p.name}”?` : `Add “${p.name}”?`, message: `Version ${p.version}${p.author ? " by " + p.author : ""}\nFrom ${url}\n\nIt asks to:\n${perms}\n\nIt will be added switched off. Only continue if you trust the author.`, okText: same ? "Update" : "Add" });
+    const perms = p.permissions.length ? p.permissions.map(k => `• ${PERMISSIONS[k]?.label || k}  [${PERMISSIONS[k]?.risk} risk]`).join("\n") : "• none";
+    const node = el("div", {}, ...(p.permissions.includes("unsandboxed") ? [dangerBox()] : []));
+    const ok = await confirmDialog({ title: same ? `Update “${p.name}”?` : `Add “${p.name}”?`, node, message: `Version ${p.version}${p.author ? " by " + p.author : ""}\nFrom ${url}\n\nIt asks to:\n${perms}\n\nIt will be added switched off, and you review every permission again before it can run. Only continue if you trust the author.`, okText: same ? "Update" : "Add", danger: p.permissions.includes("unsandboxed") });
     if (!ok) return;
-    if (same) { p.id = same.id; p.enabled = same.enabled; }
+    if (same) { p.id = same.id; p.enabled = same.enabled; p.approved = keepApproved(same, p.permissions); }
     savePlugins(same ? list.map(x => x.id === same.id ? p : x) : [...list, p]);
     sync(); paintList(); toast(same ? `Updated “${p.name}” to ${p.version}.` : `Added “${p.name}” (switched off).`, "success", 4000);
   } catch (err) { toast(err.message, "error", 6000); }

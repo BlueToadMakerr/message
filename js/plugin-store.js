@@ -20,8 +20,58 @@ export const PERMISSIONS = {
   keys:      { label: "Add keyboard shortcuts", risk: "low" },
   commands:  { label: "Add slash commands (/name) to the message box", risk: "low" },
   ui:        { label: "Open its own windows with forms, lists and buttons", risk: "low" },
-  menu:      { label: "Add choices to the message menu (and receive the message you pick)", risk: "medium" }
+  menu:      { label: "Add choices to the message menu (and receive the message you pick)", risk: "medium" },
+  speech:    { label: "Speak text out loud", risk: "low" },
+  sound:     { label: "Play short sounds", risk: "low" },
+  badge:     { label: "Show a number on the app icon / tab title", risk: "low" },
+  share:     { label: "Open the share sheet (or copy) with text it chooses", risk: "low" },
+  download:  { label: "Save files to your device (you see the download)", risk: "medium" },
+  files:     { label: "Ask you to pick a file and read it", risk: "medium" },
+  links:     { label: "Ask to open a web link (you confirm each one)", risk: "medium" },
+  unsandboxed: { label: "UNSANDBOXED: run with FULL access to this site, your account and your messages", risk: "critical" }
 };
+/** What each permission really allows, in plain words (shown when you review a plugin). */
+export const PERM_INFO = {
+  toast: "Pops up short messages at the bottom of the screen.",
+  style: "Can restyle the whole site (colours, fonts, hide parts). It cannot read anything.",
+  me: "Can see your display name and your account id (UID).",
+  chat: "Knows which chat you have open and can put text into your message box (it cannot send it).",
+  messages: "Can read the text of messages that are on your screen, including decrypted ones. This is as sensitive as shoulder-surfing.",
+  panel: "Can show small panels and banners, also on the call screen.",
+  network: "The plugin can contact any website. Combined with another permission it can send what it learned (messages, names) out of your device.",
+  page: "Can read what is on screen, click buttons, type into fields and scroll for you. It can act as you inside the app.",
+  buttons: "Can add buttons in the chat header, the chat list and the call screen.",
+  calls: "Knows when you are in a call and with which chat.",
+  devinfo: "Can read developer information and add cards to the developer views.",
+  send: "Can send messages in the open chat as you, without asking each time.",
+  clipboard: "Can put text on your clipboard (it can overwrite what you copied).",
+  notify: "Can show system notifications and make your phone vibrate.",
+  keys: "Can add keyboard shortcuts.",
+  commands: "Can add slash commands to the message box and see what you type after the slash.",
+  ui: "Can open its own windows with text, forms, lists and buttons (drawn by the site, so they match the theme).",
+  menu: "Adds choices to every message's menu. When you pick one it receives that message (its text only if it also has the 'messages' permission).",
+  speech: "Can read text aloud with your device's voice.",
+  sound: "Can play short beeps and alert sounds.",
+  badge: "Can show a count on the app icon or in the tab title.",
+  share: "Can open your device's share sheet with text it chooses (you pick where it goes).",
+  download: "Can save a file it creates to your device. Your browser shows the download.",
+  files: "Can open a file picker. It only gets the one file you choose.",
+  links: "Can ask to open a web link. Nothing opens until you confirm that exact address.",
+  unsandboxed: "The plugin is NOT locked in its safe box any more. It runs inside the site itself with the same powers as the site: it can read your messages and keys, act as you, send messages, change settings, read what you type (including passwords) and contact any server. Extremely dangerous."
+};
+export const UNSANDBOXED_WARNING = "Having a plugin unsandboxed is EXTREMELY DANGEROUS. It runs with the full power of the site: it can read all your messages and encryption keys, send messages as you, read what you type (including passwords) and send everything to anyone. Do NOT run anything you do not trust completely with this permission, and never enable it because someone online asked you to.";
+const RISK_RANK = { low: 0, medium: 1, high: 2, critical: 3 };
+export const riskOf = perms => (perms || []).reduce((m, k) => (RISK_RANK[PERMISSIONS[k]?.risk] ?? 0) > RISK_RANK[m] ? PERMISSIONS[k].risk : m, "low");
+/** [{key, label, risk, info}] for a list of permission keys, most dangerous first. */
+export function describePermissions(perms) {
+  return (perms || []).filter(k => PERMISSIONS[k]).map(k => ({ key: k, label: PERMISSIONS[k].label, risk: PERMISSIONS[k].risk, info: PERM_INFO[k] || "" }))
+    .sort((a, b) => RISK_RANK[b.risk] - RISK_RANK[a.risk]);
+}
+/** Permissions the person has not reviewed yet. A plugin saved before reviewing existed (no `approved` list) counts as reviewed, except "unsandboxed", which always needs a deliberate yes. */
+export function unreviewed(p) {
+  const ok = Array.isArray(p.approved) ? p.approved : (p.permissions || []).filter(k => k !== "unsandboxed");
+  return (p.permissions || []).filter(k => !ok.includes(k));
+}
 export const MAX_CODE = 200000;
 
 export function loadPlugins() { try { const l = JSON.parse(localStorage.getItem(KEY) || "[]"); return Array.isArray(l) ? l : []; } catch (_) { return []; } }
@@ -47,8 +97,8 @@ export function normalize(raw) {
     name, version, apiVersion, minSite, updateUrl,
     description: String(raw.description || "").slice(0, 300), author: String(raw.author || "").slice(0, 60),
     permissions: [...new Set((Array.isArray(raw.permissions) ? raw.permissions : []).filter(p => PERMISSIONS[p]))],
-    code, enabled: raw.enabled === true, added: raw.added || Date.now()
-  };
+    code, enabled: raw.enabled === true, added: raw.added || Date.now(), approved: []
+  };                                   // note: "approved" is never taken from a file; the Plugins page sets it after you review the permissions
 }
 
 /** Problems with a plugin on this site: [{level: "warn" | "error", text}]. Empty = fine. */

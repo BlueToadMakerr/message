@@ -33,3 +33,9 @@ The complete reference is in the app: **`plugin-docs.html`** (also linked from t
 - **More page control**: `waitFor / text / attr / count / focus / press / select / check / hide / show / title`.
 - **No permission needed**: `qm.every / after / now`, `qm.util.*`, `qm.bus.*` (plugin to plugin), `qm.app.info`, `qm.plugins.list`, `qm.storage.keys / clear / usage`.
 - Switching a plugin off, deleting or editing it now takes effect immediately and removes everything it added.
+
+
+## 1.52.0
+- **Permission review**: switching a plugin on shows everything it asks for, in plain words with risk labels. Changed permissions need a new review. The Plugins page has a *Permissions* button.
+- New permissions: `speech`, `sound`, `badge`, `share`, `download`, `files`, `links`, `unsandboxed`.
+- **`unsandboxed` is EXTREMELY DANGEROUS.** The plugin runs with the full power of the site (messages, keys, what you type). Never run anything you do not trust completely with it. You must type UNSANDBOXED to allow it.

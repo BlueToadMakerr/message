@@ -2,7 +2,7 @@
 // Every enabled plugin runs inside its own sandboxed <iframe> (no access to this page, your account, cookies or storage) and talks to the
 // site only through the messages handled here. Each call is checked against the permissions the plugin declared. Docs: plugin-docs.html
 import { devOn, onDev, envInfo } from "./dev.js";
-import { loadPlugins, pluginIssues, isBlocked, MAX_CODE } from "./plugin-store.js";
+import { loadPlugins, pluginIssues, isBlocked, unreviewed, MAX_CODE } from "./plugin-store.js";
 import { SITE_VERSION, API_VERSION } from "./version.js";
 import { localToast, promptDialog, confirmDialog } from "./ui.js";
 
@@ -14,6 +14,7 @@ const writeStore = (id, o) => { const s = JSON.stringify(o); if (s.length > 1000
 
 // What a plugin's sandbox runs first. It is the only code that exists in the frame besides the plugin's own.
 function boot(code, p) {
+  const unsafe = p.permissions.includes("unsandboxed");
   const csp = `default-src 'none'; script-src 'unsafe-inline' 'unsafe-eval'; img-src data:; style-src 'unsafe-inline'; connect-src ${p.permissions.includes("network") ? "https:" : "'none'"}`;
   const bootJs = `
 const PID=${JSON.stringify(p.id)}, SITE=${JSON.stringify(SITE_VERSION)}, API=${API_VERSION};
@@ -23,7 +24,9 @@ addEventListener("message",e=>{ if(e.source!==parent)return; const d=e.data; if(
   if(d.reply){const w=pending.get(d.id); if(!w)return; pending.delete(d.id); d.error?w.rej(new Error(d.error)):w.res(d.result);}
   else if(d.event){(handlers[d.event]||[]).slice().forEach(f=>{try{const r=f(d.data); if(r&&r.catch)r.catch(x=>call("log",["error in "+d.event+": "+x]));}catch(x){call("log",["error in "+d.event+": "+x]);}});}
 });
+const PERMS=${JSON.stringify(p.permissions)};
 const qm={ version:SITE, apiVersion:API,
+  permissions:{list:()=>PERMS.slice(),has:k=>PERMS.includes(k),sandboxed:${unsafe ? "false" : "true"}},
   on(ev,fn){(handlers[ev]=handlers[ev]||[]).push(fn);return ()=>qm.off(ev,fn);}, off(ev,fn){handlers[ev]=(handlers[ev]||[]).filter(f=>f!==fn);},
   toast:(t,k)=>call("toast",[t,k]), me:()=>call("me"), log:(...a)=>call("log",a.map(x=>typeof x==="string"?x:JSON.stringify(x))),
   style:{set:css=>call("style.set",[css]),clear:()=>call("style.clear")},
@@ -62,6 +65,13 @@ Object.assign(qm,{
   commands:{add:o=>call("commands.add",[o]),remove:n=>call("commands.remove",[n]),clear:()=>call("commands.clear"),list:()=>call("commands.list")},
   banner:{show:o=>call("banner.show",[o]),hide:o=>call("banner.hide",[o]),clear:()=>call("banner.clear")},
   ui:{open:o=>call("ui.open",[o]),update:(id,o)=>call("ui.update",[id,o]),close:id=>call("ui.close",[id]),list:()=>call("ui.list"),confirm:o=>call("ui.confirm",[o]),prompt:o=>call("ui.prompt",[o])},
+  speech:{say:(t,o)=>call("speech.say",[t,o]),stop:()=>call("speech.stop")},
+  sound:{play:(k)=>call("sound.play",[k])},
+  badge:{set:n=>call("badge.set",[n]),clear:()=>call("badge.set",[0])},
+  share:t=>call("share.text",[t]),
+  download:{save:(name,data,type)=>call("download.save",[name,data,type])},
+  files:{pick:o=>call("files.pick",[o])},
+  links:{open:u=>call("links.open",[u])},
   messageMenu:{add:o=>call("menu.add",[o]),remove:id=>call("menu.remove",[id]),clear:()=>call("menu.clear"),list:()=>call("menu.list")}
 });
 Object.assign(qm.chat,{getText:()=>call("chat.getText"),setText:t=>call("chat.setText",[t]),clearText:()=>call("chat.setText",[""]),focus:()=>call("chat.focus"),list:()=>call("chat.list"),info:()=>call("chat.info"),send:(t,o)=>call("chat.send",[t,o])});
@@ -70,11 +80,13 @@ Object.assign(qm.storage,{keys:()=>call("storage.keys"),clear:()=>call("storage.
 Object.assign(qm.page,{waitFor:(s,o)=>call("page.waitFor",[s,o]),text:(s,o)=>call("page.text",[s,o]),attr:(s,n,o)=>call("page.attr",[s,n,o]),count:(s,o)=>call("page.count",[s,o]),
   focus:(s,o)=>call("page.focus",[s,o]),press:(k,s,o)=>call("page.press",[k,s,o]),select:(s,v,o)=>call("page.select",[s,v,o]),check:(s,v,o)=>call("page.check",[s,v,o]),
   hide:(s,o)=>call("page.hide",[s,o]),show:(s,o)=>call("page.show",[s,o]),title:t=>call("page.title",[t])});
+${unsafe ? 'qm.unsafe={window:parent,document:parent.document,note:"UNSANDBOXED: this plugin has the same powers as the site itself."};' : ''}
 const AsyncFunction=Object.getPrototypeOf(async function(){}).constructor;
 (async()=>{ try{ await new AsyncFunction("qm",${JSON.stringify(code)})(qm); call("ready"); }catch(e){ call("crash",[String(e&&e.stack||e)]); } })();`;
-  return `<!doctype html><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="${csp}"><script>${bootJs.replace(/<\/script/gi, "<\\/script")}<\/script>`;
+  return `<!doctype html><meta charset="utf-8">${unsafe ? "" : `<meta http-equiv="Content-Security-Policy" content="${csp}">`}<script>${bootJs.replace(/<\/script/gi, "<\\/script")}<\/script>`;
 }
 
+let baseTitle = null;
 const need = (run, perm) => { if (!run.plugin.permissions.includes(perm)) throw new Error(`Needs the "${perm}" permission (add it to the plugin).`); };
 
 function frames() { return [...document.querySelectorAll("iframe")].filter(f => { try { return !!f.contentDocument; } catch (_) { return false; } }); }
@@ -501,6 +513,56 @@ const api = {
   "messages.reply": (run, [k, t]) => api["chat.send"](run, [t, { replyTo: k }]),
   // clipboard, notifications, vibration
   "clipboard.write": async (run, [t]) => { need(run, "clipboard"); try { await navigator.clipboard.writeText(String(t ?? "").slice(0, 20000)); return true; } catch (_) { throw new Error("The browser did not allow clipboard access right now."); } },
+  // speech, sound, badge, share, download, files, links
+  "speech.say": (run, [t, o]) => {
+    need(run, "speech"); if (!window.speechSynthesis) throw new Error("This device cannot speak.");
+    const u = new SpeechSynthesisUtterance(String(t ?? "").slice(0, 600)); o = o || {};
+    u.rate = clampN(o.rate ?? 1, 0.5, 2, 1); u.pitch = clampN(o.pitch ?? 1, 0, 2, 1); if (o.lang) u.lang = String(o.lang).slice(0, 12);
+    speechSynthesis.speak(u); return true;
+  },
+  "speech.stop": run => { need(run, "speech"); try { speechSynthesis.cancel(); } catch (_) { /* ignore */ } return true; },
+  "sound.play": (run, [k]) => {
+    need(run, "sound"); const AC = window.AudioContext || window.webkitAudioContext; if (!AC) throw new Error("This device cannot play sounds.");
+    const seq = { beep: [[880, .12]], success: [[660, .1], [880, .14]], error: [[300, .2], [220, .25]], alert: [[880, .1], [660, .1], [880, .1]] }[String(k || "beep")] || [[880, .12]];
+    const a = (run.audio = run.audio || new AC()); let t = a.currentTime;
+    for (const [f, d] of seq) { const o = a.createOscillator(), g = a.createGain(); o.frequency.value = f; g.gain.value = .12; o.connect(g); g.connect(a.destination); o.start(t); o.stop(t + d); t += d + .04; }
+    return true;
+  },
+  "badge.set": (run, [n]) => {
+    need(run, "badge"); n = clampN(n, 0, 999, 0); run.badge = n;
+    const total = [...runs.values()].reduce((m, r) => m + (r.badge || 0), 0);
+    try { if (total && navigator.setAppBadge) navigator.setAppBadge(total); else if (navigator.clearAppBadge) navigator.clearAppBadge(); } catch (_) { /* ignore */ }
+    if (baseTitle == null) baseTitle = document.title.replace(/^\(\d+\) /, "");
+    document.title = total ? `(${total}) ${baseTitle}` : baseTitle; if (!total) baseTitle = null; return total;
+  },
+  "share.text": async (run, [t]) => {
+    need(run, "share"); t = String(t ?? "").slice(0, 5000); if (!t) throw new Error("Nothing to share.");
+    if (navigator.share) { try { await navigator.share({ text: t }); return "shared"; } catch (e) { if (e && e.name === "AbortError") return "cancelled"; } }
+    try { await navigator.clipboard.writeText(t); localToast("Copied (sharing isn't available here).", "info", 2500); return "copied"; } catch (_) { throw new Error("The browser did not allow sharing right now."); }
+  },
+  "download.save": async (run, [name, data, type]) => {
+    need(run, "download"); name = String(name || "file.txt").replace(/[^\w. -]+/g, "_").slice(0, 80) || "file.txt";
+    const text = typeof data === "string" ? data : JSON.stringify(data ?? "", null, 2); if (text.length > 5_000_000) throw new Error("File too big (5 MB at most).");
+    if (!await confirmDialog({ title: "Save a file?", message: `The plugin “${run.plugin.name}” wants to save “${name}” (${Math.ceil(text.length / 1024)} KB) to your device.`, okText: "Save" })) return false;
+    const url = URL.createObjectURL(new Blob([text], { type: String(type || "text/plain").slice(0, 60) }));
+    const a = Object.assign(document.createElement("a"), { href: url, download: name }); document.body.append(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(url), 5000); return true;
+  },
+  "files.pick": async (run, [o]) => {
+    need(run, "files"); o = o || {};
+    if (!await confirmDialog({ title: "Choose a file?", message: `The plugin “${run.plugin.name}” asks you to pick a file. It only receives the file you choose.`, okText: "Choose file" })) return null;
+    const f = await new Promise(res => { const i = document.createElement("input"); i.type = "file"; if (o.accept) i.accept = String(o.accept).slice(0, 100); i.onchange = () => res(i.files[0] || null); i.oncancel = () => res(null); i.click(); });
+    if (!f) return null; if (f.size > 2_000_000) throw new Error("That file is too big (2 MB at most).");
+    const isText = /^text\/|json|xml|javascript/.test(f.type) || /\.(txt|md|csv|json|js|html|css|log)$/i.test(f.name);
+    if (isText) return { name: f.name, size: f.size, type: f.type, text: await f.text() };
+    const buf = new Uint8Array(await f.arrayBuffer()); let b = ""; for (let i = 0; i < buf.length; i += 8192) b += String.fromCharCode(...buf.subarray(i, i + 8192));
+    return { name: f.name, size: f.size, type: f.type, base64: btoa(b) };
+  },
+  "links.open": async (run, [u]) => {
+    need(run, "links"); let x; try { x = new URL(String(u)); } catch (_) { throw new Error("Not a web address."); }
+    if (x.protocol !== "https:") throw new Error("Only https:// links can be opened.");
+    if (!await confirmDialog({ title: "Open a link?", message: `The plugin “${run.plugin.name}” wants to open:\n${x.href}`, okText: "Open" })) return false;
+    window.open(x.href, "_blank", "noopener,noreferrer"); return true;
+  },
   notify: (run, [t, b]) => {
     need(run, "notify"); const title = `${run.plugin.name}: ${String(t ?? "").slice(0, 80)}`, body = String(b ?? "").slice(0, 200);
     if (document.hidden && typeof Notification !== "undefined" && Notification.permission === "granted") { try { new Notification(title, { body }); return "system"; } catch (_) { /* fall through */ } }
@@ -598,9 +660,11 @@ addEventListener("message", async e => {
 
 export function startPlugin(p) {
   stopPlugin(p.id);
-  if (isBlocked(p) || !p.enabled || p.code.length > MAX_CODE) return;
+  if (isBlocked(p) || !p.enabled || p.code.length > MAX_CODE || unreviewed(p).length) return;   // permissions must have been reviewed on the Plugins page
   const frame = document.createElement("iframe");
-  frame.setAttribute("sandbox", "allow-scripts");          // no allow-same-origin: the plugin cannot reach the site, its cookies, storage or Firebase login
+  // Normal plugins: no allow-same-origin, so they cannot reach the site, its cookies, storage or Firebase login.
+  // The "unsandboxed" permission (extremely dangerous, the person had to confirm it by typing) removes that wall on purpose.
+  frame.setAttribute("sandbox", p.permissions.includes("unsandboxed") ? "allow-scripts allow-same-origin allow-forms allow-popups allow-modals" : "allow-scripts");
   frame.setAttribute("aria-hidden", "true"); frame.tabIndex = -1; frame.title = "Plugin: " + p.name;
   frame.style.cssText = "position:fixed;width:0;height:0;border:0;opacity:0;pointer-events:none";
   frame.srcdoc = boot(p.code, p);
@@ -613,6 +677,8 @@ export function stopPlugin(id) {
   const r = runs.get(id); if (!r) return;
   r.dead = true; r.css = ""; r.vars = {}; r.sheets.clear(); applyStyle(r); paintPanel(r, null); closeAllWindows(r); for (const k of [...r.banners.keys()]) paintBanner(r, null, k); r.menu.clear(); restoreHidden(r);
   if (r.origTitle != null) document.title = r.origTitle;
+  if (r.badge) { r.badge = 0; api["badge.set"]({ ...r, plugin: { permissions: ["badge"] } }, [0]); }
+  try { r.audio?.close(); } catch (_) { /* ignore */ }
   if (r.search) r.search.stop = true; pill(null);
   r.buttons.clear(); r.keys.clear(); r.commands.clear(); r.cards.clear(); injectButtons(r); r.frame.remove(); runs.delete(id);
 }
@@ -622,7 +688,7 @@ export const stopAll = () => [...runs.keys()].forEach(stopPlugin);
 export function startAll() {
   if (!devOn()) { stopAll(); return; }
   const list = loadPlugins();
-  const want = new Map(list.filter(p => p.enabled && !isBlocked(p) && p.code.length <= MAX_CODE).map(p => [p.id, p]));
+  const want = new Map(list.filter(p => p.enabled && !isBlocked(p) && p.code.length <= MAX_CODE && !unreviewed(p).length).map(p => [p.id, p]));
   for (const id of [...runs.keys()]) if (!want.has(id)) stopPlugin(id);
   const started = [];
   for (const p of want.values()) { const r = runs.get(p.id); if (r && r.sig === pluginSig(p)) { r.plugin = p; continue; } startPlugin(p); started.push(p); }

@@ -2,6 +2,8 @@
 //  - onMessage : a new message appears in privateChats/{chat}/messages  -> push to the other members' devices
 //  - onRing    : a ring appears in calls/{chat}/ringing/{uid}           -> push to that account's devices, then writes notifyStatus
 // Deploy: `firebase deploy --only functions` (needs the Blaze plan; the free tier covers normal use). See README "Round 44".
+// Runtime: Node.js 22. Google switched off the Node.js 20 runtime for Cloud Functions on 2026-10-30, so functions still deployed on Node 20 stop
+// running (and cannot be updated) until they are redeployed with this version.
 const { onValueCreated } = require("firebase-functions/v2/database");
 const admin = require("firebase-admin");
 admin.initializeApp();

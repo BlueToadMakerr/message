@@ -1009,3 +1009,16 @@ button.pw-item{cursor:pointer}button.pw-item:hover{background:var(--surface-2)}
 .pw-item-s{font-size:.8rem;color:var(--muted)}
 
 .modal-text{white-space:pre-line}
+
+/* plugin permission review */
+.risk-badge{display:inline-block;font-size:.68rem;font-weight:700;letter-spacing:.03em;padding:.1rem .45rem;border-radius:999px;background:var(--surface-2,#8882);color:inherit;text-transform:uppercase}
+.risk-badge.medium{background:#f59e0b33;color:#b45309}.risk-badge.high{background:#ef444433;color:#b91c1c}
+.risk-badge.critical{background:#b91c1c;color:#fff}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]) .risk-badge.medium{color:#fbbf24}:root:not([data-theme="light"]) .risk-badge.high{color:#fca5a5}}
+:root[data-theme="dark"] .risk-badge.medium{color:#fbbf24}:root[data-theme="dark"] .risk-badge.high{color:#fca5a5}
+.perm-item{padding:.45rem 0;border-bottom:1px solid var(--border,#8883);font-size:.88rem}.perm-item.risk-critical{background:#b91c1c18;padding:.5rem;border-radius:8px}
+.perm-review{max-height:42vh;overflow:auto;margin:.5rem 0}
+.perm-summary{margin:.25rem 0;font-size:.8rem}
+.danger-box{border:2px solid #b91c1c;background:#b91c1c1f;border-radius:10px;padding:.55rem .75rem;margin:.5rem 0;font-size:.88rem}.danger-box p{margin:.3rem 0 0}
+.perm-opt.risk-critical{border:1px solid #b91c1c;border-radius:8px;padding:.3rem}
+.perm-dialog{max-width:min(34rem,94vw)}

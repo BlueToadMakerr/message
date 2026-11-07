@@ -2,6 +2,13 @@
 
 Newest first. Older rounds (1–43) are kept below exactly as they were written.
 
+## 1.52.0 — Plugins: permission review, more permissions, "unsandboxed"; cloud notifications fixed
+
+- **Cloud notifications weren't firing.** Google shut down the Node.js 20 runtime for Cloud Functions on 2026-10-30, so the functions stopped running. They now target **Node 22** (`functions/package.json`, `firebase.json`). **You must redeploy:** `npm i -g firebase-tools@latest`, then `cd functions && npm install && cd .. && firebase deploy --only functions`. Check with `firebase functions:list` and `firebase functions:log` (see docs/SETUP-FIREBASE.md). Not testable from here, so confirm after deploying.
+- **Permission review.** A plugin can't run until you've reviewed what it asks for: switching it on (or it asking for new permissions after an edit, import or update) shows every permission in plain words, most dangerous first, with a risk label. The Plugins list shows a risk badge and what each plugin asks for, plus a *Permissions* button. Imports and add-by-URL always start switched off and unreviewed. Plugins saved before this keep working, except ones with `unsandboxed`.
+- **New permissions:** `speech`, `sound`, `badge`, `share`, `download`, `files`, `links` (download, file picker and link opening always ask you first), and `qm.permissions.list() / has()`.
+- **`unsandboxed` (critical).** Removes the plugin's safe box: it runs with the site's full power (messages, keys, what you type). It is clearly marked everywhere with a warning: **extremely dangerous, do not run anything you do not trust completely with this permission.** Allowing it requires typing UNSANDBOXED.
+
 ## 1.51.0 — Android: push instead of a standing connection; notification threads always match the chat
 
 - **Android no longer keeps a connection open for notifications.** The app registers for Firebase Cloud Messaging push (token stored at `FCM/{uid}/{token} = "android"`). When a message or call arrives, the Cloud Function (`functions/index.js`) sends a **data-only, high-priority push**; the app wakes for a moment, makes the few plain requests it needs (sender, thread, picture, decrypting) and shows the full notification itself (names, pictures, reply, mark-as-read, bubbles, full-screen call alert). Then it goes back to sleep: no stream, no polling, no wake lock, no permanent "Listening" notification, and no battery-optimisation prompt.
