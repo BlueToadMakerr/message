@@ -2,6 +2,15 @@
 
 Newest first. Older rounds (1–43) are kept below exactly as they were written.
 
+## 1.53.0 — Bot accounts
+
+- **Bots.** Account → Bots makes bot accounts (name, picture, token shown once, only its hash is stored, "New token" replaces a leaked one). In a chat: Chat options → **Add one of my bots…** (only the bot's owner can add it; anyone in the chat can remove it). Bots show up as members with a **BOT** badge.
+- **The API runs on Firebase, not on the web host** (Cloud Function `botApi` in `functions/`), so InfinityFree blocking server-to-server requests doesn't matter. The private server has the same routes at `/api/bot/...`. Routes: `GET/PATCH /me`, `GET /chats`, `GET /members`, `GET /messages`, `POST /send`, `PATCH/DELETE /message`. Optional signed **webhook** per bot (new messages in its chats), or poll `GET /messages?after=`.
+- **A bot can change its own name and picture** (`PATCH /me`) **and show another name/picture for a single message** (`as: {name, pfp}`) with `src` ("Discord"). Every bot message stores `botId`; the chat shows the chosen name and picture, a BOT badge, and the real bot's name and source. People can't write `botId`/`as`/`src` (database rules), so identities can't be faked. This is what a Discord ↔ QuickMessage link needs; `docs/bots/discord_bridge.py` is a working two-way example.
+- Limits: 20 posts / 10 s per bot, 4000 characters. Bots can't read or write end-to-end encrypted messages (the app warns when adding one to an encrypted chat). Deleting your account deletes your bots.
+- **You must** republish `database.rules.json` (new nodes `bots`, `botKeys`, `botList`) and run `firebase deploy --only functions` (new `botApi`; it needs the Node 22 deploy from 1.52.0 anyway).
+- Docs: `bot-docs.html`, `docs/BOTS.md`.
+
 ## 1.52.0 — Plugins: permission review, more permissions, "unsandboxed"; cloud notifications fixed
 
 - **Cloud notifications weren't firing.** Google shut down the Node.js 20 runtime for Cloud Functions on 2026-10-30, so the functions stopped running. They now target **Node 22** (`functions/package.json`, `firebase.json`). **You must redeploy:** `npm i -g firebase-tools@latest`, then `cd functions && npm install && cd .. && firebase deploy --only functions`. Check with `firebase functions:list` and `firebase functions:log` (see docs/SETUP-FIREBASE.md). Not testable from here, so confirm after deploying.

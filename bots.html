@@ -1,0 +1,49 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="system">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+  <title>Bots · QuickMessage</title>
+  <meta name="theme-color" content="#4f46e5">
+  <link rel="icon" href="icons/icon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="style.css">
+  <script src="js/themeboot.js"></script>
+</head>
+<body>
+<div class="shell">
+  <header class="topbar">
+    <a href="account.html" class="icon-btn" aria-label="Back to account" data-icon="back"></a>
+    <h1 class="brand">Bots</h1>
+    <div class="topbar-actions"><a class="btn small" href="bot-docs.html">Docs</a></div>
+  </header>
+  <main>
+    <section class="card">
+      <h2>Your bots</h2>
+      <p class="muted" style="margin-top:0">A bot is an account a program controls: it can post in the chats you add it to, and (with a webhook or by asking) read the plain messages there. Use it to link chats with other services, such as Discord. A bot's token is its password: anyone who has it can act as the bot.</p>
+      <div id="list" class="stack"></div>
+      <p id="empty" class="muted" hidden>No bots yet.</p>
+      <div class="row wrap" style="margin-top:.7rem"><button class="btn primary" id="newBtn" type="button">New bot</button></div>
+    </section>
+    <section class="card hidden" id="editor">
+      <h2 id="edTitle">New bot</h2>
+      <div class="stack">
+        <label class="lbl">Name<input class="field" id="edName" maxlength="100" placeholder="Discord bridge"></label>
+        <label class="lbl">Picture address (optional, https)<input class="field" id="edPfp" type="url" placeholder="https://example.com/bot.png"></label>
+        <label class="lbl" id="edHookRow">Webhook (optional, https)<input class="field" id="edHook" type="url" placeholder="https://my-server.example/qm-hook"></label>
+        <p class="muted" id="edHookHelp" style="margin:0;font-size:.82rem">With a webhook, QuickMessage sends every new message in the bot's chats to that address (signed, see the docs). Without it the bot can just ask for new messages.</p>
+        <p class="plugin-issue error" id="edErr" role="alert"></p>
+        <div class="row wrap"><button class="btn primary" id="edSave" type="button">Save</button><button class="btn" id="edCancel" type="button">Cancel</button></div>
+      </div>
+    </section>
+    <section class="card">
+      <h2>Connecting a bot</h2>
+      <p class="muted" style="margin-top:0">Your program sends requests to this address with the header <code>Authorization: Bearer &lt;token&gt;</code>. It runs on Firebase, not on the web host, so it keeps working even where the host blocks automated requests.</p>
+      <pre class="dev-pre" id="apiUrl"></pre>
+      <p class="muted" style="margin-bottom:0"><a href="bot-docs.html">Read the bot docs</a> for every request and a ready-made Discord bridge.</p>
+    </section>
+  </main>
+</div>
+<script type="module" src="js/bars.js"></script>
+<script type="module" src="js/bots-page.js"></script>
+</body>
+</html>

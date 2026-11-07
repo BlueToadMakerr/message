@@ -9,7 +9,8 @@
       "$uid": {
         // Only signed-in users can look profiles up (was: anyone on the internet)
         ".read": "auth != null",
-        ".write": "$uid === auth.uid",
+        // A bot's profile (accsettings/bot_xxx) is written by its owner, or by the bot API (which bypasses rules)
+        ".write": "$uid === auth.uid || ($uid.matches(/^bot_[a-z0-9]{12}$/) && root.child('bots').child($uid).child('owner').val() === auth.uid)",
         "settings": {
           ".validate": "newData.hasChildren(['displayName'])",
           "displayName": { ".validate": "newData.isString() && newData.val().length > 0 && newData.val().length <= 100" },
@@ -18,6 +19,37 @@
           "theme":       { ".validate": "newData.val() === 'system' || newData.val() === 'light' || newData.val() === 'dark'" },
           "$other":      { ".validate": false }
         }
+      }
+    },
+
+    // ---------------------------------------------------------------- bot accounts (see functions/bots.js, bots.html)
+    // bots/{id}: public record (who owns it, its name). botKeys/{id}: token hash + webhook, only the owner can read or change it.
+    "bots": {
+      "$botId": {
+        ".read": "auth != null",
+        ".write": "auth != null && $botId.matches(/^bot_[a-z0-9]{12}$/) && ((!data.exists() && newData.child('owner').val() === auth.uid) || (data.exists() && data.child('owner').val() === auth.uid))",
+        "owner":   { ".validate": "newData.isString()" },
+        "created": { ".validate": "newData.isNumber()" },
+        "name":    { ".validate": "newData.isString() && newData.val().length > 0 && newData.val().length <= 100" },
+        "pfp":     { ".validate": "newData.isString() && newData.val().length <= 2000" },
+        "$other":  { ".validate": false }
+      }
+    },
+    // botList/{uid}/{botId}: which bots you own (only you can see it)
+    "botList": {
+      "$uid": {
+        ".read": "$uid === auth.uid",
+        ".write": "$uid === auth.uid",
+        "$botId": { ".validate": "newData.val() === true" }
+      }
+    },
+    "botKeys": {
+      "$botId": {
+        ".read": "auth != null && root.child('bots').child($botId).child('owner').val() === auth.uid",
+        ".write": "auth != null && root.child('bots').child($botId).child('owner').val() === auth.uid",
+        "th":      { ".validate": "newData.isString() && newData.val().matches(/^[0-9a-f]{64}$/)" },
+        "webhook": { ".validate": "newData.isString() && newData.val().length <= 300 && newData.val().matches(/^https:\\/\\/.*/)" },
+        "$other":  { ".validate": false }
       }
     },
 
@@ -90,7 +122,8 @@
         "participants": {
           // Members can add/remove members (add user, remove user, leave chat). Unverified accounts may only leave.
           ".write": "auth != null && root.child('privateChats').child($chatId).child('participants').child(auth.uid).exists() && (auth.token.email_verified === true || !newData.child(auth.uid).exists())",
-          "$uid": { ".validate": "newData.val() === true" }
+          // A bot (bot_xxx) can only be added by its owner; anyone in the chat can remove it
+          "$uid": { ".validate": "newData.val() === true && (!$uid.beginsWith('bot_') || data.exists() || root.child('bots').child($uid).child('owner').val() === auth.uid)" }
         },
 
         "chatData": {
@@ -135,6 +168,11 @@
             "deliveredAt": { ".validate": "newData.isNumber() && (data.exists() ? newData.val() === data.val() : newData.val() === now)" },
             "notifSent": { ".validate": "newData.isBoolean()" },
             "big":       { ".validate": "newData.isBoolean()" },
+            // Set only by the bot API (it bypasses these rules): which bot posted, the name/picture it chose for this message, and where it came from.
+            // People can never write them, so nobody can fake a bot's identity.
+            "botId":     { ".validate": false },
+            "as":        { ".validate": false },
+            "src":       { ".validate": false },
             // @mentions: the uids of the members the message is for (only they are notified). Plain even in encrypted chats.
             "mentions":  {
               ".validate": "newData.hasChildren()",

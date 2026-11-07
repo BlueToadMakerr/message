@@ -27,6 +27,7 @@ import { audioPlayer, videoPlayer, waveFromFile } from "./player.js";
 import { devOn, devButton, showDev, envInfo, devCard, devGrid, devPill, devWho } from "./dev.js";
 import { resolveRecipient } from "./recipient.js";
 import { ensureFriend, publicCodeOf } from "./friend.js";
+import { isBotUid, listBots, addBotToChat } from "./bots.js";
 import { requireVerified, isVerified, watchVerified } from "./verify.js";
 
 hydrateIcons();
@@ -385,7 +386,19 @@ function buildMessage(key, msg) {
     const name = document.createElement("div");
     name.className = "msg-name";
     col.append(name);
-    const apply = p => { name.textContent = p.displayName; av.replaceWith(avatarEl(p.displayName, p.pfp, "msg-avatar")); };
+    // A bot can post "as" someone else (a Discord user, say). Only trusted when the bot itself is the sender: people can't write these fields.
+    const botMsg = isBotUid(msg.fromUid) && msg.botId === msg.fromUid;
+    if (botMsg) el.classList.add("bot-msg");
+    const apply = p => {
+      const shown = (botMsg && msg.as && msg.as.name) || p.displayName, pic = (botMsg && msg.as && msg.as.pfp) || p.pfp;
+      name.textContent = shown; av.replaceWith(avatarEl(shown, pic, "msg-avatar"));
+      if (botMsg) {                                              // which bot really posted it, and where it came from
+        const tag = document.createElement("span"); tag.className = "tag bot-tag"; tag.textContent = "BOT";
+        tag.title = `Posted by the bot “${p.displayName}”${msg.src ? " via " + msg.src : ""}`;
+        name.append(tag);
+        if ((msg.as && msg.as.name) || msg.src) { const via = document.createElement("span"); via.className = "bot-via"; via.textContent = ` ${p.displayName}${msg.src ? " · " + msg.src : ""}`; name.append(via); }
+      }
+    };
     const cached = peekProfile(msg.fromUid);
     if (cached) apply(cached); else getProfile(msg.fromUid).then(apply);
   }
@@ -832,7 +845,7 @@ composer.addEventListener("submit", e => {
 window.__qmMsgs = () => [...messagesDiv.querySelectorAll(".msg[data-key]")].map(el => {
   const m = msgData.get(el.dataset.key);
   if (!m || m.type === "event") return null;
-  const who = m.fromUid === me ? ownName : (peekProfile(m.fromUid) || {}).displayName || "";
+  const who = m.fromUid === me ? ownName : (m.botId && m.botId === m.fromUid && m.as && m.as.name) || (peekProfile(m.fromUid) || {}).displayName || "";
   const textual = isText(m) && !m._locked;
   return { key: el.dataset.key, fromMe: m.fromUid === me, from: who || "", text: textual ? String(m.text ?? m.content ?? "").slice(0, 2000) : null, type: m.type || "text", name: m.name ? String(m.name).slice(0, 120) : undefined,
     time: m.timestamp || null, replyTo: m.replyTo && m.replyTo.key || null, edited: !!m.editedAt, pending: el.classList.contains("pending") };
@@ -1486,7 +1499,7 @@ $("chatOptionsBtn").before(devButton("{ }", async () => {
   await showDev("Chat " + chatId.slice(0, 8), { raw: rawData, every: 0, scope: "chat", visual: async () => {
     const els = [...messagesDiv.querySelectorAll(".msg")];
     const locked = [...msgData.values()].filter(m => m && m._locked), lost = locked.filter(m => m._lost).length;
-    const people = await Promise.all(participants.map(async u => ({ u, p: await getProfile(u).catch(() => null) })));
+    const people = await Promise.all(participants.map(async u => ({ u, p: await getProfile(u).catch(() => null) })));   // (bots included)
     const env = envInfo();
     const who = devCard("People", people.map(({ u, p }) => [(p && p.displayName) || u, (() => { const w = document.createElement("span"); w.append(devPill(keyHolders.includes(u) ? "has key" : "no key", keyHolders.includes(u) ? "ok" : "warn"), " ", devPill(typingUids.includes(u) ? "typing" : readReceipts[u] ? "read" : "", "")); return w; })()]));
     return devGrid(
@@ -1536,6 +1549,7 @@ async function renderParticipants() {
     const name = document.createElement("span");
     name.className = "name";
     name.textContent = p.displayName;
+    if (isBotUid(p.uid)) { const t = document.createElement("span"); t.className = "tag bot-tag"; t.textContent = "BOT"; t.title = "A bot account"; name.append(t); }
     if (p.uid === me) {
       const tag = document.createElement("span");
       tag.className = "tag";
@@ -1638,6 +1652,28 @@ $("addUserBtn").onclick = async () => {
     console.error(err);
     toast("Couldn't add that user.", "error");
   }
+};
+
+$("addBotBtn").onclick = async () => {
+  if (!requireVerified("add a bot")) return;
+  let mine = [];
+  try { mine = (await listBots(me)).filter(b => !participants.includes(b.id)); } catch (_) { return toast("Couldn't load your bots.", "error"); }
+  if (!mine.length) return toast("You have no bots to add. Make one in Account → Bots.", "info", 4000);
+  const node = document.createElement("div"); node.className = "stack";
+  let chosen = mine[0].id;
+  mine.forEach((b, i) => {
+    const l = document.createElement("label"); l.className = "switch-row";
+    const r = document.createElement("input"); r.type = "radio"; r.name = "pickbot"; r.checked = i === 0; r.onchange = () => { chosen = b.id; };
+    l.append(r, avatarEl(b.name, b.pfp || "", "avatar sm"), Object.assign(document.createElement("span"), { textContent: " " + b.name })); node.append(l);
+  });
+  if (chatEncrypted) { const w = document.createElement("p"); w.className = "plugin-issue warn"; w.textContent = "This chat is end-to-end encrypted. A bot can't read encrypted messages, and what it posts here is not encrypted (it is stored readable)."; node.append(w); }
+  const ok = await confirmDialog({ title: "Add a bot to this chat?", node, message: "The bot can read the plain messages in this chat (through its token or webhook) and post here. Only add bots you control.", okText: "Add bot" });
+  if (!ok) return;
+  try {
+    await addBotToChat(chatPath, chatId, chosen);
+    logEvent(chatId, me, { event: "chat_add", target: chosen });
+    toast("Bot added.", "success");
+  } catch (err) { console.error(err); toast("Couldn't add that bot.", "error"); }
 };
 
 // ---------- encryption setup ----------

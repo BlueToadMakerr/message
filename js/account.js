@@ -510,6 +510,8 @@ $("deleteBtn").onclick = async () => {
     }
     await Promise.allSettled([
       friendDeletePaths(uid).then(o => update(ref(db), o)),
+      import("./bots.js").then(b => b.listBots(uid).then(l => Promise.all(l.map(x => b.deleteBot(uid, x.id))))),     // your bots go with the account
+      remove(ref(db, `botList/${uid}`)),
       remove(ref(db, `chatList/${uid}`)),
       remove(ref(db, `FCM/${uid}`)),
       remove(ref(db, `userKeys/${uid}`)),

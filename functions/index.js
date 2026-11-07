@@ -1,10 +1,13 @@
 // QuickMessage push notifications, run by Firebase itself (no PHP, no InfinityFree request involved).
 //  - onMessage : a new message appears in privateChats/{chat}/messages  -> push to the other members' devices
+//  - botApi    : HTTPS API for bot accounts (functions/bots.js); also onMessage calls a bot's webhook when a message arrives in its chats
 //  - onRing    : a ring appears in calls/{chat}/ringing/{uid}           -> push to that account's devices, then writes notifyStatus
 // Deploy: `firebase deploy --only functions` (needs the Blaze plan; the free tier covers normal use). See README "Round 44".
 // Runtime: Node.js 22. Google switched off the Node.js 20 runtime for Cloud Functions on 2026-10-30, so functions still deployed on Node 20 stop
 // running (and cannot be updated) until they are redeployed with this version.
 const { onValueCreated } = require("firebase-functions/v2/database");
+const { onRequest } = require("firebase-functions/v2/https");
+const bots = require("./bots");
 const admin = require("firebase-admin");
 admin.initializeApp();
 
@@ -54,7 +57,7 @@ exports.onMessage = onValueCreated(trig("/privateChats/{chatId}/messages/{msgId}
   const from = msg.fromUid;
   const [participants, last] = await Promise.all([val(`privateChats/${chatId}/participants`), val(`privateChats/${chatId}/lastMessage`)]);
   if (!participants || !from || !participants[from]) return;
-  const name = (await val(`accsettings/${from}/settings/displayName`)) || "New message";
+  const name = (msg.as && msg.as.name) || (await val(`accsettings/${from}/settings/displayName`)) || "New message";
   const sameAsLast = last && last.id === msgId;
   const encrypted = sameAsLast ? !!last.enc : !!msg._enc || !!msg.enc || !!msg.iv;
   const text = encrypted ? "🔒 New message" : String((sameAsLast && last.text) || msg.text || msg.content || (msg.fileName ? "📎 " + msg.fileName : "New message")).slice(0, 100);
@@ -66,7 +69,10 @@ exports.onMessage = onValueCreated(trig("/privateChats/{chatId}/messages/{msgId}
   const only = msg.mentions && typeof msg.mentions === "object" ? Object.keys(msg.mentions).filter(u => participants[u]) : [];
   const mentioned = only.length > 0;
   const title = mentioned ? `${name} mentioned you` : name;
-  await Promise.all(Object.keys(participants).filter(u => u !== from && (!mentioned || only.includes(u))).map(async uid => {
+  // bots that have a webhook get the message too (not their own, and never encrypted text: they can't read it)
+  Promise.all([].concat(await bots.webhookTargets(adapter, chatId, msg, msgId).catch(() => [])).map(t =>
+    fetch(t.url, { method: "POST", headers: { "Content-Type": "application/json", "X-QM-Signature": t.signature }, body: t.body, signal: AbortSignal.timeout(8000), redirect: "error" }).catch(e => console.warn("webhook failed", t.url.split("/")[2], e && e.message)))).catch(() => {});
+  await Promise.all(Object.keys(participants).filter(u => u !== from && !bots.BOT_RE.test(u) && (!mentioned || only.includes(u))).map(async uid => {
     const read = await val(`privateChats/${chatId}/messageRead/${uid}`);
     if (read === msgId) return;                                         // already looking at it
     await pushTo(uid, () => ({
@@ -100,4 +106,27 @@ exports.onRing = onValueCreated(trig("/calls/{chatId}/ringing/{uid}"), async eve
   const cur = await val(`calls/${chatId}/ringing/${uid}/ringId`);
   if (cur !== ring.ringId) return;                                      // answered / replaced meanwhile
   await event.data.ref.update({ notifyStatus: r.accepted > 0 ? "sent" : r.tokens === 0 ? "no_token" : "failed" });
+});
+
+// ---- bot accounts ----------------------------------------------------------------------------------------------------------------------
+const adapter = {
+  get: path => val(path),
+  update: obj => DB().ref().update(obj),
+  newKey: () => DB().ref("privateChats").push().key,
+  messages: async (chat, { after, limit }) => {
+    let q = DB().ref(`privateChats/${chat}/messages`).orderByChild("timestamp");
+    const all = (await (after ? DB().ref(`privateChats/${chat}/messages`).orderByKey().startAfter(after).limitToFirst(limit) : q.limitToLast(limit)).get()).val();
+    return all || {};
+  }
+};
+exports.botApi = onRequest({ region: REGION, cors: true, maxInstances: 5, invoker: "public" }, async (req, res) => {
+  try {
+    const path = (req.path || "/").replace(/^\/botApi/, "") || "/";
+    const token = (req.get("authorization") || "").replace(/^Bearer\s+/i, "");
+    const body = typeof req.body === "object" ? req.body : {};
+    res.status(200).json(await bots.handle(adapter, { method: req.method, path, query: req.query, body, token }));
+  } catch (e) {
+    if (e instanceof bots.HttpError) res.status(e.status).json({ error: e.message });
+    else { console.error("botApi", e); res.status(500).json({ error: "server error" }); }
+  }
 });

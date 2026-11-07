@@ -1,1 +1,1 @@
-{ "version": "1.52.0", "apiVersion": 1, "released": "2026-11-07", "notes": "Plugins: permission review, new permissions and the dangerous unsandboxed permission. Cloud notifications: functions moved to Node 22 (redeploy needed)." }
+{ "version": "1.53.0", "apiVersion": 1, "released": "2026-11-07", "notes": "Bot accounts: create bots, add them to chats, per-message name/picture, Firebase-hosted bot API, optional webhooks." }

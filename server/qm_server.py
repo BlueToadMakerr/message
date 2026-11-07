@@ -158,9 +158,16 @@ def member(chat, uid, new_tree=None):
 
 FRIEND_RE = re.compile(r"^QM-[BCDFGHJKMNPQRSTVWXZ2-9]{5}-[BCDFGHJKMNPQRSTVWXZ2-9]{5}$")
 
+BOT_RE = re.compile(r"^bot_[a-z0-9]{12}$")
+def bot_owner(bid): 
+    o = get_at(["bots", bid, "owner"]); return o if isinstance(o, str) else None
+
 def can_read(uid, pp):
     if not pp: return False
     t = pp[0]
+    if t == "bots": return len(pp) > 1
+    if t == "botList": return len(pp) > 1 and pp[1] == uid
+    if t == "botKeys": return len(pp) > 1 and bot_owner(pp[1]) == uid
     if t == "friend": return len(pp) > 1 and pp[1] == uid
     if t in ("friendPub", "friendCodes"): return len(pp) > 1                 # one entry at a time, never the whole list
     if t in ("accsettings", "userKeys", "linkPreviews"): return len(pp) > 1
@@ -171,6 +178,14 @@ def can_read(uid, pp):
 def can_write(uid, pp, value, newtree):
     if not pp: return False
     t = pp[0]
+    if t == "bots":                                                           # public record; made / changed / removed by its owner
+        if len(pp) < 2 or not BOT_RE.match(pp[1]): return False
+        o = bot_owner(pp[1])
+        if o is None: return len(pp) == 2 and isinstance(value, dict) and value.get("owner") == uid
+        return o == uid
+    if t == "botList": return len(pp) > 1 and pp[1] == uid
+    if t == "botKeys": return len(pp) > 1 and bot_owner(pp[1]) == uid
+    if t == "accsettings" and len(pp) > 1 and BOT_RE.match(pp[1]): return bot_owner(pp[1]) == uid
     if t in ("friend", "friendPub"): return len(pp) > 1 and pp[1] == uid
     if t == "friendCodes":                                                    # claim a free code for yourself, release only your own
         if len(pp) != 2 or not FRIEND_RE.match(pp[1]): return False
@@ -196,7 +211,17 @@ def can_write(uid, pp, value, newtree):
             return (not existed) and member(chat, uid, newtree)
         if not member(chat, uid, newtree): return False
         sub = pp[2]
+        if sub == "participants":                                              # a bot can only be added by its owner
+            adds = {}
+            if len(pp) == 4: adds = {pp[3]: value}
+            elif len(pp) == 3 and isinstance(value, dict): adds = value
+            have = get_at(["privateChats", chat, "participants"]) or {}
+            for k, v in adds.items():
+                if k.startswith("bot_") and v and k not in have and bot_owner(k) != uid: return False
+            return True
         if sub == "messages" and len(pp) >= 4:
+            if len(pp) == 4 and isinstance(value, dict) and any(k in value for k in ("botId", "as", "src")): return False     # only the bot API sets these
+            if len(pp) == 5 and pp[4] in ("botId", "as", "src"): return False
             old = get_at(["privateChats", chat, "messages", pp[3]])
             if len(pp) == 4:
                 if old is None: return isinstance(value, dict) and value.get("fromUid") == uid
@@ -260,8 +285,12 @@ def apply_update(uid, updates, trusted=False):
             _apply_to(overlay, pps, {p: v for p, v in ups.items()})
             for p, pp in pps.items():
                 if not can_write(uid, pp, ups[p], overlay): return False, "permission denied: " + p
+        fresh = [(pp[1], pp[3], ups[p]) for p, pp in pps.items() if len(pp) == 4 and pp[0] == "privateChats" and pp[2] == "messages" and isinstance(ups[p], dict) and get_at(pp) is None and ups[p].get("type") != "event"]
         for p, pp in pps.items():
             set_at(pp, ups[p])
+        for chat, key, m in fresh:
+            try: bot_webhooks(chat, key, m)
+            except Exception: pass
         dispatch(list(pps.values()))
         save_soon()
         return True, None
@@ -415,6 +444,152 @@ def lite_newchat(uid, email):
                                "chatList/%s/%s" % (uid, chat): True, "chatList/%s/%s" % (other, chat): True})
     return chat if ok else None
 
+# ---------------------------------------------------------------- bot API (same routes as functions/bots.js)
+class BotError(Exception):
+    def __init__(self, status, msg): super().__init__(msg); self.status = status
+TOKEN_RE = re.compile(r"^qmbot\.(bot_[a-z0-9]{12})\.([A-Za-z0-9_-]{32,64})$")
+BOT_HITS = {}
+def _clean(x, n): return re.sub(r"[\x00-\x1f\x7f\u202a-\u202e\u2066-\u2069]", " ", str(x if x is not None else "")).strip()[:n]
+def _https(u, n):
+    u = str(u if u is not None else "").strip()
+    return u if re.match(r"^https://\S+$", u, re.I) and len(u) <= n else ""
+def _bad(msg, status=400): raise BotError(status, msg)
+
+def bot_auth(tok):
+    m = TOKEN_RE.match((tok or "").strip())
+    if not m: _bad("Missing or malformed bot token.", 401)
+    th = get_at(["botKeys", m.group(1), "th"])
+    if not isinstance(th, str) or not hmac.compare_digest(th, hashlib.sha256(m.group(0).encode()).hexdigest()): _bad("Wrong bot token.", 401)
+    bot = get_at(["bots", m.group(1)])
+    if not isinstance(bot, dict): _bad("This bot was deleted.", 401)
+    return m.group(1), bot
+
+def _in_chat(bid, chat):
+    if not re.match(r"^[\w-]{1,64}$", str(chat or "")): _bad("chat is required.")
+    if get_at(["privateChats", chat, "participants", bid]) is not True: _bad("This bot is not in that chat.", 403)
+
+def bot_view(bid, key, m, names):
+    def who(u):
+        if u not in names: names[u] = display_name(u)
+        return names[u]
+    o = {"id": key, "fromUid": m.get("fromUid"), "from": (m.get("as") or {}).get("name") or who(m.get("fromUid")), "fromBot": m.get("botId") if isinstance(m.get("botId"), str) else None,
+         "fromMe": m.get("fromUid") == bid, "type": m.get("type") or "text", "timestamp": m.get("timestamp") or 0, "edited": bool(m.get("editedAt"))}
+    if m.get("src"): o["src"] = m["src"]
+    if m.get("enc"): o["encrypted"] = True; o["text"] = None
+    else:
+        o["text"] = (m.get("name") or "") if m.get("type") == "file" else (m.get("text") if isinstance(m.get("text"), str) else None)
+        if m.get("type") == "file": o["file"] = {"url": m.get("url", ""), "name": m.get("name", ""), "kind": m.get("kind", "file"), "mime": m.get("mime", ""), "size": m.get("size", 0)}
+    r = m.get("replyTo")
+    if isinstance(r, dict) and r.get("key"): o["replyTo"] = {"key": r["key"], "uid": r.get("uid")}
+    return o
+
+def bot_handle(method, route, q, b, tok):
+    bid, bot = bot_auth(tok)
+    route = method + " " + "/" + route.strip("/")
+    q = {k: (v[0] if isinstance(v, list) else v) for k, v in q.items()}
+    if not isinstance(b, dict): b = {}
+    if route == "GET /me":
+        st = get_at(["accsettings", bid, "settings"]) or {}
+        return {"id": bid, "name": st.get("displayName") or bot.get("name"), "pfp": st.get("pfp", ""), "owner": bot.get("owner"), "created": bot.get("created"), "webhook": bool(get_at(["botKeys", bid, "webhook"]))}
+    if route == "PATCH /me":
+        up = {}
+        if "name" in b:
+            n = _clean(b["name"], 100)
+            if not n: _bad("name can't be empty.")
+            up["accsettings/%s/settings/displayName" % bid] = n; up["bots/%s/name" % bid] = n
+        if "pfp" in b:
+            u = "" if b["pfp"] in ("", None) else _https(b["pfp"], 2000)
+            if b["pfp"] and not u: _bad("pfp must be an https:// address.")
+            up["accsettings/%s/settings/pfp" % bid] = u or None; up["bots/%s/pfp" % bid] = u or None
+        if not up: _bad("Send name and/or pfp.")
+        apply_update(None, up, trusted=True); return {"ok": True}
+    if route == "GET /chats":
+        out = []
+        for chat in list(get_at(["chatList", bid]) or {})[:200]:
+            if get_at(["privateChats", chat, "participants", bid]) is not True: continue
+            cd = get_at(["privateChats", chat, "chatData"]) or {}
+            out.append({"id": chat, "name": cd.get("name", ""), "encrypted": cd.get("encrypted") is True})
+        return {"chats": out}
+    if route == "GET /members":
+        _in_chat(bid, q.get("chat"))
+        return {"members": [{"uid": u, "name": display_name(u), "bot": bool(BOT_RE.match(u))} for u in (get_at(["privateChats", q["chat"], "participants"]) or {})]}
+    if route == "GET /messages":
+        _in_chat(bid, q.get("chat"))
+        try: limit = max(1, min(100, int(q.get("limit") or 30)))
+        except ValueError: limit = 30
+        node = get_at(["privateChats", q["chat"], "messages"]) or {}
+        keys = sorted(node)
+        keys = [k for k in keys if k > q["after"]][:limit] if q.get("after") else keys[-limit:]
+        names = {}
+        return {"messages": [bot_view(bid, k, node[k], names) for k in keys if node[k].get("type") != "event"]}
+    if route == "POST /send":
+        _in_chat(bid, b.get("chat")); chat = b["chat"]
+        now = time.time(); hits = [t for t in BOT_HITS.get(bid, []) if now - t < 10] + [now]; BOT_HITS[bid] = hits
+        if len(hits) > 20: _bad("Slow down: at most 20 messages per 10 seconds.", 429)
+        ts = int(now * 1000); key = push_id()
+        msg = {"fromUid": bid, "botId": bid, "timestamp": ts, "deliveredAt": ts, "type": "text"}
+        f = b.get("file")
+        if f:
+            url = _https(f.get("url"), 300) if isinstance(f, dict) else ""
+            if not url: _bad("file.url must be an https:// address of at most 300 characters.")
+            kind = f.get("kind") if f.get("kind") in ("image", "video", "audio", "file") else "file"
+            nm = _clean(f.get("name") or url.split("/")[-1], 300) or "file"
+            msg.update({"type": "file", "url": url, "name": nm, "kind": kind, "text": nm})
+            if f.get("mime"): msg["mime"] = _clean(f["mime"], 120)
+            if isinstance(f.get("size"), (int, float)): msg["size"] = f["size"]
+            preview = "📎 " + nm
+        else:
+            text = str(b.get("text") if b.get("text") is not None else "")[:4000]
+            if not text.strip(): _bad("text is required.")
+            msg["text"] = text; preview = text[:300]
+        a = b.get("as")
+        if isinstance(a, dict):
+            asd = {}
+            if _clean(a.get("name"), 80): asd["name"] = _clean(a.get("name"), 80)
+            if _https(a.get("pfp"), 600): asd["pfp"] = _https(a.get("pfp"), 600)
+            if asd: msg["as"] = asd
+        if _clean(b.get("src"), 30): msg["src"] = _clean(b.get("src"), 30)
+        r = b.get("replyTo")
+        if isinstance(r, dict) and isinstance(r.get("key"), str):
+            rm = get_at(["privateChats", chat, "messages", r["key"]])
+            if isinstance(rm, dict) and not rm.get("enc"): msg["replyTo"] = {"key": r["key"], "uid": rm.get("fromUid"), "text": str(rm.get("text") or rm.get("name") or "")[:700]}
+        ups = {"privateChats/%s/messages/%s" % (chat, key): msg, "privateChats/%s/lastMessage" % chat: {"fromUid": bid, "text": preview, "timestamp": ts, "id": key}}
+        for u in (get_at(["privateChats", chat, "participants"]) or {}):
+            if u != bid and not BOT_RE.match(u): ups["live/%s/pings/%s" % (u, chat)] = {"id": key, "ts": ts, "from": bid}
+        apply_update(None, ups, trusted=True)
+        return {"id": key, "timestamp": ts}
+    if route in ("PATCH /message", "DELETE /message"):
+        chat = b.get("chat") or q.get("chat"); key = str(b.get("id") or q.get("id") or "")
+        _in_chat(bid, chat)
+        if not re.match(r"^[\w-]{1,40}$", key): _bad("id is required.")
+        m = get_at(["privateChats", chat, "messages", key])
+        if not isinstance(m, dict): _bad("No such message.", 404)
+        if m.get("fromUid") != bid: _bad("A bot can only change its own messages.", 403)
+        if method == "PATCH":
+            text = str(b.get("text") if b.get("text") is not None else "")[:4000]
+            if not text.strip(): _bad("text is required.")
+            if m.get("type") != "text": _bad("Only text messages can be edited.")
+            ups = {"privateChats/%s/messages/%s/text" % (chat, key): text, "privateChats/%s/messages/%s/editedAt" % (chat, key): int(time.time() * 1000)}
+            if get_at(["privateChats", chat, "lastMessage", "id"]) == key: ups["privateChats/%s/lastMessage/text" % chat] = text[:300]
+            apply_update(None, ups, trusted=True); return {"ok": True}
+        apply_update(None, {"privateChats/%s/messages/%s" % (chat, key): None, "privateChats/%s/media/%s" % (chat, key): None}, trusted=True)
+        return {"ok": True}
+    _bad("Unknown route " + route, 404)
+
+def bot_webhooks(chat, key, msg):
+    """New message in a chat: tell every bot in it (with a webhook) about it. Runs in a thread; failures are ignored."""
+    import urllib.request
+    for bid in [u for u in (get_at(["privateChats", chat, "participants"]) or {}) if BOT_RE.match(u) and u != msg.get("botId")]:
+        k = get_at(["botKeys", bid]) or {}
+        url = k.get("webhook"); th = k.get("th")
+        if not isinstance(url, str) or not re.match(r"^https?://", url) or not th: continue
+        body = json.dumps({"event": "message", "bot": bid, "chat": chat, "message": bot_view(bid, key, msg, {})}, separators=(",", ":")).encode()
+        sig = hmac.new(th.encode(), body, hashlib.sha256).hexdigest()
+        def go(url=url, body=body, sig=sig):
+            try: urllib.request.urlopen(urllib.request.Request(url, body, {"Content-Type": "application/json", "X-QM-Signature": sig}), timeout=8).read(1)
+            except Exception: pass
+        threading.Thread(target=go, daemon=True).start()
+
 # ---------------------------------------------------------------- HTTP
 HIDDEN = re.compile(r"(^|/)(server|data|qm-data|functions|android|ios|incoming|docs|\.github|downloads/.*\.(ipa|apk))(/|$)|\.(php|zip|md|py|pyc)$|^secrets|database\.rules", re.I)
 PRIVATE_FLAG = b'<script>window.__QM_PRIVATE=1</script>'
@@ -464,6 +639,7 @@ class H(BaseHTTPRequestHandler):
     def route(self, method):
         u = urlparse(self.path); q = parse_qs(u.query)
         try:
+            if u.path.startswith("/api/bot"): return self.bot_api(method, u.path[8:], q)
             if u.path.startswith("/api/"): return self.api(method, u.path[5:], q)
             if u.path.startswith("/db/"): return self.rest(method, u.path[4:], q)
             if u.path.startswith("/files/"): return self.serve_file(os.path.join(CFG["data"], "files", os.path.basename(unquote(u.path))), download=True)
@@ -500,6 +676,13 @@ class H(BaseHTTPRequestHandler):
         self.send_header("Content-Length", str(len(data))); self.end_headers(); self.wfile.write(data)
 
     # ---- API
+    def bot_api(self, method, sub, q):
+        h = self.headers.get("Authorization") or ""
+        try:
+            body = self.jbody() if method in ("POST", "PATCH", "DELETE", "PUT") else {}
+            return self.send_json(200, bot_handle(method, sub or "/", q, body, h[7:] if h.startswith("Bearer ") else ""))
+        except BotError as e: return self.send_json(e.status, {"error": str(e)})
+
     def api(self, method, name, q):
         if name == "time": return self.send_json(200, {"now": int(time.time() * 1000)})
         if name == "ping": return self.send_json(200, {"ok": True, "server": "quickmessage-private", "version": VERSION, "signup": CFG["signup"]})
