@@ -30,3 +30,20 @@ export const STATE_TEXT = {
   unreachable: ["🟠", "Can't check", "Couldn't reach the database to check the server."],
   private: ["⚪", "Private server", "This device uses a private server, which sends its own notifications and runs the bot API."]
 };
+
+const NOWARN = "qm-srv-nowarn";
+export const warnHidden = () => { try { return localStorage.getItem(NOWARN) === "1"; } catch (_) { return false; } };
+export const hideWarning = () => { try { localStorage.setItem(NOWARN, "1"); } catch (_) { /* ignore */ } };
+
+/** Asks whether the notification worker is up; when it is not, tells the person that notifications can fail for other people too. */
+export async function checkNotificationServer(show, last = {}) {
+  const s = await getServerStatus();
+  const bad = s.state === "offline" || (s.state === "never" && !warnHidden());
+  if (bad && !last.warned) {
+    show(s.state === "offline"
+      ? `The notification server is offline (last seen ${ago(s.age)} ago). Notifications can fail, including for other people: they may not be told about your messages or calls until it is back. Chatting still works.`
+      : "No notification server is running, so push notifications aren't being sent. They can fail for other people too: they may not be told about your messages or calls. (Using Firebase Cloud Functions instead? Open Account to hide this.)");
+  }
+  last.warned = bad; last.state = s.state;
+  return s;
+}

@@ -9,8 +9,9 @@
   <script src="js/themeboot.js"></script>
 </head>
 <body>
-<div class="shell"><main style="max-width:34rem;margin:0 auto;padding:1rem">
-  <h1>QuickMessage status</h1>
+<div class="shell">
+  <header class="topbar"><a href="account.html" class="icon-btn" aria-label="Back" data-icon="back"></a><h1 class="brand">Status</h1></header>
+  <main style="max-width:34rem;margin:0 auto;padding:1rem">
   <section class="card">
     <h2 style="margin-top:0">Notification &amp; bot server</h2>
     <p id="big" style="font-size:1.5rem;margin:.2rem 0">…</p>
@@ -24,7 +25,9 @@
   </section>
   <p class="muted" style="font-size:.8rem">Checks again every 15 seconds. The server reports every 30 seconds; it counts as down after about 100 seconds of silence.</p>
 </main></div>
+<script type="module" src="js/bars.js"></script>
 <script type="module">
+import { hydrateIcons } from "./js/ui.js"; import { markReady } from "./js/embed.js"; hydrateIcons(); markReady();   // inside the app the shell reloads pages that never say they are ready
 import { getServerStatus, ago, STATE_TEXT } from "./js/serverstatus.js";
 const $ = id => document.getElementById(id);
 let lastTs = 0, changedAt = 0;

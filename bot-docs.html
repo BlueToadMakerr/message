@@ -4,7 +4,7 @@
 <link rel="icon" href="icons/icon.svg" type="image/svg+xml"><link rel="stylesheet" href="style.css"><script src="js/themeboot.js"></script></head>
 <body><div class="shell">
 <header class="topbar"><a href="bots.html" class="icon-btn" aria-label="Back to bots" data-icon="back"></a><h1 class="brand">Bot docs</h1></header>
-<main>
+<main class="doc-page">
 <section class="card"><h2>Quick start</h2>
 <p>Make a bot in <strong>Account → Bots</strong> and keep its token. In a chat open <em>Chat options → Add one of my bots…</em>. Your program talks to your own worker (<code>worker/</code>) <strong>through the database</strong>: it writes a request, the worker processes it and writes the answer. Nothing is exposed and the web host isn't involved. Bots only work while the worker runs; the Account, Bots and status pages show whether it is up.</p>
 <pre class="dev-pre">from qmbot import QMBot      # docs/bots/qmbot.py  (pip install requests)
@@ -28,4 +28,7 @@ for key, ev in bot.events(bot.latest_event_key()): print(ev["message"]["from"], 
 <p>Instead of reading the event feed you can set an https address on the bot (Edit) and each new message in its chats is POSTed there as <code>{event, bot, chat, message}</code> with <code>X-QM-Signature</code> (HMAC-SHA256 of the body; key = SHA-256 hex of your token). </p>
 <h2>Limits and safety</h2>
 <p>20 posts per 10 seconds, 4000 characters. Bots can't read end-to-end encrypted messages and what they post in an encrypted chat isn't encrypted. The token is the bot's password: only add bots you control, and make a new token if one leaks. A ready-made Discord bridge is in <code>docs/bots/discord_bridge.py</code>.</p></section>
-</main></div><script type="module" src="js/bars.js"></script></body></html>
+</main></div>
+<script type="module" src="js/bars.js"></script>
+<script type="module">import { hydrateIcons } from "./js/ui.js"; import { markReady } from "./js/embed.js"; hydrateIcons(); markReady();</script>
+</body></html>

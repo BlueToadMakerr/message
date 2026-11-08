@@ -698,6 +698,11 @@ onAuthStateChanged(auth, async user => {
   initShell(user.uid);
   accountLink.onclick = e => { if (e.metaKey || e.ctrlKey || e.shiftKey) return; e.preventDefault(); QM.openPane("account"); };
   setupNotifications(user.uid).catch(err => console.error("Notification setup failed", err));
+  // Is the notification server (worker/) up? If not, say so: notifications can fail for other people too.
+  import("./serverstatus.js").then(m => {
+    const last = {}, check = () => m.checkNotificationServer((t) => toast(t, "error", 15000), last).catch(() => {});
+    setTimeout(check, 4000); clearInterval(window.__qmSrvTimer); window.__qmSrvTimer = setInterval(check, 5 * 60 * 1000);
+  });
   try { maybeShowTour(user, { openAccount: () => QM.openPane("account") }); } catch (err) { console.error("Welcome tour failed", err); }
 });
 

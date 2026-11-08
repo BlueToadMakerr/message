@@ -5,6 +5,7 @@ import { QM, markReady } from "./embed.js";
 import { listBots, createBot, saveBot, regenerateToken, deleteBot, apiBase } from "./bots.js";
 
 hydrateIcons();
+markReady();                                          // tell the app shell the page is up right away (a later error must never leave it on "loading")
 const $ = id => document.getElementById(id);
 const el = (tag, props = {}, ...kids) => { const e = Object.assign(document.createElement(tag), props); e.append(...kids); return e; };
 let me = null, editing = null;                        // editing: bot id, "" for a new one
@@ -81,4 +82,3 @@ $("edSave").onclick = async () => {
   } catch (e) { $("edErr").textContent = e.message || "That didn't work."; }
 };
 onAuthStateChanged(auth, u => { me = u && u.uid; if (me) paint(); });
-markReady();

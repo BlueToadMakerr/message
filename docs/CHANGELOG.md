@@ -2,6 +2,11 @@
 
 Newest first. Older rounds (1–43) are kept below exactly as they were written.
 
+## 1.55.1 — Bot pages no longer reload forever; start-up warning when notifications are down
+
+- **Fix:** the Bot docs page (and the Status page) never told the app shell they were ready, so the shell's watchdog kept reloading them (the same bug plugin-docs had). Both now report ready, draw their back button, and the Bots page reports ready first so a later error can't leave it on "loading". Tested inside the shell past the 15 s watchdog.
+- **Start-up check:** when the app opens (and every 5 minutes) it checks the worker's heartbeat. If the notification server is offline, or has never reported in, a message says that **notifications can fail, including for other people** (they may not be told about your messages or calls). People using Cloud Functions instead of the worker can hide the "never ran" warning from Account → Bots. Not shown on private servers.
+
 ## 1.55.0 — Bots talk to the worker through the database
 
 - **Bots use the Firebase database, not a web address.** A bot writes a request to `botInbox/{bot}/{request}`, the Python worker processes it and writes the answer to `botOutbox`, and new messages in the bot's chats are fed to `botEvents`. Nothing to expose (no open port, tunnel or public address), and nothing hits the web host. **Protected writes:** the database rules only accept a request that carries the bot's real token, nobody can read the inbox, and only the worker (Admin SDK) writes to chats for the bot. Answers and events can only be read by whoever knows their random key. Retrying a request is safe, answers are cleaned up after 5 minutes, events after an hour.
