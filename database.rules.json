@@ -35,6 +35,54 @@
         "$other":  { ".validate": false }
       }
     },
+    // Heartbeat of the worker (worker/qm_worker.py), written every 30 s with the Admin SDK. Anyone may read it (it only holds counters),
+    // so status.html works without signing in. Nobody can write it through the rules.
+    "serverStatus": { ".read": true, ".write": false },
+
+    // ---- how bots talk to the worker, through the database (no web address needed; see worker/README.md and docs/BOTS.md)
+    // botInbox/{botId}/{reqId}   a bot's request. Nobody signs in: the rules only allow the write when the request carries the bot's real token,
+    //                            so only the bot can put anything here. Nobody can read it; the worker answers it and deletes it.
+    // botOutbox/{botId}/{reqId}  the worker's answer. The 20+ random characters of reqId are the key to read it (it can't be listed).
+    // botEvents/{botId}/{sha256(token)}/{key}   new messages in the bot's chats, written by the worker. The path holds the key to read it.
+    "botInbox": {
+      "$botId": {
+        "$reqId": {
+          ".write": "$botId.matches(/^bot_[a-z0-9]{12}$/) && $reqId.matches(/^[A-Za-z0-9_-]{20,64}$/) && !data.exists() && newData.exists() && newData.child('token').isString() && newData.child('token').val() === root.child('botKeys').child($botId).child('token').val()",
+          ".validate": "newData.hasChildren(['token', 'op', 'ts'])",
+          "token":   { ".validate": "newData.isString() && newData.val().length <= 100" },
+          "op":      { ".validate": "newData.isString() && newData.val().matches(/^(me|setProfile|chats|members|messages|send|edit|delete)$/)" },
+          "ts":      { ".validate": "newData.isNumber()" },
+          "chat":    { ".validate": "newData.isString() && newData.val().length <= 64" },
+          "id":      { ".validate": "newData.isString() && newData.val().length <= 40" },
+          "after":   { ".validate": "newData.isString() && newData.val().length <= 64" },
+          "limit":   { ".validate": "newData.isNumber()" },
+          "text":    { ".validate": "newData.isString() && newData.val().length <= 4000" },
+          "name":    { ".validate": "newData.isString() && newData.val().length <= 100" },
+          "pfp":     { ".validate": "newData.isString() && newData.val().length <= 2000" },
+          "src":     { ".validate": "newData.isString() && newData.val().length <= 30" },
+          "as":      { "name": { ".validate": "newData.isString() && newData.val().length <= 80" }, "pfp": { ".validate": "newData.isString() && newData.val().length <= 600" }, "$o": { ".validate": false } },
+          "replyTo": { "key": { ".validate": "newData.isString() && newData.val().length <= 64" }, "$o": { ".validate": false } },
+          "file":    { "url": { ".validate": "newData.isString() && newData.val().length <= 300" }, "name": { ".validate": "newData.isString() && newData.val().length <= 300" },
+                       "kind": { ".validate": "newData.isString() && newData.val().length <= 10" }, "mime": { ".validate": "newData.isString() && newData.val().length <= 120" },
+                       "size": { ".validate": "newData.isNumber()" }, "$o": { ".validate": false } },
+          "$other":  { ".validate": false }
+        }
+      }
+    },
+    "botOutbox": {
+      "$botId": {
+        "$reqId": {
+          ".read": "$reqId.matches(/^[A-Za-z0-9_-]{20,64}$/)",
+          ".write": "!newData.exists()"
+        }
+      }
+    },
+    "botEvents": {
+      "$botId": {
+        "$feed": { ".read": "$feed.matches(/^[0-9a-f]{64}$/)" }
+      }
+    },
+
     // botList/{uid}/{botId}: which bots you own (only you can see it)
     "botList": {
       "$uid": {
@@ -48,6 +96,8 @@
         ".read": "auth != null && root.child('bots').child($botId).child('owner').val() === auth.uid",
         ".write": "auth != null && root.child('bots').child($botId).child('owner').val() === auth.uid",
         "th":      { ".validate": "newData.isString() && newData.val().matches(/^[0-9a-f]{64}$/)" },
+        // The token itself: the rules below compare it with the one in a bot's request (rules can't hash). Only the owner can read it.
+        "token":   { ".validate": "newData.isString() && newData.val().matches(/^qmbot\\.bot_[a-z0-9]{12}\\.[A-Za-z0-9_-]{32,64}$/)" },
         "webhook": { ".validate": "newData.isString() && newData.val().length <= 300 && newData.val().matches(/^https:\\/\\/.*/)" },
         "$other":  { ".validate": false }
       }

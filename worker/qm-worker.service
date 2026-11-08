@@ -1,0 +1,19 @@
+# Keeps the worker running and starts it at boot (Linux with systemd).
+#   1. edit User, WorkingDirectory and the paths below   2. sudo cp qm-worker.service /etc/systemd/system/
+#   3. sudo systemctl daemon-reload && sudo systemctl enable --now qm-worker      (logs: journalctl -u qm-worker -f)
+[Unit]
+Description=QuickMessage worker (push notifications + bots)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=pi
+WorkingDirectory=/home/pi/quickmessage/worker
+Environment=QM_APP_URL=https://msg.infinityfreeapp.com/
+Environment=QM_PUBLIC_URL=https://bots.example.com/api/bot
+ExecStart=/usr/bin/python3 qm_worker.py --key /home/pi/serviceAccount.json
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

@@ -18,6 +18,10 @@
   </header>
   <main>
     <section class="card">
+      <div id="srvStatus" class="srv-status">Checking the notification &amp; bot server…</div>
+      <script type="module" src="js/serverstatus-card.js"></script>
+    </section>
+    <section class="card">
       <h2>Your bots</h2>
       <p class="muted" style="margin-top:0">A bot is an account a program controls: it can post in the chats you add it to, and (with a webhook or by asking) read the plain messages there. Use it to link chats with other services, such as Discord. A bot's token is its password: anyone who has it can act as the bot.</p>
       <div id="list" class="stack"></div>
@@ -37,7 +41,8 @@
     </section>
     <section class="card">
       <h2>Connecting a bot</h2>
-      <p class="muted" style="margin-top:0">Your program sends requests to this address with the header <code>Authorization: Bearer &lt;token&gt;</code>. It runs on Firebase, not on the web host, so it keeps working even where the host blocks automated requests.</p>
+      <p class="muted" style="margin-top:0" id="apiHow"></p>
+      <p class="muted" style="margin-top:0">Bots are answered by your own notification &amp; bot server (<code>worker/</code>), not by the web host, so this works even where the host blocks automated requests. Bots only work while that server is running (see the status above).</p>
       <pre class="dev-pre" id="apiUrl"></pre>
       <p class="muted" style="margin-bottom:0"><a href="bot-docs.html">Read the bot docs</a> for every request and a ready-made Discord bridge.</p>
     </section>

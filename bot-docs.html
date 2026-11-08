@@ -6,22 +6,26 @@
 <header class="topbar"><a href="bots.html" class="icon-btn" aria-label="Back to bots" data-icon="back"></a><h1 class="brand">Bot docs</h1></header>
 <main>
 <section class="card"><h2>Quick start</h2>
-<p>Make a bot in <strong>Account → Bots</strong> and keep its token. In a chat open <em>Chat options → Add one of my bots…</em>. Your program then calls the API with <code>Authorization: Bearer &lt;token&gt;</code>. The API runs on Firebase, not on the web host, so a host that blocks automated requests doesn't matter.</p>
-<pre class="dev-pre">curl -X POST "$QM_API/send" -H "Authorization: Bearer $QM_TOKEN" -H "Content-Type: application/json" \
-  -d '{"chat":"CHAT_ID","text":"Hello!","as":{"name":"Zed","pfp":"https://example.com/z.png"},"src":"Discord"}'</pre></section>
+<p>Make a bot in <strong>Account → Bots</strong> and keep its token. In a chat open <em>Chat options → Add one of my bots…</em>. Your program talks to your own worker (<code>worker/</code>) <strong>through the database</strong>: it writes a request, the worker processes it and writes the answer. Nothing is exposed and the web host isn't involved. Bots only work while the worker runs; the Account, Bots and status pages show whether it is up.</p>
+<pre class="dev-pre">from qmbot import QMBot      # docs/bots/qmbot.py  (pip install requests)
+bot = QMBot("qmbot.bot_xxx.yyy", "https://YOURPROJECT-default-rtdb.firebaseio.com")
+bot.send("CHAT_ID", "Hello!", as_name="Zed", as_pfp="https://example.com/z.png", src="Discord")
+for key, ev in bot.events(bot.latest_event_key()): print(ev["message"]["from"], ev["message"]["text"])</pre></section>
+<section class="card"><h2>The protocol</h2>
+<p>Request: <code>PUT &lt;db&gt;/botInbox/&lt;botId&gt;/&lt;reqId&gt;.json</code> with <code>{token, op, ts, ...arguments}</code> (<code>reqId</code> = 20-64 random characters; the database rules only accept it with the bot's real token). Answer: <code>GET &lt;db&gt;/botOutbox/&lt;botId&gt;/&lt;reqId&gt;.json</code> → <code>{status, body}</code> (<code>body</code> is a JSON string), then DELETE it. New messages: <code>GET &lt;db&gt;/botEvents/&lt;botId&gt;/&lt;sha256 of token&gt;.json?orderBy="$key"&amp;startAt="&lt;last key&gt;"</code>. Ops: <code>me, setProfile, chats, members, messages, send, edit, delete</code> (arguments as below).</p></section>
 <section class="card"><h2>Requests</h2>
 <table><tr><th>Request</th><th>What it does</th></tr>
-<tr><td><code>GET /me</code></td><td>The bot's profile</td></tr>
-<tr><td><code>PATCH /me {name, pfp}</code></td><td>The bot changes its own default name / picture (https address)</td></tr>
-<tr><td><code>GET /chats</code></td><td>Chats the bot is in</td></tr>
-<tr><td><code>GET /members?chat=</code></td><td>Members of a chat</td></tr>
-<tr><td><code>GET /messages?chat=&amp;after=&amp;limit=</code></td><td>Messages, oldest first (encrypted ones have <code>encrypted:true</code> and no text)</td></tr>
-<tr><td><code>POST /send {chat, text, as, src, replyTo, file}</code></td><td>Post a message. <code>as:{name,pfp}</code> changes the name/picture for that message; <code>src</code> says where it came from</td></tr>
-<tr><td><code>PATCH /message</code>, <code>DELETE /message</code></td><td>Edit / delete the bot's own messages</td></tr></table></section>
+<tr><td><code>me</code> (HTTP: <code>GET /me</code>)</td><td>The bot's profile</td></tr>
+<tr><td><code>setProfile {name, pfp}</code></td><td>The bot changes its own default name / picture (https address)</td></tr>
+<tr><td><code>chats</code></td><td>Chats the bot is in</td></tr>
+<tr><td><code>members {chat}</code></td><td>Members of a chat</td></tr>
+<tr><td><code>messages {chat, after, limit}</code></td><td>Messages, oldest first (encrypted ones have <code>encrypted:true</code> and no text)</td></tr>
+<tr><td><code>send {chat, text, as, src, replyTo, file}</code></td><td>Post a message. <code>as:{name,pfp}</code> changes the name/picture for that message; <code>src</code> says where it came from</td></tr>
+<tr><td><code>edit {chat,id,text}</code>, <code>delete {chat,id}</code></td><td>Edit / delete the bot's own messages</td></tr></table></section>
 <section class="card"><h2>Who posted what</h2>
 <p>Every bot message carries <code>botId</code>. With <code>as</code> the chat shows another name and picture, plus a <strong>BOT</strong> badge with the real bot's name and the <code>src</code>. People can't write these fields, so a bot's identity can't be faked. This is how you link a chat with Discord: post each Discord message as that Discord user.</p>
 <h2>Webhook</h2>
-<p>Set an https address on the bot (Edit) and each new message in its chats is POSTed there as <code>{event, bot, chat, message}</code> with <code>X-QM-Signature</code> (HMAC-SHA256 of the body; key = SHA-256 hex of your token). Or poll <code>GET /messages?after=</code>.</p>
+<p>Instead of reading the event feed you can set an https address on the bot (Edit) and each new message in its chats is POSTed there as <code>{event, bot, chat, message}</code> with <code>X-QM-Signature</code> (HMAC-SHA256 of the body; key = SHA-256 hex of your token). </p>
 <h2>Limits and safety</h2>
 <p>20 posts per 10 seconds, 4000 characters. Bots can't read end-to-end encrypted messages and what they post in an encrypted chat isn't encrypted. The token is the bot's password: only add bots you control, and make a new token if one leaks. A ready-made Discord bridge is in <code>docs/bots/discord_bridge.py</code>.</p></section>
 </main></div><script type="module" src="js/bars.js"></script></body></html>

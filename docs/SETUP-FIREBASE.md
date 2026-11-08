@@ -15,6 +15,8 @@ Push notifications and call rings are sent by two Cloud Functions in `functions/
 3. From the project folder: `cd functions && npm install && cd .. && firebase deploy --only functions,database`.
 4. Region: `us-central1` by default. If your database is in another region set `QM_REGION` / `QM_DB_INSTANCE` (the database instance name) in `functions/.env`. Site address for notification links: `QM_APP_URL` (default `https://msg.infinityfreeapp.com/`).
 
+> **On the free (Spark) plan?** Cloud Functions need the Blaze plan. Without it, run **`worker/`** on a computer you control instead (push notifications + bot API in Python, with a status page): see `worker/README.md`. Use the worker *or* the functions, not both.
+
 > **Notifications stopped arriving?** Google switched off the **Node.js 20** runtime for Cloud Functions on **2026-10-30**: functions deployed with it stop running and can't be updated until redeployed. The functions now use **Node.js 22** (`functions/package.json`, `firebase.json`). Fix: `npm i -g firebase-tools@latest`, then `cd functions && npm install && cd .. && firebase deploy --only functions`. Check with `firebase functions:list` (the runtime column should say `nodejs22`) and `firebase functions:log`.
 
 The functions skip system lines, the sender, and people who already read the message; encrypted chats get a generic "🔒 New message"; dead device tokens are removed. Photos appear in the notification when they were uploaded to a public file host and the chat is not encrypted.

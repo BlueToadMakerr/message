@@ -2,6 +2,22 @@
 
 Newest first. Older rounds (1–43) are kept below exactly as they were written.
 
+## 1.55.0 — Bots talk to the worker through the database
+
+- **Bots use the Firebase database, not a web address.** A bot writes a request to `botInbox/{bot}/{request}`, the Python worker processes it and writes the answer to `botOutbox`, and new messages in the bot's chats are fed to `botEvents`. Nothing to expose (no open port, tunnel or public address), and nothing hits the web host. **Protected writes:** the database rules only accept a request that carries the bot's real token, nobody can read the inbox, and only the worker (Admin SDK) writes to chats for the bot. Answers and events can only be read by whoever knows their random key. Retrying a request is safe, answers are cleaned up after 5 minutes, events after an hour.
+- `docs/bots/qmbot.py`: a small client (`send`, `messages`, `events`, `set_profile`, ...); `docs/bots/discord_bridge.py` now uses it. The HTTP API still exists on the private server and with the worker's `--http-api`.
+- The token is now stored for the rules to compare (rules can't hash): only the bot's owner can read it, and the Bots page gets **Show token**. **Bots made before this version need "New token".**
+- **Republish `database.rules.json`** (new nodes `botInbox`, `botOutbox`, `botEvents`, token in `botKeys`). The new rules were validated as JSON but could not be run against the Firebase rules emulator here (blocked download): after republishing, check that a bot request is answered, and that a request with a wrong token gets "permission denied".
+- Worker 1.1.0: 64 logic checks plus the client, against a fake database.
+
+## 1.54.0 — Run notifications and bots yourself (no Blaze plan), plus a status page
+
+- **`worker/`**: a Python program (`qm_worker.py`, Firebase Admin SDK) that does what the Cloud Functions did, on a computer you run: push notifications for messages and call rings (Android app, browsers/PWA), the **bot API** (`/api/bot/...`, now served by it) and bots' signed **webhooks**. Cloud Functions need the Blaze plan, so on the free plan nothing was sending push at all. Use the worker *or* `functions/`, never both (duplicate notifications). Setup: `worker/README.md`, systemd unit included. Webhooks are only sent to `https` addresses that resolve to public IPs, so nobody can aim your worker at your own network.
+- **Status page** (`status.html`, no sign-in needed): the worker writes a heartbeat to `serverStatus` every 30 s. The page, the Account page and the Bots page show **Online / Offline** (offline = silent for about 100 s) and say clearly that push notifications, call rings and bot calls won't work while it is down. Counters (pushes, rings, bot calls, webhooks, last error) are shown too.
+- The Bots page shows the worker's public address (`--public-url`). The Cloud Function `botApi` still exists for Blaze users.
+- New rule node `serverStatus` (public read, nobody can write through rules): **republish `database.rules.json`**.
+- Not run against real Firebase in the development environment: `python3 worker/test_worker.py` covers the logic with a fake database (see worker/test_worker.py).
+
 ## 1.53.0 — Bot accounts
 
 - **Bots.** Account → Bots makes bot accounts (name, picture, token shown once, only its hash is stored, "New token" replaces a leaked one). In a chat: Chat options → **Add one of my bots…** (only the bot's owner can add it; anyone in the chat can remove it). Bots show up as members with a **BOT** badge.

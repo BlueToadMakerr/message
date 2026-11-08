@@ -1027,3 +1027,9 @@ button.pw-item{cursor:pointer}button.pw-item:hover{background:var(--surface-2)}
 .messages .msg.bot-msg .msg-name { display: block; }
 .tag.bot-tag { background: var(--accent); color: #fff; font-size: .62rem; padding: .05rem .35rem; letter-spacing: .03em; }
 .bot-via { font-weight: 500; opacity: .75; margin-left: .3rem; }
+
+/* notification / bot server status */
+.srv-status { border-radius: 10px; padding: .55rem .75rem; margin: .3rem 0 .6rem; border: 1px solid var(--border, #8883); font-size: .9rem; display: grid; gap: .2rem; }
+.srv-status.online { background: #16a34a1f; border-color: #16a34a; }
+.srv-status.offline { background: #dc26261f; border-color: #dc2626; }
+.srv-status.unreachable, .srv-status.never { background: #f59e0b1f; border-color: #f59e0b; }

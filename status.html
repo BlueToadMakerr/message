@@ -1,0 +1,48 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="system">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Status · QuickMessage</title>
+  <link rel="icon" href="icons/icon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="style.css">
+  <script src="js/themeboot.js"></script>
+</head>
+<body>
+<div class="shell"><main style="max-width:34rem;margin:0 auto;padding:1rem">
+  <h1>QuickMessage status</h1>
+  <section class="card">
+    <h2 style="margin-top:0">Notification &amp; bot server</h2>
+    <p id="big" style="font-size:1.5rem;margin:.2rem 0">…</p>
+    <p id="why" class="muted"></p>
+    <p id="last" class="muted"></p>
+    <dl id="stats" class="muted" style="display:grid;grid-template-columns:auto 1fr;gap:.2rem .8rem;margin:0"></dl>
+  </section>
+  <section class="card">
+    <h2 style="margin-top:0">The site</h2>
+    <p class="muted" style="margin:0">If you can read this page, the website is up. Chatting, calls and plugins don't depend on the notification server.</p>
+  </section>
+  <p class="muted" style="font-size:.8rem">Checks again every 15 seconds. The server reports every 30 seconds; it counts as down after about 100 seconds of silence.</p>
+</main></div>
+<script type="module">
+import { getServerStatus, ago, STATE_TEXT } from "./js/serverstatus.js";
+const $ = id => document.getElementById(id);
+let lastTs = 0, changedAt = 0;
+async function tick() {
+  const s = await getServerStatus();
+  if (s.data) {                                        // a heartbeat that changed since the last check is proof of life, whatever this device's clock says
+    if (s.data.ts !== lastTs) { lastTs = s.data.ts; changedAt = Date.now(); if (s.state === "offline" && lastTs && changedAt && window.__seen) s.state = "online"; }
+    else if (s.state === "online" && Date.now() - changedAt > 100000) s.state = "offline";
+    window.__seen = true;
+  }
+  const [dot, name, text] = STATE_TEXT[s.state];
+  $("big").textContent = `${dot} ${name}`; $("why").textContent = text;
+  $("last").textContent = s.data ? `Last heartbeat ${ago(s.age)} ago.` : "";
+  const d = s.data, dl = $("stats"); dl.replaceChildren();
+  if (d) for (const [k, v] of [["Version", d.version], ["Ran for (until last heartbeat)", d.started ? ago(Math.max(0, (d.ts - d.started) / 1000)) : "?"], ["Push notifications sent", d.pushed], ["Push failures", d.pushFailed], ["Call rings", d.rings], ["Bot calls", d.botCalls], ["Webhooks", d.webhooks + (d.webhookFailed ? ` (${d.webhookFailed} failed)` : "")], ["Last error", d.lastError || "none"]]) {
+    dl.append(Object.assign(document.createElement("dt"), { textContent: k }), Object.assign(document.createElement("dd"), { textContent: String(v ?? "") }));
+  }
+}
+tick(); setInterval(tick, 15000);
+</script>
+</body></html>

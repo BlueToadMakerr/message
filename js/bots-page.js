@@ -9,16 +9,21 @@ const $ = id => document.getElementById(id);
 const el = (tag, props = {}, ...kids) => { const e = Object.assign(document.createElement(tag), props); e.append(...kids); return e; };
 let me = null, editing = null;                        // editing: bot id, "" for a new one
 
-$("apiUrl").textContent = apiBase();
+import("./mode.js").then(m => {
+  $("apiUrl").textContent = apiBase();
+  $("apiHow").textContent = m.PRIVATE
+    ? "Your program sends requests to this address with the header Authorization: Bearer <token>."
+    : "Database address. Your program writes its requests into the database (botInbox) with its token, and the worker answers (botOutbox) and passes on new messages (botEvents): nothing to open or expose. docs/bots/qmbot.py is a ready-made client.";
+});
 
 /** Shows a token once, with a copy button. Resolves when the person closes it. */
-function showToken(title, id, token) {
+function showToken(title, id, token, again = false) {
   return new Promise(resolve => {
     const dlg = el("dialog", { className: "modal small" }), form = el("form", { method: "dialog" });
     const box = el("pre", { className: "dev-pre", textContent: token, style: "word-break:break-all;white-space:pre-wrap;user-select:all" });
     const copy = el("button", { type: "button", className: "btn", textContent: "Copy token" }); copy.onclick = async () => { await copyText(token); toast("Token copied.", "success", 1500); };
     form.append(el("h2", { textContent: title }),
-      el("p", { className: "modal-text", textContent: `Bot id: ${id}\n\nThis is the bot's password. It is shown only now and QuickMessage keeps only a fingerprint of it, so copy it somewhere safe. Anyone who has it can post as this bot and read the plain messages in its chats. If it leaks, make a new one (the old one stops working at once).` }),
+      el("p", { className: "modal-text", textContent: `Bot id: ${id}\n\nThis is the bot's password. Anyone who has it can post as this bot and read the plain messages in its chats. Only you (its owner) can see it here. If it leaks, make a new one (the old one stops working at once).` }),
       box, el("div", { className: "modal-actions" }, copy, el("button", { type: "submit", className: "btn primary", textContent: "I saved it" })));
     dlg.append(form); document.body.append(dlg);
     dlg.addEventListener("close", () => { dlg.remove(); resolve(); });
@@ -40,6 +45,8 @@ async function paint() {
     const btns = el("div", { className: "row wrap", style: "margin-top:.4rem" });
     const add = (t, fn, cls = "") => { const x = el("button", { type: "button", className: "btn small " + cls, textContent: t }); x.onclick = fn; btns.append(x); };
     add("Copy id", async () => { await copyText(b.id); toast("Bot id copied.", "success", 1500); });
+    if (b.token) add("Show token", () => showToken("Token", b.id, b.token, true));
+    else row.append(el("div", { className: "plugin-issue warn", role: "alert", textContent: "This bot was made before bots talked through the database. Press “New token” to get a token that works." }));
     add("Edit", () => openEditor(b));
     add("New token", async () => {
       if (!await confirmDialog({ title: "Make a new token?", message: "The old token stops working immediately. Update your program with the new one.", okText: "Make new token", danger: true })) return;
