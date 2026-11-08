@@ -655,6 +655,8 @@ class MainActivity : Activity() {
         /** The video being popped out: Android's PiP window takes its shape (updated as the video's size changes). */
         @JavascriptInterface fun setPipRatio(w: Int, h: Int) = runOnUiThread { pipRatio = if (w > 0 && h > 0) Rational(w.coerceIn(1, 4000), h.coerceIn(1, 4000)) else Rational(16, 9); updatePip() }
 
+        @JavascriptInterface fun dataSaverState(): String = DataSaver.state()
+        @JavascriptInterface fun setDataSaverMode(mode: String) { DataSaver.mode = mode }
         @JavascriptInterface fun notifyEnabled() = Store(this@MainActivity).notify
         @JavascriptInterface fun canNotify() = Build.VERSION.SDK_INT < 33 || checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED
         @JavascriptInterface fun setNotify(on: Boolean) = runOnUiThread {

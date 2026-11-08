@@ -28,7 +28,7 @@ class ApiException(val code: Int, message: String) : Exception(message)
 /** Persistent app state: the signed-in account, handed over by the website (js/app-bridge.js). */
 class Store(ctx: Context) {
     private val p = ctx.getSharedPreferences("quickmessage", Context.MODE_PRIVATE)
-    init { Config.init(ctx) }
+    init { Config.init(ctx); DataSaver.ctx = ctx.applicationContext }
     var refreshToken: String?
         get() = p.getString("rt", null)
         set(v) { p.edit().putString("rt", v).apply() }

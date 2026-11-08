@@ -80,8 +80,11 @@ class FirebaseBackend:
         m.send(msg)
 
     def is_dead(self, e):
+        """The device token is gone for good (app removed / token replaced). An INVALID_ARGUMENT only counts when it is about the token:
+        otherwise a bad payload would wipe every working token."""
         m = self.messaging
-        return isinstance(e, (m.UnregisteredError, m.SenderIdMismatchError)) or e.__class__.__name__ == "InvalidArgumentError"
+        if isinstance(e, (m.UnregisteredError, m.SenderIdMismatchError)): return True
+        return e.__class__.__name__ == "InvalidArgumentError" and "registration token" in str(e).lower()
 
 
 # ---------------------------------------------------------------- the worker
@@ -95,13 +98,19 @@ class Worker:
         self.started = int(time.time() * 1000)
         self.stats = {"pushed": 0, "pushFailed": 0, "rings": 0, "webhooks": 0, "webhookFailed": 0, "botCalls": 0, "events": 0, "lastError": "", "lastEvent": 0}
         self.listeners, self.listener_started, self.sweeps = [], 0, 0
+        self.offset = 0                                              # database clock minus this computer's clock (ms), measured at each heartbeat
+        self.stats["clockOffsetMs"] = 0; self.stats["lastPushError"] = ""
+
+    def server_now(self): return time.time() * 1000 + self.offset
 
     # ---- events from live/{uid}/{pings|rings}/{chat}
     def on_event(self, ev):
         try:
             self.stats["events"] += 1
-            for uid, kind, chat, val in self.flatten(getattr(ev, "path", "/"), getattr(ev, "data", None)):
-                self.pool.submit(self.safe, self.handle_entry, uid, kind, chat, val)
+            path = getattr(ev, "path", "/")
+            live = str(path).strip("/") != ""                      # a change that just happened (not the whole tree sent when the listener starts)
+            for uid, kind, chat, val in self.flatten(path, getattr(ev, "data", None)):
+                self.pool.submit(self.safe, self.handle_entry, uid, kind, chat, val, live)
         except Exception as e: self.err("event", e)
 
     # ---- bot requests: botInbox/{bot}/{reqId}
@@ -164,15 +173,17 @@ class Worker:
         walk(parts, data)
         return out
 
-    def handle_entry(self, uid, kind, chat, v):
-        now = time.time() * 1000
+    def handle_entry(self, uid, kind, chat, v, live=False):
+        """live=True: the change just happened, so it is handled whatever its timestamp says (a wrong clock must never swallow a call).
+        Otherwise (the snapshot sent at start-up) only recent ones are handled, judged by the database's clock."""
+        now = self.server_now()
         if kind == "ping":
             mid, ts = v.get("id"), v.get("ts")
-            if not isinstance(mid, str) or not isinstance(ts, (int, float)) or now - ts > self.catchup * 1000: return
+            if not isinstance(mid, str) or not isinstance(ts, (int, float)) or (not live and now - ts > self.catchup * 1000): return
             if not self.first_time(("ping", uid, chat, mid)): return
             return self.on_ping(uid, chat, mid, v)
         rid, ts = v.get("ringId"), v.get("createdAt")
-        if not isinstance(rid, str) or not isinstance(ts, (int, float)) or abs(now - ts) > 45000: return
+        if not isinstance(rid, str) or not isinstance(ts, (int, float)) or (not live and abs(now - ts) > 45000): return
         if not self.first_time(("ring", uid, chat, rid)): return
         self.on_ring(uid, chat, v)
 
@@ -204,9 +215,9 @@ class Worker:
                 else: self.be.send_push(tok, "web", build())
                 acc += 1
             except Exception as e:
-                fail += 1
+                fail += 1; self.stats["lastPushError"] = f"{e.__class__.__name__}: {str(e)[:100]}"
                 if self.be.is_dead(e): self.be.update({f"FCM/{uid}/{tok}": None})
-                else: log("push failed", uid, e.__class__.__name__)
+                else: log("push failed", uid, self.stats["lastPushError"])
         self.stats["pushed"] += acc; self.stats["pushFailed"] += fail
         return acc, fail, len(tokens)
 
@@ -245,43 +256,55 @@ class Worker:
         self.push_to(uid, build, {"type": "msg", "chatId": chat, "msgId": mid, "from": frm})
 
     def on_ring(self, uid, chat, ring):
+        """A ring was written: push to the person's devices and ALWAYS answer in calls/{chat}/ringing/{uid}/notifyStatus (the caller waits for it),
+        with notifyError saying why when it failed."""
         be = self.be
-        status_path = f"calls/{chat}/ringing/{uid}/notifyStatus"
-        frm = ring.get("fromUid")
-        participants = be.get(f"privateChats/{chat}/participants") or {}
-        if not frm or not participants.get(frm) or not participants.get(uid):
-            be.set(status_path, "failed"); return
-        self.stats["rings"] += 1
-        selfring = frm == uid
-        name = be.get(f"accsettings/{frm}/settings/displayName") or "QuickMessage"
-        title = "Call in progress" if selfring else "Incoming call"
-        text = "Join the call on this device" if selfring else f"{name} is calling you"
-        from urllib.parse import quote
-        link = f"{self.app_url}call.html?chatId={quote(chat)}&session={quote(ring['ringId'])}"
-        build = lambda: {"notification": {"title": title, "body": text}, "tag": f"call_{chat}", "ttl": 60, "web_ttl": 60, "require": True, "link": link,
-                         "apns": {"apns-priority": "10", "apns-expiration": str(int(time.time()) + 60)}, "data": {"call": "1", "chatId": chat, "sessionId": ring["ringId"], "link": link}}
-        app_data = None if selfring else {"type": "ring", "chatId": chat, "ringId": str(ring["ringId"]), "from": str(frm), "createdAt": str(ring.get("createdAt") or int(time.time() * 1000))}
-        acc, fail, n = self.push_to_ring(uid, build, app_data)
-        if be.get(f"calls/{chat}/ringing/{uid}/ringId") != ring["ringId"]: return          # answered or replaced meanwhile
-        be.set(status_path, "sent" if acc > 0 else "no_token" if n == 0 else "failed")
+        sp = f"calls/{chat}/ringing/{uid}"
+        def answer(status, why=None):
+            if be.get(f"{sp}/ringId") != ring.get("ringId"): return          # answered / replaced meanwhile: don't touch a newer ring
+            be.update({f"{sp}/notifyStatus": status, f"{sp}/notifyError": (why or None) and str(why)[:140]})
+        try:
+            frm = ring.get("fromUid")
+            participants = be.get(f"privateChats/{chat}/participants") or {}
+            if not frm or not participants.get(frm) or not participants.get(uid): return answer("failed", "Not a member of this chat.")
+            self.stats["rings"] += 1
+            selfring = frm == uid
+            name = be.get(f"accsettings/{frm}/settings/displayName") or "QuickMessage"
+            title = "Call in progress" if selfring else "Incoming call"
+            text = "Join the call on this device" if selfring else f"{name} is calling you"
+            from urllib.parse import quote
+            link = f"{self.app_url}call.html?chatId={quote(chat)}&session={quote(ring['ringId'])}"
+            build = lambda: {"notification": {"title": title, "body": text}, "tag": f"call_{chat}", "ttl": 60, "web_ttl": 60, "require": True, "link": link,
+                             "apns": {"apns-priority": "10", "apns-expiration": str(int(time.time()) + 60)}, "data": {"call": "1", "chatId": chat, "sessionId": ring["ringId"], "link": link}}
+            app_data = None if selfring else {"type": "ring", "chatId": chat, "ringId": str(ring["ringId"]), "from": str(frm), "createdAt": str(ring.get("createdAt") or int(time.time() * 1000))}
+            acc, fail, eligible, err = self.push_to_ring(uid, build, app_data)
+            if acc > 0: answer("sent")
+            elif eligible == 0: answer("no_token")
+            else: answer("failed", err or "The push service refused every device.")
+        except Exception as e:
+            self.err("ring", e)
+            try: answer("failed", f"Worker error: {e.__class__.__name__}: {str(e)[:100]}")
+            except Exception: pass
 
     def push_to_ring(self, uid, build, app_data):
-        """Like push_to, but app pushes for a ring expire after 60 s."""
+        """Like push_to, but app pushes for a ring expire after 60 s. Returns (accepted, failed, devices that could be tried, last error text)."""
         tokens = self.be.get(f"FCM/{uid}") or {}
-        acc = fail = 0
+        acc = fail = eligible = 0; err = ""
         for tok, kind in list(tokens.items()):
             app = kind == "android"
             if app and not app_data: continue
+            eligible += 1
             try:
                 if app: self.be.send_push(tok, "app", {"data": app_data, "ttl": 60, "collapse": f"ring_{app_data['chatId']}"})
                 else: self.be.send_push(tok, "web", build())
                 acc += 1
             except Exception as e:
-                fail += 1
-                if self.be.is_dead(e): self.be.update({f"FCM/{uid}/{tok}": None})
-                else: log("push failed", uid, e.__class__.__name__)
+                fail += 1; err = f"{e.__class__.__name__}: {str(e)[:100]}"
+                self.stats["lastPushError"] = err
+                if self.be.is_dead(e): self.be.update({f"FCM/{uid}/{tok}": None}); err += " (device removed)"
+                else: log("push failed", uid, err)
         self.stats["pushed"] += acc; self.stats["pushFailed"] += fail
-        return acc, fail, len(tokens)
+        return acc, fail, eligible, err
 
     # ---- listener + heartbeat
     def start_listener(self):
@@ -294,13 +317,20 @@ class Worker:
 
     def snapshot(self, online=True):
         s = dict(self.stats)
-        return {"ts": {".sv": "timestamp"}, "started": self.started, "version": VERSION, "listening": bool(self.listeners), "apiUrl": (self.public_url or None) if self.http_api else None, **{k: s[k] for k in ("pushed", "pushFailed", "rings", "webhooks", "webhookFailed", "botCalls", "lastError")}}
+        return {"ts": {".sv": "timestamp"}, "started": self.started, "version": VERSION, "listening": bool(self.listeners), "apiUrl": (self.public_url or None) if self.http_api else None, **{k: s[k] for k in ("pushed", "pushFailed", "rings", "webhooks", "webhookFailed", "botCalls", "lastError", "lastPushError", "clockOffsetMs")}}
 
     def heartbeat(self):
-        try: self.be.set("serverStatus", self.snapshot())
+        try:
+            before = time.time() * 1000
+            self.be.set("serverStatus", self.snapshot())
+            ts = self.be.get("serverStatus/ts")
+            if isinstance(ts, (int, float)):                                  # the database wrote its own clock: compare with ours (midpoint of the round trip)
+                self.offset = ts - (before + time.time() * 1000) / 2
+                self.stats["clockOffsetMs"] = int(self.offset)
         except Exception as e: self.err("heartbeat", e)
 
     def run_loops(self):
+        self.heartbeat()                                                      # first: learns the clock offset the listener's time checks use
         self.start_listener()
         while True:
             self.heartbeat()

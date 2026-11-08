@@ -42,7 +42,7 @@ async function tick() {
   $("big").textContent = `${dot} ${name}`; $("why").textContent = text;
   $("last").textContent = s.data ? `Last heartbeat ${ago(s.age)} ago.` : "";
   const d = s.data, dl = $("stats"); dl.replaceChildren();
-  if (d) for (const [k, v] of [["Version", d.version], ["Ran for (until last heartbeat)", d.started ? ago(Math.max(0, (d.ts - d.started) / 1000)) : "?"], ["Push notifications sent", d.pushed], ["Push failures", d.pushFailed], ["Call rings", d.rings], ["Bot calls", d.botCalls], ["Webhooks", d.webhooks + (d.webhookFailed ? ` (${d.webhookFailed} failed)` : "")], ["Last error", d.lastError || "none"]]) {
+  if (d) for (const [k, v] of [["Version", d.version], ["Ran for (until last heartbeat)", d.started ? ago(Math.max(0, (d.ts - d.started) / 1000)) : "?"], ["Push notifications sent", d.pushed], ["Push failures", d.pushFailed], ["Call rings", d.rings], ["Bot calls", d.botCalls], ["Webhooks", d.webhooks + (d.webhookFailed ? ` (${d.webhookFailed} failed)` : "")], ["Last push error", d.lastPushError || "none"], ["Last error", d.lastError || "none"], ["Clock difference (database vs. server computer)", d.clockOffsetMs == null ? "?" : Math.abs(d.clockOffsetMs) < 2000 ? "fine" : Math.round(d.clockOffsetMs / 1000) + " s (set the computer's clock to automatic)"]]) {
     dl.append(Object.assign(document.createElement("dt"), { textContent: k }), Object.assign(document.createElement("dd"), { textContent: String(v ?? "") }));
   }
 }

@@ -11,7 +11,8 @@ import {
 } from "./ui.js";
 import { initCallBanner } from "./call-banner.js";
 import { PRIVATE } from "./mode.js";
-import { cacheGet, cachePut, cacheDrop } from "./mediacache.js";
+import { cacheGet, cachePut, cacheDrop, cachePrune } from "./mediacache.js";
+import { saverOn, gateNode, onSaverChange } from "./datasaver.js";
 import { QM, enterShell, trackSplit, toHome, markReady } from "./embed.js";
 import { isLitterUrl, fmtBytes, kindOf, relayMax } from "./litter.js";
 import { uploadToHosts, fmtTtl, fmtLimit } from "./hosts.js";
@@ -87,13 +88,21 @@ const hydrate = m => {
 };
 // Fetch (or take from this device's cache) the media of a message whose body lives in media/{key}, open it, and redraw the message.
 const bigLoading = new Set();
-async function loadBig(key) {
+async function loadBig(key, manual = false) {
   const msg = msgData.get(key);
   if (!msg || !msg._big || bigLoading.has(key)) return;
   bigLoading.add(key);
   try {
     let body = await cacheGet(chatId, key);
-    if (body == null) { body = (await get(ref(db, `${chatPath}/media/${key}`))).val(); if (typeof body === "string") cachePut(chatId, key, body); }
+    if (body == null) {
+      // Data Saver: nothing is downloaded from the database until you tap it (what is already on this device still shows)
+      if (!manual && saverOn()) {
+        const el = document.getElementById("msg-" + key), b = el && el.querySelector(".media-lazy");
+        if (b) { b.dataset.gated = "1"; b.classList.add("saver-gate"); b.textContent = (msg.type === "audio" ? "\ud83c\udfb5 Tap to load audio" : msg.type === "video" ? "\ud83c\udfa5 Tap to load video" : "\ud83d\udcf7 Tap to load photo") + " (Data Saver)"; b.onclick = () => { b.onclick = null; b.textContent = "Loading\u2026"; loadBig(key, true); }; }
+        return;
+      }
+      body = (await get(ref(db, `${chatPath}/media/${key}`))).val(); if (typeof body === "string") cachePut(chatId, key, body);
+    }
     if (typeof body !== "string") throw new Error("missing");
     const { _big, ...stub } = msg;
     const open = stub.enc ? await openMessage(chatId, { ...stub, content: body }) : { ...stub, content: body };
@@ -102,10 +111,11 @@ async function loadBig(key) {
     if (el) fillMessage(el, key, open);
   } catch (_) {
     const el = document.getElementById("msg-" + key), b = el && el.querySelector(".media-lazy");
-    if (b) { b.textContent = "Couldn't load \u2014 tap to retry"; b.onclick = () => { bigLoading.delete(key); b.textContent = "Loading\u2026"; loadBig(key); }; }
+    if (b) { b.textContent = "Couldn't load \u2014 tap to retry"; b.onclick = () => { bigLoading.delete(key); b.textContent = "Loading\u2026"; loadBig(key, true); }; }
   } finally { bigLoading.delete(key); }
 }
 const lazyIO = typeof IntersectionObserver === "function" ? new IntersectionObserver(es => es.forEach(e => { if (e.isIntersecting) { lazyIO.unobserve(e.target); loadBig(e.target.dataset.key); } }), { root: null, rootMargin: "600px 0px" }) : null;
+onSaverChange(on => { if (!on) document.querySelectorAll(".media-lazy[data-gated]").forEach(b => { delete b.dataset.gated; b.onclick = null; b.textContent = "Loading\u2026"; loadBig(b.dataset.key); }); });
 function lazyPlaceholder(bubble, key, msg) {
   const d = document.createElement("div");
   d.className = "media-lazy"; d.dataset.key = key;
@@ -250,8 +260,10 @@ function fillFile(bubble, msg) {
     img.addEventListener("load", ev => onMedia(ev.target));
     img.addEventListener("error", () => { const f = failedMedia("image", url, msg.name); (img.closest(".media-wrap") || img).replaceWith(f); });
     img.addEventListener("click", () => openImage(url, { alt: msg.name || "" }));
-    img.src = url;
-    wrap.append(withDl(img, url, msg.name));
+    if (saverOn()) {                                                    // Data Saver: the picture is fetched when you tap it
+      const g = gateNode("image", msg.name, () => { img.src = url; g.replaceWith(withDl(img, url, msg.name)); });
+      wrap.append(g);
+    } else { img.src = url; wrap.append(withDl(img, url, msg.name)); }
   } else if (url && !expired && kind === "video") {
     const vp = videoPlayer(url, { onLayout: onMedia });
     vp.video.addEventListener("error", () => vp.replaceWith(failedMedia("video", url, msg.name)));
@@ -345,8 +357,9 @@ function fillMessage(el, key, msg) {
       img.addEventListener("load", ev => onMedia(ev.target));
       img.addEventListener("click", () => openImage(src, { name: "" }));
       img.addEventListener("error", () => { const w = img.closest(".media-wrap") || img; w.replaceWith(failedMedia("image", src, "")); });
-      img.src = src;
-      bubble.append(withDl(img, src, ""));
+      if (saverOn() && /^https?:/i.test(src)) {                         // Data Saver: only pictures that come over the network wait for a tap
+        const g = gateNode("image", "", () => { img.src = src; g.replaceWith(withDl(img, src, "")); }); bubble.append(g);
+      } else { img.src = src; bubble.append(withDl(img, src, "")); }
       bubble.classList.add("media-bubble");
     } else {
       const vp = videoPlayer(src, { onLayout: onMedia });
@@ -515,6 +528,7 @@ function onChanged(snap) {
 }
 
 function onRemoved(snap) {
+  cacheDrop(chatId, snap.key);                          // its picture / clip / voice note is no longer worth keeping on this device
   msgData.delete(snap.key);
   document.getElementById("msg-" + snap.key)?.remove();
   if (latestKey === snap.key) {
@@ -1878,6 +1892,7 @@ onAuthStateChanged(auth, async user => {
     ready = true;
     maybeMarkRead();
     fillViewport();
+    cachePrune(chatId, oldestKey ?? "", new Set(msgData.keys())).catch(() => {});      // anything deleted while this device was away
 
     const live = query(messagesRef, orderByKey(), startAt(oldestKey ?? ""));
     onChildAdded(live, onAdded);

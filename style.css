@@ -1033,3 +1033,13 @@ button.pw-item{cursor:pointer}button.pw-item:hover{background:var(--surface-2)}
 .srv-status.online { background: #16a34a1f; border-color: #16a34a; }
 .srv-status.offline { background: #dc26261f; border-color: #dc2626; }
 .srv-status.unreachable, .srv-status.never { background: #f59e0b1f; border-color: #f59e0b; }
+
+/* Data Saver: a picture / video / link preview that waits for a tap */
+.media-lazy.saver-gate{border:1px dashed var(--muted,#888);cursor:pointer;font:inherit;font-size:.9rem;text-align:center;color:inherit}
+.media-lazy.saver-gate:hover{background:#8883}
+
+/* Settings page: sections */
+.settings-tabs{display:flex;gap:.35rem;overflow-x:auto;margin:0 0 1rem;padding:0 0 .35rem;scrollbar-width:thin;-webkit-overflow-scrolling:touch}
+.settings-tabs button{flex:0 0 auto;border:1px solid var(--border);background:var(--surface-2);color:var(--text);padding:.4rem .85rem;border-radius:999px;font:inherit;font-size:.88rem;font-weight:600;cursor:pointer;white-space:nowrap}
+.settings-tabs button.on{background:var(--accent);border-color:var(--accent);color:#fff}
+.settings-pane[hidden]{display:none}

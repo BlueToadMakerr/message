@@ -13,9 +13,10 @@ object Avatars {
     fun load(url: String?, label: String, size: Int = 192, round: Boolean = true): Bitmap {
         val key = "${url ?: ""}|$label|$size|$round"
         cache[key]?.let { return it }
-        val bmp = circle(if (url.isNullOrBlank()) null else fetch(url), label, size, round)
+        // Data Saver: remote profile photos are not downloaded (a coloured letter is used; photos already received as data: URLs still work)
+        val bmp = circle(if (url.isNullOrBlank() || (DataSaver.active() && !url.startsWith("data:"))) null else fetch(url), label, size, round)
         if (cache.size > 80) cache.clear()
-        cache[key] = bmp
+        if (!DataSaver.active() || url.isNullOrBlank() || url.startsWith("data:")) cache[key] = bmp
         return bmp
     }
 

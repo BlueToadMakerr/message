@@ -4,7 +4,7 @@
 const SEEDS = ["index.html", "message.html", "account.html", "call.html", "style.css", "call.css", "js/themeboot.js", "firebase-messaging-sw.js"];
 const IMPORT = /(?:from\s*|import\s*\(\s*|import\s+)["'](\.{1,2}\/[^"']+\.js)["']/g;
 
-function loadedUrls(win, out, depth = 0) {
+export function loadedUrls(win, out, depth = 0) {
   try { for (const e of win.performance.getEntriesByType("resource")) if (e.name.startsWith(location.origin)) out.add(e.name.split("#")[0]); } catch (_) { /* ignore */ }
   try { out.add(win.location.href.split("#")[0]); } catch (_) { /* ignore */ }
   if (depth < 3) for (let i = 0; i < win.frames.length; i++) { try { loadedUrls(win.frames[i], out, depth + 1); } catch (_) { /* cross-origin frame */ } }
@@ -28,7 +28,8 @@ export async function refreshSite({ unregister = false, onProgress = () => {} } 
       } catch (_) { /* offline or missing: skip */ }
     }));
   }
-  try { if ("caches" in window) for (const k of await caches.keys()) await caches.delete(k); } catch (_) { /* ignore */ }
+  // Other caches go, but never QuickMessage's own: stored media, the saved copy of the site and the offline page stay.
+  try { if ("caches" in window) for (const k of await caches.keys()) if (!k.startsWith("qm-")) await caches.delete(k); } catch (_) { /* ignore */ }
   try {
     if (navigator.serviceWorker) for (const r of await navigator.serviceWorker.getRegistrations()) { if (unregister) await r.unregister().catch(() => {}); else await r.update().catch(() => {}); }
   } catch (_) { /* ignore */ }

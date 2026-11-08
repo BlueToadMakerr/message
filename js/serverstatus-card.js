@@ -1,5 +1,6 @@
 // Fills <div id="srvStatus"> with whether the notification / bot worker is running (see serverstatus.js). Used on the Account and Bots pages.
 import { getServerStatus, ago, STATE_TEXT, warnHidden, hideWarning } from "./serverstatus.js";
+import { saverOn } from "./datasaver.js";
 const box = document.getElementById("srvStatus");
 async function tick() {
   if (!box) return;
@@ -14,4 +15,4 @@ async function tick() {
     box.append(b);
   }
 }
-tick(); setInterval(tick, 30000);
+tick(); setInterval(() => { if (!saverOn()) tick(); }, 30000);        // Data Saver: no repeating checks

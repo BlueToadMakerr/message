@@ -23,6 +23,8 @@ import * as E2E from "./crypto.js";
 import { devOn, setDev, devButton, showRaw, envInfo } from "./dev.js";
 import { PRESETS, RES, getScreenPrefs, setScreenPrefs, resetScreenPrefs, DEFAULTS } from "./screenprefs.js";
 import { previewsOn, setPreviews } from "./linkpreview.js";
+import "./datasaver-card.js";
+import "./settings-tabs.js";
 import { refreshVerified, resendVerification } from "./verify.js";
 import { showTour } from "./onboarding.js";
 import { SITE_VERSION, API_VERSION, checkSiteVersion, lastCheck } from "./version.js";

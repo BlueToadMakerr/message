@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
-  <title>Account · QuickMessage</title>
+  <title>Settings · QuickMessage</title>
   <meta name="theme-color" content="#4f46e5">
   <link rel="icon" href="icons/icon.svg" type="image/svg+xml">
   <link rel="apple-touch-icon" href="icons/icon-192.png">
@@ -14,13 +14,23 @@
 <div class="shell">
   <header class="topbar">
     <a href="index.html" class="icon-btn" aria-label="Back to chats" data-icon="back"></a>
-    <h1 class="brand">Account</h1>
+    <h1 class="brand">Settings</h1>
   </header>
 
   <main>
     <div id="loading" class="center-note">Loading…</div>
 
     <div id="content" class="hidden">
+    <nav class="settings-tabs" id="settingsTabs" role="tablist" aria-label="Settings sections">
+      <button type="button" role="tab" data-tab="account" class="on">Account</button>
+      <button type="button" role="tab" data-tab="appearance">Appearance</button>
+      <button type="button" role="tab" data-tab="calls">Calls &amp; notifications</button>
+      <button type="button" role="tab" data-tab="privacy">Privacy &amp; security</button>
+      <button type="button" role="tab" data-tab="data">Data &amp; storage</button>
+      <button type="button" role="tab" data-tab="advanced">Advanced</button>
+    </nav>
+
+      <div class="settings-pane" data-pane="account" role="tabpanel">
       <section class="card">
         <div class="profile-head">
           <span id="headAvatar"></span>
@@ -30,7 +40,6 @@
           </div>
         </div>
       </section>
-
       <section class="card" id="friendCard">
         <h2>Friend code</h2>
         <p class="muted" style="margin-top:0">Give this to someone so they can start a chat with you. It is random, it is not your account id, and it is not your encryption recovery code.</p>
@@ -42,7 +51,6 @@
         <div class="row wrap" style="margin-top:.8rem"><button id="friendNewBtn" class="btn" type="button">Make a new friend code</button></div>
         <p id="friendMsg" class="muted" style="margin:.5rem 0 0"></p>
       </section>
-
       <section class="card">
         <h2>Profile</h2>
         <form id="profileForm" class="stack">
@@ -65,7 +73,42 @@
           <button id="saveSettingsBtn" class="btn primary" type="submit">Save changes</button>
         </form>
       </section>
+      <section class="card" data-nopriv>
+        <h2>Email &amp; sign-in</h2>
+        <p id="verifyRow" class="muted" style="margin-top:0"></p>
+        <div id="providersList" class="stack"></div>
+        <div id="addPasswordBox" class="stack hidden">
+          <input id="newPw1" class="field" type="password" autocomplete="new-password" placeholder="Choose a password (6+ characters)" minlength="6">
+          <button id="addPwBtn" class="btn primary" type="button">Add password sign-in</button>
+        </div>
+        <div class="row wrap">
+          <button id="linkGoogleBtn" class="btn hidden" type="button">Link my Google account</button>
+          <button id="showAddPwBtn" class="btn hidden" type="button">Create a password</button>
+        </div>
+      </section>
+      <section id="passwordSection" class="card hidden">
+        <h2>Password</h2>
+        <form id="passwordForm" class="stack">
+          <input id="oldPassword" class="field" type="password" autocomplete="current-password" placeholder="Current password" required>
+          <input id="newPassword" class="field" type="password" autocomplete="new-password" placeholder="New password (6+ characters)" minlength="6" required>
+          <div class="row wrap">
+            <button id="changePassBtn" class="btn primary" type="submit">Change password</button>
+            <button id="resetBtn" data-nopriv class="btn" type="button">Email me a reset link</button>
+          </div>
+        </form>
+      </section>
+      <section class="card">
+        <h2>Session</h2>
+        <button id="logoutBtn" class="btn" type="button">Log out</button>
+      </section>
+      <section class="card danger-zone">
+        <h2>Danger zone</h2>
+        <p class="muted" style="margin-top:0">Deleting your account is permanent. You'll be removed from your chats; messages you've already sent stay in them.</p>
+        <button id="deleteBtn" class="btn danger" type="button">Delete account</button>
+      </section>
+      </div>
 
+      <div class="settings-pane" data-pane="appearance" role="tabpanel" hidden>
       <section class="card" id="themeCard">
         <h2>Colours</h2>
         <p class="muted" style="margin-top:0">Saved on this device. Light / dark / match-my-device is the Appearance choice in Profile above.</p>
@@ -90,77 +133,19 @@
           </div>
         </div>
       </section>
+      </div>
 
-      <section class="card" data-nopriv>
-        <h2>Email &amp; sign-in</h2>
-        <p id="verifyRow" class="muted" style="margin-top:0"></p>
-        <div id="providersList" class="stack"></div>
-        <div id="addPasswordBox" class="stack hidden">
-          <input id="newPw1" class="field" type="password" autocomplete="new-password" placeholder="Choose a password (6+ characters)" minlength="6">
-          <button id="addPwBtn" class="btn primary" type="button">Add password sign-in</button>
-        </div>
-        <div class="row wrap">
-          <button id="linkGoogleBtn" class="btn hidden" type="button">Link my Google account</button>
-          <button id="showAddPwBtn" class="btn hidden" type="button">Create a password</button>
-        </div>
+      <div class="settings-pane" data-pane="calls" role="tabpanel" hidden>
+      <section id="notifBtnCard" class="card hidden">
+        <h2>Call notification</h2>
+        <p class="muted" style="margin-top:0">Android shows at most three buttons in the ongoing-call notification, and one is always Hang up. Choose the third one next to Mute.</p>
+        <select id="notifBtn" class="field"><option value="screen">Share screen</option><option value="deafen">Deafen</option></select>
       </section>
-
-      <section class="card" id="suggestCard">
-        <h2>Suggest a feature</h2>
-        <p class="muted" style="margin-top:0">Have an idea or found a problem? Write it here and it opens a ready-to-send email to the developer (bluetmaker@gmail.com) in your email app. You can also post it on GitHub, where others can see and vote on it.</p>
-        <label class="lbl" for="suggestText">Your idea</label>
-        <textarea id="suggestText" class="field" rows="4" maxlength="2000" placeholder="What would you like QuickMessage to do?"></textarea>
-        <div class="row wrap" style="margin-top:.6rem">
-          <button id="suggestSend" class="btn primary" type="button">Open email</button>
-          <button id="suggestCopy" class="btn" type="button">Copy text</button>
-          <a class="btn" href="https://github.com/BlueToadMakerr/message/issues/new" target="_blank" rel="noopener noreferrer">Suggest on GitHub</a>
-        </div>
-        <p class="hint">Nothing is sent by this page itself, and your account details are not included.</p>
-      </section>
-
-      <section class="card">
-        <h2>Welcome tour</h2>
-        <p class="muted" style="margin-top:0">A short tour of profile options, privacy, encryption, calls and files.</p>
-        <button id="tourBtn" class="btn" type="button">Show the tour</button>
-      </section>
-
-      <section class="card">
-        <h2>Privacy</h2>
-        <label class="switch-row" data-nopriv><input type="checkbox" id="emailAddToggle"> <span><strong>Let people add me by email</strong><br><small class="muted">Your email is never shown to anyone. When this is off, people need your friend code to add you.</small></span></label>
-        <label class="switch-row" data-nopriv style="margin-top:.8rem"><input type="checkbox" id="previewToggle"> <span><strong>Link previews</strong><br><small class="muted">Shows what links in messages are (title, picture, video). Fetching a preview asks this site's server to open the link; nothing is stored.</small></span></label>
-      </section>
-
-      <section class="card" id="hostsCard" data-nopriv>
-        <h2>File hosting</h2>
-        <p class="muted" style="margin-top:0">Photos and short clips are sent inside the chat. Anything bigger, and any other kind of file, is uploaded to a free file hosting service and the chat gets a link. Choose which services may be used and in what order. These choices are saved on this device.</p>
-        <label class="lbl" for="hostMode">When a file needs a service</label>
-        <select id="hostMode" class="field">
-          <option value="priority">Use my priority list (the first one that works)</option>
-          <option value="ask">Ask me every time</option>
-        </select>
-        <label class="lbl" for="hostTtl" style="margin-top:.7rem">Keep files for</label>
-        <select id="hostTtl" class="field"></select>
-        <p class="hint">Each service uses the time it offers that is closest to yours; if you pick longer than it can do, it uses its longest. Files are never set to be deleted after the first download.</p>
-        <div id="hostList" class="host-list"></div>
-        <p class="hint">If a service fails, or can't take the file (too big for it), the next switched-on service in the list is tried. A switched-off service is never used.</p>
-        <div class="row wrap"><button id="hostReset" class="btn" type="button">Reset to defaults</button></div>
-        <details class="adv" style="margin-top:.8rem">
-          <summary>Rules that apply to all of them</summary>
-          <ul class="rules">
-            <li>Uploads are anonymous but public to anyone who has the link. Don't upload anything private unless the chat is end-to-end encrypted (then the file is scrambled before it leaves your device).</li>
-            <li>These services scan uploads and remove malware, copyrighted material and abuse; illegal content is not allowed.</li>
-            <li>Free services can be slow, rate-limit you or disappear. That's why the list falls back to the next one; when the service you want is busy, wait a moment and retry.</li>
-            <li>Limits and times shown here come from each service's own information and can change. Check their terms on their websites.</li>
-          </ul>
-        </details>
-      </section>
-
       <section class="card" id="audioCard">
         <h2>Audio</h2>
         <p class="muted" style="margin-top:0">Microphone, speakers and microphone volume for calls. Changes also apply to a call that is running.</p>
         <div id="audioHost"></div>
       </section>
-
       <section class="card">
         <h2>Screen sharing: defaults</h2>
         <p class="muted" style="margin-top:0">Starting quality for when you share your screen. These settings only change what you send; what you watch from others is always the best the sender provides (your browser lowers it by itself if needed). When you press Share screen in a call you see these settings again and can change them for that share, or start with them as they are. Higher settings use more bandwidth, CPU and battery, and the people in the call need a connection that can keep up.</p>
@@ -199,41 +184,18 @@
           <div id="scHelpHost"></div>
         </div>
       </section>
-
       <section class="card">
         <h2>Call display</h2>
         <label class="switch-row"><input type="checkbox" id="fpsToggle"> <span><strong>Show live frame rate on videos</strong><br><small class="muted">Puts a small “30 fps” badge on each person's video in a call (how many frames per second this device is actually showing).</small></span></label>
       </section>
+      </div>
 
-      <section id="notifBtnCard" class="card hidden">
-        <h2>Call notification</h2>
-        <p class="muted" style="margin-top:0">Android shows at most three buttons in the ongoing-call notification, and one is always Hang up. Choose the third one next to Mute.</p>
-        <select id="notifBtn" class="field"><option value="screen">Share screen</option><option value="deafen">Deafen</option></select>
-      </section>
-
-      <section class="card pm-only" id="compatCard">
-        <h2>Compatibility mode</h2>
-        <p class="muted" style="margin-top:0">A small text-only chat for very old browsers (down to a Nintendo Wii). It can send and read plain text in chats that are not end-to-end encrypted. Needs the private server.</p>
-        <label class="switch-row"><input type="checkbox" id="legacyToggle"> <span><strong>Use compatibility mode on this device</strong><br><small class="muted">Opens the simple version every time. Add <code>?legacy=0</code> to the address to get back.</small></span></label>
-        <label class="switch-row" style="margin-top:.7rem"><input type="checkbox" id="legacyAuto"> <span><strong>Switch automatically on very old browsers</strong></span></label>
-      </section>
-
+      <div class="settings-pane" data-pane="privacy" role="tabpanel" hidden>
       <section class="card">
-        <h2>Bots</h2>
-        <p class="muted" style="margin-top:0">Make bot accounts that programs control, for example to link a chat with Discord.</p>
-        <div id="srvStatus" class="srv-status">Checking the notification &amp; bot server…</div>
-        <script type="module" src="js/serverstatus-card.js"></script>
-        <div class="row wrap"><a class="btn small" href="bots.html" id="botsLink">Manage bots</a> <a class="btn small" href="bot-docs.html">Bot docs</a></div>
+        <h2>Privacy</h2>
+        <label class="switch-row" data-nopriv><input type="checkbox" id="emailAddToggle"> <span><strong>Let people add me by email</strong><br><small class="muted">Your email is never shown to anyone. When this is off, people need your friend code to add you.</small></span></label>
+        <label class="switch-row" data-nopriv style="margin-top:.8rem"><input type="checkbox" id="previewToggle"> <span><strong>Link previews</strong><br><small class="muted">Shows what links in messages are (title, picture, video). Fetching a preview asks this site's server to open the link; nothing is stored.</small></span></label>
       </section>
-
-      <section class="card">
-        <h2>Developer</h2>
-        <label class="switch-row"><input type="checkbox" id="devToggle"> <span><strong>Developer mode</strong><br><small class="muted">Adds small <code>{ }</code> buttons (chat list, chats, messages, calls) that open raw, copyable information: what is loaded, call frame rate, connection and WebRTC details, raw message data. Nothing changes on screen otherwise. Saved on this device.</small></span></label>
-        <div class="row wrap" style="margin-top:.7rem;align-items:center"><label class="lbl" style="margin:0">Live views: update speed and graph length</label><span id="devRateHost"></span></div>
-        <div class="row wrap" style="margin-top:.7rem"><button id="devAccountBtn" class="dev-btn" type="button">{ } Account info</button> <a class="btn small" href="plugins.html" id="pluginsLink">Plugins</a> <a class="btn small" href="plugin-docs.html">Plugin docs</a></div>
-        <p class="muted" id="verText" style="margin:.7rem 0 0"></p>
-      </section>
-
       <section class="card">
         <h2>Encryption</h2>
         <p class="muted" style="margin-top:0">Chats are end-to-end encrypted by default. Your key lives on this device; the recovery code is the only way to unlock it elsewhere.</p>
@@ -252,19 +214,57 @@
           <button id="resetKeysBtn" class="btn danger" type="button">Reset encryption keys…</button>
         </details>
       </section>
-
-      <section id="passwordSection" class="card hidden">
-        <h2>Password</h2>
-        <form id="passwordForm" class="stack">
-          <input id="oldPassword" class="field" type="password" autocomplete="current-password" placeholder="Current password" required>
-          <input id="newPassword" class="field" type="password" autocomplete="new-password" placeholder="New password (6+ characters)" minlength="6" required>
-          <div class="row wrap">
-            <button id="changePassBtn" class="btn primary" type="submit">Change password</button>
-            <button id="resetBtn" data-nopriv class="btn" type="button">Email me a reset link</button>
-          </div>
-        </form>
+      <section class="card" id="hostsCard" data-nopriv>
+        <h2>File hosting</h2>
+        <p class="muted" style="margin-top:0">Photos and short clips are sent inside the chat. Anything bigger, and any other kind of file, is uploaded to a free file hosting service and the chat gets a link. Choose which services may be used and in what order. These choices are saved on this device.</p>
+        <label class="lbl" for="hostMode">When a file needs a service</label>
+        <select id="hostMode" class="field">
+          <option value="priority">Use my priority list (the first one that works)</option>
+          <option value="ask">Ask me every time</option>
+        </select>
+        <label class="lbl" for="hostTtl" style="margin-top:.7rem">Keep files for</label>
+        <select id="hostTtl" class="field"></select>
+        <p class="hint">Each service uses the time it offers that is closest to yours; if you pick longer than it can do, it uses its longest. Files are never set to be deleted after the first download.</p>
+        <div id="hostList" class="host-list"></div>
+        <p class="hint">If a service fails, or can't take the file (too big for it), the next switched-on service in the list is tried. A switched-off service is never used.</p>
+        <div class="row wrap"><button id="hostReset" class="btn" type="button">Reset to defaults</button></div>
+        <details class="adv" style="margin-top:.8rem">
+          <summary>Rules that apply to all of them</summary>
+          <ul class="rules">
+            <li>Uploads are anonymous but public to anyone who has the link. Don't upload anything private unless the chat is end-to-end encrypted (then the file is scrambled before it leaves your device).</li>
+            <li>These services scan uploads and remove malware, copyrighted material and abuse; illegal content is not allowed.</li>
+            <li>Free services can be slow, rate-limit you or disappear. That's why the list falls back to the next one; when the service you want is busy, wait a moment and retry.</li>
+            <li>Limits and times shown here come from each service's own information and can change. Check their terms on their websites.</li>
+          </ul>
+        </details>
       </section>
+      </div>
 
+      <div class="settings-pane" data-pane="data" role="tabpanel" hidden>
+      <section class="card" id="saverCard">
+        <h2>Data Saver</h2>
+        <p class="muted" style="margin-top:0">Stops automatic downloads: pictures, videos and sounds wait until you tap them, link previews wait for a tap, and QuickMessage stops checking for updates and the notification server by itself. Things already saved on this device still show. Calls and messages are not affected.</p>
+        <label class="lbl" for="saverMode">When should Data Saver be on?</label>
+        <select id="saverMode" class="field"></select>
+        <p id="saverNow" class="muted" style="margin-bottom:0"></p>
+      </section>
+      <section class="card" id="mediaCard">
+        <h2>Stored media</h2>
+        <p class="muted" style="margin-top:0">Pictures, videos and voice notes are kept on this device after the first download, so the database never has to send them again. They are removed when the message is deleted, and the oldest go first when the limit is reached.</p>
+        <label class="lbl" for="mediaLimit">Keep up to</label>
+        <select id="mediaLimit" class="field"></select>
+        <p id="mediaNow" class="muted"></p>
+        <button id="mediaClear" class="btn" type="button">Clear stored media</button>
+      </section>
+      <section class="card" id="copyCard">
+        <h2>Saved copy of the site</h2>
+        <p class="muted" style="margin-top:0">After QuickMessage has run fine for a while, the app keeps a copy of it on this device. If a site update ever breaks something, switch to that copy until the site is fixed. If the app won't even open, add <code>?safe=1</code> to the address (<code>?safe=0</code> goes back).</p>
+        <p id="copyNow" class="muted"></p>
+        <div class="row" style="gap:.5rem;flex-wrap:wrap">
+          <button id="copySafe" class="btn" type="button">Use the saved copy</button>
+          <button id="copySave" class="btn" type="button">Save the current site as the copy</button>
+        </div>
+      </section>
       <section id="appCard" class="card" data-nopriv>
         <h2 id="appTitle">Site updates</h2>
         <p id="appText" class="muted" style="margin-top:0">Not seeing the newest version after an update? This downloads a fresh copy of every page and script and then reloads QuickMessage. You stay signed in.</p>
@@ -274,17 +274,48 @@
           <button id="updateBtn" class="btn" type="button">Check for app updates</button>
         </div>
       </section>
+      <section class="card pm-only" id="compatCard">
+        <h2>Compatibility mode</h2>
+        <p class="muted" style="margin-top:0">A small text-only chat for very old browsers (down to a Nintendo Wii). It can send and read plain text in chats that are not end-to-end encrypted. Needs the private server.</p>
+        <label class="switch-row"><input type="checkbox" id="legacyToggle"> <span><strong>Use compatibility mode on this device</strong><br><small class="muted">Opens the simple version every time. Add <code>?legacy=0</code> to the address to get back.</small></span></label>
+        <label class="switch-row" style="margin-top:.7rem"><input type="checkbox" id="legacyAuto"> <span><strong>Switch automatically on very old browsers</strong></span></label>
+      </section>
+      </div>
 
+      <div class="settings-pane" data-pane="advanced" role="tabpanel" hidden>
       <section class="card">
-        <h2>Session</h2>
-        <button id="logoutBtn" class="btn" type="button">Log out</button>
+        <h2>Bots</h2>
+        <p class="muted" style="margin-top:0">Make bot accounts that programs control, for example to link a chat with Discord.</p>
+        <div id="srvStatus" class="srv-status">Checking the notification &amp; bot server…</div>
+        <script type="module" src="js/serverstatus-card.js"></script>
+        <div class="row wrap"><a class="btn small" href="bots.html" id="botsLink">Manage bots</a> <a class="btn small" href="bot-docs.html">Bot docs</a></div>
       </section>
+      <section class="card">
+        <h2>Developer</h2>
+        <label class="switch-row"><input type="checkbox" id="devToggle"> <span><strong>Developer mode</strong><br><small class="muted">Adds small <code>{ }</code> buttons (chat list, chats, messages, calls) that open raw, copyable information: what is loaded, call frame rate, connection and WebRTC details, raw message data. Nothing changes on screen otherwise. Saved on this device.</small></span></label>
+        <div class="row wrap" style="margin-top:.7rem;align-items:center"><label class="lbl" style="margin:0">Live views: update speed and graph length</label><span id="devRateHost"></span></div>
+        <div class="row wrap" style="margin-top:.7rem"><button id="devAccountBtn" class="dev-btn" type="button">{ } Account info</button> <a class="btn small" href="plugins.html" id="pluginsLink">Plugins</a> <a class="btn small" href="plugin-docs.html">Plugin docs</a></div>
+        <p class="muted" id="verText" style="margin:.7rem 0 0"></p>
+      </section>
+      <section class="card">
+        <h2>Welcome tour</h2>
+        <p class="muted" style="margin-top:0">A short tour of profile options, privacy, encryption, calls and files.</p>
+        <button id="tourBtn" class="btn" type="button">Show the tour</button>
+      </section>
+      <section class="card" id="suggestCard">
+        <h2>Suggest a feature</h2>
+        <p class="muted" style="margin-top:0">Have an idea or found a problem? Write it here and it opens a ready-to-send email to the developer (bluetmaker@gmail.com) in your email app. You can also post it on GitHub, where others can see and vote on it.</p>
+        <label class="lbl" for="suggestText">Your idea</label>
+        <textarea id="suggestText" class="field" rows="4" maxlength="2000" placeholder="What would you like QuickMessage to do?"></textarea>
+        <div class="row wrap" style="margin-top:.6rem">
+          <button id="suggestSend" class="btn primary" type="button">Open email</button>
+          <button id="suggestCopy" class="btn" type="button">Copy text</button>
+          <a class="btn" href="https://github.com/BlueToadMakerr/message/issues/new" target="_blank" rel="noopener noreferrer">Suggest on GitHub</a>
+        </div>
+        <p class="hint">Nothing is sent by this page itself, and your account details are not included.</p>
+      </section>
+      </div>
 
-      <section class="card danger-zone">
-        <h2>Danger zone</h2>
-        <p class="muted" style="margin-top:0">Deleting your account is permanent. You'll be removed from your chats; messages you've already sent stay in them.</p>
-        <button id="deleteBtn" class="btn danger" type="button">Delete account</button>
-      </section>
     </div>
   </main>
 </div>

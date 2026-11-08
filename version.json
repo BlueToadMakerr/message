@@ -1,1 +1,1 @@
-{ "version": "1.55.1", "apiVersion": 1, "released": "2026-11-08", "notes": "Fix bot docs / status page reload loop; warn at start-up when the notification server is down." }
+{ "version": "1.56.1", "apiVersion": 1, "released": "2026-11-08", "notes": "Settings page split into sections." }

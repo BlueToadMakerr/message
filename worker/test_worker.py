@@ -94,6 +94,32 @@ w.handle_entry("alice", "ring", "c1", {**ring2, "fromUid": "alice"}); t("no devi
 ring3 = {"ringId": "r3", "fromUid": "mallory", "chatId": "c1", "createdAt": now()}; f.set("calls/c1/ringing/bob", ring3); w.handle_entry("bob", "ring", "c1", ring3); t("ring from non-member -> failed", f.get("calls/c1/ringing/bob/notifyStatus") == "failed")
 f.sent.clear(); w.handle_entry("bob", "ring", "c1", {**ring, "ringId": "r4", "createdAt": now() - 120000}); t("stale ring ignored", not f.sent)
 
+# clock skew must never swallow a call: live changes ignore timestamps, the start-up snapshot uses the database's clock
+f.sent.clear(); f.t["FCM"] = {"bob": {"webtok": True}}; skew = {"ringId": "r5", "fromUid": "alice", "chatId": "c1", "createdAt": now() - 3600_000}; f.set("calls/c1/ringing/bob", skew)
+w.handle_entry("bob", "ring", "c1", skew); t("snapshot: hour-old ring ignored", not f.sent)
+w.handle_entry("bob", "ring", "c1", skew, live=True); t("live change: handled whatever the timestamps say", len(f.sent) == 1 and f.get("calls/c1/ringing/bob/notifyStatus") == "sent")
+w.offset = -3600_000 + 5000; r6 = {"ringId": "r6", "fromUid": "alice", "chatId": "c1", "createdAt": now() - 3600_000 + 4000}; f.set("calls/c1/ringing/bob", r6); f.sent.clear()
+w.handle_entry("bob", "ring", "c1", r6); t("snapshot: the database clock decides (computer clock an hour off)", len(f.sent) == 1); w.offset = 0
+# a failing push is reported with its reason, never silently
+class Boom(Exception): pass
+orig = f.send_push; f.send_push = lambda tok, kind, p: (_ for _ in ()).throw(Boom("quota exceeded"))
+r7 = {"ringId": "r7", "fromUid": "alice", "chatId": "c1", "createdAt": now()}; f.set("calls/c1/ringing/bob", r7); w.handle_entry("bob", "ring", "c1", r7, live=True)
+t("failed push -> notifyStatus failed + notifyError", f.get("calls/c1/ringing/bob/notifyStatus") == "failed" and "Boom: quota exceeded" in f.get("calls/c1/ringing/bob/notifyError") and "Boom" in w.stats["lastPushError"] and "webtok" in f.get("FCM/bob"))
+f.send_push = orig
+r8 = {"ringId": "r8", "fromUid": "alice", "chatId": "c1", "createdAt": now()}; f.set("calls/c1/ringing/bob", r8); f.get = (lambda g: lambda p: (_ for _ in ()).throw(RuntimeError("db down")) if p.startswith("accsettings") else g(p))(f.get)
+w.handle_entry("bob", "ring", "c1", r8, live=True)
+t("an unexpected error is still answered", f.get("calls/c1/ringing/bob/notifyStatus") == "failed" and "RuntimeError" in f.get("calls/c1/ringing/bob/notifyError")); del f.get
+w.handle_entry("bob", "ring", "c1", {**r8, "ringId": "r9"}, live=True) if False else None
+f.t["FCM"] = {"bob": {"apptok": "android"}}; r9 = {"ringId": "r9", "fromUid": "bob", "chatId": "c1", "createdAt": now()}; f.set("calls/c1/ringing/bob", r9); w.handle_entry("bob", "ring", "c1", r9, live=True)
+t("ringing your own devices when only the Android app has a token: no_token, not failed", f.get("calls/c1/ringing/bob/notifyStatus") == "no_token")
+# dead tokens: only when the token itself is bad
+import firebase_admin.exceptions as FE
+real = W.FirebaseBackend.__new__(W.FirebaseBackend); real.messaging = type("M", (), {"UnregisteredError": type("U", (Exception,), {}), "SenderIdMismatchError": type("S", (Exception,), {})})
+class InvalidArgumentError(Exception): pass
+t("invalid payload does not delete tokens", not real.is_dead(InvalidArgumentError("Invalid JSON payload received")))
+t("invalid registration token does", real.is_dead(InvalidArgumentError("The registration token is not a valid FCM registration token")))
+t("unregistered does", real.is_dead(real.messaging.UnregisteredError("x")))
+
 # bot API
 H = lambda m, p, q=None, b=None, tok=token: botapi.handle(f, m, p, q or {}, b or {}, tok, w.stats)
 t("GET /me", H("GET", "/me")["id"] == "bot_abcdefghij12")

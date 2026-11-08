@@ -3,6 +3,7 @@
 //   Android: downloads the APK inside the app and installs it over the old one (Android asks once to allow installing from QuickMessage).
 //   iPhone:  iOS can't install an app by itself; the button opens the new .ipa in Safari, and you install it with your sideloading tool.
 import { confirmDialog, toast } from "./ui.js";
+import { saverOn, onSaverChange } from "./datasaver.js";
 
 const android = () => (window.QMApp && window.QMApp.appVersion && window.QMApp.downloadUpdate) ? window.QMApp : null;
 const ios = () => (window.__qmIosApp && window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.qmUpdate) ? window.webkit.messageHandlers.qmUpdate : null;
@@ -108,6 +109,9 @@ export async function checkForUpdate({ manual = false } = {}) {
 }
 
 if (window.top === window && updatesSupported()) {
-  setTimeout(() => checkForUpdate().catch(() => {}), 6000);
-  document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") checkForUpdate().catch(() => {}); });
+  // Automatic checks only run when Data Saver is off (the "Check for app updates" button on the Account page always works)
+  const auto = () => { if (!saverOn()) checkForUpdate().catch(() => {}); };
+  setTimeout(auto, 6000);
+  document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") auto(); });
+  onSaverChange(on => { if (!on) auto(); });
 }

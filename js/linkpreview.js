@@ -8,6 +8,7 @@ import { ref, get } from "./sdk.js";
 import { customDbUrl } from "./dburl.js";
 import { openImage } from "./viewer.js";
 import { audioPlayer, videoPlayer } from "./player.js";
+import { saverOn } from "./datasaver.js";
 
 const URL_RE = /https?:\/\/[^\s<>"']+/gi;
 const MAX_PER_MESSAGE = 2;
@@ -294,7 +295,12 @@ export function attachPreviews(bubble, text, { onLayout, enc } = {}) {
       if (node && !shown) { shown = node; box.append(node); onLayout && onLayout(box); }
       if (retry && ++tries <= 8) waitForNetwork(run);          // couldn't reach the server: look again once the connection is back
     }).catch(() => {});
-    run();
+    // Data Saver: a preview downloads a page (and its picture), so it waits for a tap
+    if (saverOn()) {
+      const g = el("button", "media-lazy saver-gate"); g.type = "button"; g.textContent = "\ud83d\udd17 Tap to load link preview (Data Saver)";
+      g.onclick = () => { g.remove(); run(); };
+      box.append(g);
+    } else run();
   });
 }
 

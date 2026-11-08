@@ -35,6 +35,7 @@ import { resolveRecipient } from "./recipient.js";
 import { ensureFriend } from "./friend.js";
 
 import "./serverbox.js";
+import { saverOn } from "./datasaver.js";
 window.__qmBooted = true;      // js/legacy.js: the app's scripts did start
 hydrateIcons();
 
@@ -700,7 +701,7 @@ onAuthStateChanged(auth, async user => {
   setupNotifications(user.uid).catch(err => console.error("Notification setup failed", err));
   // Is the notification server (worker/) up? If not, say so: notifications can fail for other people too.
   import("./serverstatus.js").then(m => {
-    const last = {}, check = () => m.checkNotificationServer((t) => toast(t, "error", 15000), last).catch(() => {});
+    const last = {}, check = () => saverOn() || m.checkNotificationServer((t) => toast(t, "error", 15000), last).catch(() => {});
     setTimeout(check, 4000); clearInterval(window.__qmSrvTimer); window.__qmSrvTimer = setInterval(check, 5 * 60 * 1000);
   });
   try { maybeShowTour(user, { openAccount: () => QM.openPane("account") }); } catch (err) { console.error("Welcome tour failed", err); }

@@ -635,7 +635,7 @@ class NotifyService : Service() {
         } catch (_: Exception) {}
         val id = m.optString("id")
         // a photo is shown big in the notification (decoded here: from the media node, or decrypted when the chat is encrypted)
-        if (textOf(chatId, m, preview = true) == "📷 Photo") { val bmp = try { loadImage(chatId, id) } catch (_: Exception) { null }; if (bmp != null) imgBmp[chatId] = bmp else imgBmp.remove(chatId) } else imgBmp.remove(chatId)
+        if (!DataSaver.active() && textOf(chatId, m, preview = true) == "📷 Photo") { val bmp = try { loadImage(chatId, id) } catch (_: Exception) { null }; if (bmp != null) imgBmp[chatId] = bmp else imgBmp.remove(chatId) } else imgBmp.remove(chatId)
         if (list.none { it.id == id }) list.add(Msg(id, textOf(chatId, m, preview = true), m.optLong("timestamp", System.currentTimeMillis()), from))
         while (list.size > 8) list.removeAt(0)
         postMessages(chatId)

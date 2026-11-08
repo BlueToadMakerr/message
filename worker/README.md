@@ -27,3 +27,7 @@ Optional: `--http-api` also serves the same bot API over HTTP (`/api/bot/...`, `
 * If the computer is off: nothing is lost in the chats; bots' requests wait in the inbox for up to 10 minutes (older ones are answered with "too old"). After it comes back it notifies for messages and rings newer than `--catchup` seconds (rings: 45 seconds). The Android app only gets pushes while the worker runs, but opening the app always catches up.
 * Test it without Firebase: `python3 test_worker.py`.
 * Not run against real Firebase during development (no access there): if something doesn't arrive, run with `QM_DEBUG=1` and read the console.
+
+## When a call says "The notification couldn't be sent"
+
+The call page now shows the reason. Look at the **Status page → "Last push error"** (or the worker's console; run with `QM_DEBUG=1` for details). Typical causes: the service account doesn't have the *Firebase Cloud Messaging API (V1)* enabled / permission, the device's token is stale (the person must re-enable notifications), or the computer's clock is far off (the status page shows a clock difference). "The notification server didn't answer" means the worker isn't running or can't reach the database.

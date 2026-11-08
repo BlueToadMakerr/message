@@ -1,7 +1,8 @@
 // Site version. Bump SITE_VERSION here and in version.json (the file the check reads) on every release.
 // API_VERSION is the plugin API (docs: plugin-docs.html): it only changes when a plugin could stop working.
-export const SITE_VERSION = "1.55.1";
+export const SITE_VERSION = "1.56.1";
 export const API_VERSION = 1;
+import { saverOn, onSaverChange } from "./datasaver.js";
 const KEY = "qm-latest";
 
 /** Compare dotted versions ("1.10.0" > "1.9.2"). Returns -1, 0 or 1. Missing parts count as 0. */
@@ -45,5 +46,7 @@ export function watchSiteVersion() {
     document.body.prepend(bar);
   };
   const run = () => checkSiteVersion().then(show);
-  run(); setInterval(run, 30 * 60 * 1000);
+  // Data Saver: no automatic version checks (they start again when it is switched off)
+  const auto = () => { if (!saverOn()) run(); };
+  auto(); setInterval(auto, 30 * 60 * 1000); onSaverChange(on => { if (!on) run(); });
 }

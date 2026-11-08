@@ -174,13 +174,15 @@ function drawWave(cv, peaks, frac) {
   }
 }
 
+import { saverOn } from "./datasaver.js";
+const netSaver = src => saverOn() && /^https?:/i.test(src);       // Data Saver: don't even read the first bytes until Play is pressed
 const TOP = (() => { try { void window.top.document; return window.top; } catch (_) { return window; } })();
 
 /** Audio plays from an element that lives in the top window, so it keeps going when you leave the chat (and in the background). */
 function topAudio(src) {
   const cur = TOP.__qmAudio;
   if (cur && cur.dataset.src === src) return cur;
-  const a = new TOP.Audio(); a.preload = "metadata"; a.dataset.src = src; a.src = src;
+  const a = new TOP.Audio(); a.preload = netSaver(src) ? "none" : "metadata"; a.dataset.src = src; a.src = src;
   return a;
 }
 function mediaSession(a, title) {
@@ -257,7 +259,7 @@ export function audioPlayer(src, { title = "", name = "", wave: waveData = "", d
 export function videoPlayer(src, { poster = "", onLayout, autoplay = false, title = "", name = "" } = {}) {
   const root = mk("div", "qp qp-video paused");
   root.tabIndex = 0;
-  const v = document.createElement("video"); v.playsInline = true; v.preload = "metadata"; v.src = src; if (poster) v.poster = poster; if (title) v.title = title;
+  const v = document.createElement("video"); v.playsInline = true; v.preload = netSaver(src) ? "none" : "metadata"; v.src = src; if (poster) v.poster = poster; if (title) v.title = title;
   v.setAttribute("webkit-playsinline", "");
   const big = btn("qp-big", "Play", icon("play", 34));
   const bar = mk("div", "qp-bar");

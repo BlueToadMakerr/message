@@ -10,7 +10,8 @@ import { getProfile } from "./users.js";
 import { watchDeclines } from "./declines.js";
 import { iosUploads, iosUploadFailed } from "./ios-notify.js";     // iPhone app: defines window.__qmIosCall (pauses the background-keepalive during calls)
 import { plugins as pluginHost } from "./plugins.js";    // Developer-mode plugins (sandboxed): see plugin-docs.html
-import { watchSiteVersion } from "./version.js";
+import { watchSiteVersion, SITE_VERSION } from "./version.js";
+import { watchSavedCopy, copyStatus, setSafeMode } from "./sitecopy.js";
 import "./viewer.js";                 // registers window.__qmOpenImage: images from every frame open full-screen here
 
 const $ = id => document.getElementById(id);
@@ -78,6 +79,14 @@ function showFrameError(frame, on) {
   box.innerHTML = `<div><strong>This page didn't load.</strong><p>Check your connection and try again.</p><button type="button" class="btn primary">Try again</button></div>`;
   box.querySelector("button").onclick = () => { box.remove(); const cf = document.getElementById(frame.id) || frame; const w = watch.get(cf); const base = w ? w.base : cf.dataset.src || cf.src; if (w) w.tries = 0; navFrame(cf, base, false); };
   host.append(box);
+  // Maybe a broken update: offer the last working copy of the site
+  copyStatus().then(st => {
+    if (!st || !st.has || st.safe || !box.isConnected) return;
+    const p = box.querySelector("p"); if (p) p.textContent = "Check your connection and try again. If this started after an update of QuickMessage, you can use the last working copy instead.";
+    const b = document.createElement("button"); b.type = "button"; b.className = "btn"; b.textContent = "Use the last working copy"; b.style.marginLeft = ".5rem";
+    b.onclick = async () => { b.disabled = true; await setSafeMode(true); location.reload(); };
+    box.querySelector("button").after(b);
+  }).catch(() => {});
 }
 // A frame that ended up showing the app shell itself (e.g. a stray link to index.html) is sent back to what it should show.
 function frameEscaped(frame) {
@@ -548,7 +557,7 @@ export function initShell(userId) {
   if (nested) return;
   uid = userId;
   getProfile(userId).then(p => pluginHost.setContext({ uid: userId, name: p.displayName || "" })).catch(() => {});
-  if (!wired) { wired = true; wire(); watchSiteVersion(); }
+  if (!wired) { wired = true; wire(); watchSiteVersion(); watchSavedCopy(SITE_VERSION); }
   { const v = viewFromUrl(); depth = 0; history.replaceState({ qm: 1, d: 0, v }, "", location.href); render(v); }
   const q = new URLSearchParams(location.search);
   // A call link / notification carries a one-shot timestamp. It must be fresh AND come from a real navigation, so

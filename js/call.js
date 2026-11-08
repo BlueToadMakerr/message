@@ -1127,19 +1127,23 @@ async function ringUser(uid) {
   let ringId = null;
   try {
     ringId = await startRing(chatId, S.me, uid);
-    // The push is sent by a Firebase Cloud Function the moment the ring is written (functions/index.js); it reports back in notifyStatus.
+    // The push is sent by the notification server (worker/qm_worker.py) the moment the ring is written; it reports back in notifyStatus.
     // Nothing here touches the website's host, so it works the same from an offline copy of the site.
+    let why = "";
     const status = await new Promise(res => {
-      let off = () => {}, t = setTimeout(() => { off(); res("failed"); }, 15000);
-      off = onValue(ref(db, `calls/${chatId}/ringing/${uid}/notifyStatus`), s => {
-        const v = s.val();
-        if (v === "sent" || v === "no_token" || v === "failed") { clearTimeout(t); off(); res(v); }
+      let off = () => {}, t = setTimeout(() => { off(); res("timeout"); }, 15000);
+      off = onValue(ref(db, `calls/${chatId}/ringing/${uid}`), s => {
+        const r = s.val() || {};
+        if (r.notifyStatus === "sent" || r.notifyStatus === "no_token" || r.notifyStatus === "failed") {
+          why = r.notifyError || ""; clearTimeout(t); off(); res(r.notifyStatus);
+        }
       });
     });
     say(status === "sent" ? "Notification sent" : status === "no_token" ? "No notification device" : "Notification failed");
     if (status === "sent") toast("Ringing " + (uid === S.me ? "your other devices" : profileOf(uid).displayName), "success");
     else if (status === "no_token") toast("They haven't enabled notifications on any device — they'll only see the ring if the call page is open.", "info", 5000);
-    else toast("The notification couldn't be sent.", "error");
+    else if (status === "timeout") toast("The notification server didn't answer, so they may not be notified. It may be offline (see Status).", "error", 6000);
+    else toast("The notification couldn't be sent" + (why ? ": " + why : "."), "error", 7000);
   } catch (err) {
     console.error(err);
     toast("Couldn't ring them.", "error");
