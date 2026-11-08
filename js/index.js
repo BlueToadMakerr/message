@@ -36,6 +36,7 @@ import { ensureFriend } from "./friend.js";
 
 import "./serverbox.js";
 import { saverOn } from "./datasaver.js";
+import { getSWR, onValueSWR, ocGet, ocSet, ocAccount, offlineOn, begin as beginSync } from "./offline.js";
 window.__qmBooted = true;      // js/legacy.js: the app's scripts did start
 hydrateIcons();
 
@@ -155,9 +156,23 @@ function loadChats(uid) {
   listTimers.push(setTimeout(() => { if (listState === "loading" || listState === "slow") fail(new Error("timeout")); }, 20000));
   listTimers.push(setTimeout(() => { settleOverride = true; schedule(); }, 25000));
   // the listener first: the get() that follows is then answered from what the listener already downloaded (one download, not two)
-  globalUnsubs.push(onChildAdded(listRef, snap => attachChat(uid, snap.key), fail));
-  globalUnsubs.push(onChildRemoved(listRef, snap => detachChat(snap.key)));
-  get(listRef).then(() => { listState = "ready"; schedule(); }, fail);
+  // Offline data: the chats seen last time appear at once (from the saved copies), while the live list is fetched.
+  let cachedIds = new Set(), endSync = null;
+  if (offlineOn()) ocGet("ids:" + uid).then(hit => {
+    if (!hit || !Array.isArray(hit.v) || currentUid !== uid || listState === "ready") return;
+    cachedIds = new Set(hit.v); endSync = beginSync("chats"); hit.v.forEach(id => attachChat(uid, id)); schedule();
+  }).catch(() => {});
+  const saveIds = () => { clearTimeout(saveIds.t); saveIds.t = setTimeout(() => { if (listState === "ready" && currentUid === uid) ocSet("ids:" + uid, [...chats.keys()]); }, 1500); };
+  globalUnsubs.push(onChildAdded(listRef, snap => { attachChat(uid, snap.key); saveIds(); }, fail));
+  globalUnsubs.push(onChildRemoved(listRef, snap => { detachChat(snap.key); saveIds(); }));
+  get(listRef).then(s => {
+    listState = "ready";
+    const real = new Set(Object.keys(s.val() || {}));
+    for (const id of cachedIds) if (!real.has(id)) detachChat(id);                 // removed while this device wasn't looking
+    if (endSync) { endSync(); endSync = null; }
+    if (offlineOn()) ocSet("ids:" + uid, [...real]);
+    schedule();
+  }, e => { if (endSync && navigator.onLine !== false) { endSync(); endSync = null; } fail(e); });
 }
 
 async function attachChat(uid, chatId) {
@@ -170,7 +185,7 @@ async function attachChat(uid, chatId) {
 
   let participants = null;
   try {
-    participants = (await get(ref(db, `privateChats/${chatId}/participants`))).val();
+    participants = (await getSWR(ref(db, `privateChats/${chatId}/participants`))).val();
   } catch { /* treat as inaccessible */ }
   if (chats.get(chatId) !== s) return; // detached while loading
 
@@ -188,8 +203,9 @@ async function attachChat(uid, chatId) {
   });
 
   const listen = (path, cb) => s.off.push(onValue(ref(db, path), cb, () => {}));
+  const listenSaved = (path, cb) => s.off.push(onValueSWR(ref(db, path), cb, () => {}));          // shows the saved copy first, then the live value
   // name, photo and encryption flag are one listener on chatData (three listeners used to ask the server three times)
-  listen(`privateChats/${chatId}/chatData`, snap => {
+  listenSaved(`privateChats/${chatId}/chatData`, snap => {
     const d = snap.val() || {};
     s.customPhoto = d.photo || ""; s.customName = d.name || "";
     const on = d.encrypted === true;
@@ -198,7 +214,7 @@ async function attachChat(uid, chatId) {
     schedule();
   });
   listen(`privateChats/${chatId}/keys`, snap => { s.keys = snap.val() || null; checkKey(s); });
-  listen(`privateChats/${chatId}/lastMessage`, snap => {
+  listenSaved(`privateChats/${chatId}/lastMessage`, snap => {
     s.settled = true;
     if (!snap.exists()) {
       detachChat(chatId);
@@ -663,6 +679,7 @@ onAuthStateChanged(auth, async user => {
   loadingEl.classList.add("hidden");
   window.__qmReady = true;
 
+  ocAccount(user ? user.uid : null).catch(() => {});          // saved offline data is wiped on sign-out / when another account signs in
   if (!user) {
     currentUid = null;
     resetShell();
@@ -681,22 +698,30 @@ onAuthStateChanged(auth, async user => {
 
   renderList();
 
-  try {
-    const profile = await ensureProfile(user);
-    ensureFriend(user.uid).catch(() => {});                 // everyone gets a friend code (needed to be found by others)
-    accountLink.replaceChildren(avatarEl(profile.displayName, profile.pfp, "avatar sm"));
-    if (profile.theme && profile.theme !== (localStorage.getItem("theme") || "system")) applyTheme(profile.theme);
-  } catch (err) {
-    console.error("Profile setup failed", err);
-    accountLink.innerHTML = icon("users", 20);
-  }
+  // On a slow connection nothing here waits for the network any more than it has to: the chat list starts from the saved copy at once,
+  // and the profile / encryption set-up carry on in the background (a slow set-up is given 2 s before the list starts without it).
+  const profileP = (async () => {
+    try {
+      const profile = await ensureProfile(user);
+      ensureFriend(user.uid).catch(() => {});                 // everyone gets a friend code (needed to be found by others)
+      accountLink.replaceChildren(avatarEl(profile.displayName, profile.pfp, "avatar sm"));
+      if (profile.theme && profile.theme !== (localStorage.getItem("theme") || "system")) applyTheme(profile.theme);
+    } catch (err) {
+      console.error("Profile setup failed", err);
+      accountLink.innerHTML = icon("users", 20);
+    }
+  })();
+  accountLink.innerHTML = icon("users", 20);
 
   if (auth.currentUser?.uid !== user.uid) return; // signed out/switched meanwhile
   paintVerifyBanner(); watchVerified(paintVerifyBanner);
-  await setupEncryption(user);
+  const encP = setupEncryption(user);
+  await Promise.race([encP.catch(() => {}), new Promise(r => setTimeout(r, offlineOn() ? 2000 : 60000))]);
   if (auth.currentUser?.uid !== user.uid) return;
   loadChats(user.uid);
   initShell(user.uid);
+  encP.then(() => { for (const s of chats.values()) if (s.last && s.last.enc) openPreview(s.id, s.last).then(t => { s.lastText = t; schedule(); }).catch(() => {}); }).catch(() => {});
+  void profileP;
   accountLink.onclick = e => { if (e.metaKey || e.ctrlKey || e.shiftKey) return; e.preventDefault(); QM.openPane("account"); };
   setupNotifications(user.uid).catch(err => console.error("Notification setup failed", err));
   // Is the notification server (worker/) up? If not, say so: notifications can fail for other people too.

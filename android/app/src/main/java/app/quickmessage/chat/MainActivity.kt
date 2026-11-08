@@ -518,7 +518,9 @@ class MainActivity : Activity() {
         @JavascriptInterface fun enterPipSized(w: Int, h: Int) = runOnUiThread { if (w > 0 && h > 0) pipRatio = Rational(w.coerceIn(1, 4000), h.coerceIn(1, 4000)); enterPipNow() }
 
         /** The website says whether a call is up / on screen. */
+        @Suppress("DEPRECATION")
         @JavascriptInterface fun setInCall(joined: Boolean, shown: Boolean) = runOnUiThread {
+            val wasIn = inCall
             inCall = joined; callVisible = joined && shown
             // Joined a call while the phone is locked (answered from the lock screen, or a call that started while it was locked):
             // lock the app down to the call until the user unlocks the phone.
@@ -527,11 +529,25 @@ class MainActivity : Activity() {
                 if (Build.VERSION.SDK_INT >= 27) setShowWhenLocked(true)
             }
             NotifyService.setCall(this@MainActivity, joined)
-            val am = getSystemService(AUDIO_SERVICE) as AudioManager
-            am.mode = if (joined) AudioManager.MODE_IN_COMMUNICATION else AudioManager.MODE_NORMAL
-            if (joined) {          // calls start on the speaker (the page may switch to the saved output a moment later)
-                Telecomm.route(android.media.AudioDeviceInfo.TYPE_BUILTIN_SPEAKER)
-                routeCall(am, android.media.AudioDeviceInfo.TYPE_BUILTIN_SPEAKER, null)
+            // This is called every time the call page is shown or hidden: the audio is only touched when the call really starts or ends
+            // (it used to be pushed back to the speaker each time, undoing the output the user had chosen).
+            if (joined != wasIn) {
+                val am = getSystemService(AUDIO_SERVICE) as AudioManager
+                am.mode = if (joined) AudioManager.MODE_IN_COMMUNICATION else AudioManager.MODE_NORMAL
+                if (joined) {
+                    // a call starts on the output saved last time (earpiece, headset, …), or on the speaker when none was chosen
+                    val saved = getSharedPreferences("quickmessage", MODE_PRIVATE).getString("audioOut", null)
+                    val dev = saved?.let { k -> am.getDevices(AudioManager.GET_DEVICES_OUTPUTS).firstOrNull { audioKey(it) == k } }
+                    val type = dev?.type ?: android.media.AudioDeviceInfo.TYPE_BUILTIN_SPEAKER
+                    Telecomm.route(type)
+                    routeCall(am, type, dev?.id)
+                } else {
+                    // leave nothing behind: the speaker / Bluetooth stay on after a call otherwise
+                    try {
+                        if (Build.VERSION.SDK_INT >= 31) am.clearCommunicationDevice()
+                        else { am.stopBluetoothSco(); am.isBluetoothScoOn = false; am.isSpeakerphoneOn = false }
+                    } catch (_: Exception) { }
+                }
             }
             updatePip()
         }
@@ -574,6 +590,7 @@ class MainActivity : Activity() {
         @JavascriptInterface fun setAudioOutput(key: String): Boolean {
             val am = getSystemService(AUDIO_SERVICE) as AudioManager
             val dev = am.getDevices(AudioManager.GET_DEVICES_OUTPUTS).firstOrNull { audioKey(it) == key } ?: return false
+            getSharedPreferences("quickmessage", MODE_PRIVATE).edit().putString("audioOut", key).apply()
             Telecomm.route(dev.type)
             return routeCall(am, dev.type, dev.id)
         }

@@ -13,6 +13,7 @@ import { initCallBanner } from "./call-banner.js";
 import { PRIVATE } from "./mode.js";
 import { cacheGet, cachePut, cacheDrop, cachePrune } from "./mediacache.js";
 import { saverOn, gateNode, onSaverChange } from "./datasaver.js";
+import { ocGet, ocSet, savedPage, SavedSnap, offlineOn, begin as beginSync, getSWR, onValueSWR } from "./offline.js";
 import { QM, enterShell, trackSplit, toHome, markReady } from "./embed.js";
 import { isLitterUrl, fmtBytes, kindOf, relayMax } from "./litter.js";
 import { uploadToHosts, fmtTtl, fmtLimit } from "./hosts.js";
@@ -498,8 +499,17 @@ function appendLive(key, msg) {
   return el;
 }
 
+// Offline data: the newest messages of this chat as they are stored in the database (encrypted ones stay encrypted), saved so the chat opens at once.
+const rawByKey = new Map();
+let persistT = null;
+function persistPage() {
+  if (!offlineOn() || !ready) return;
+  clearTimeout(persistT);
+  persistT = setTimeout(() => { const keys = [...rawByKey.keys()].sort().slice(-PAGE); ocSet("page:" + chatId, keys.map(k => [k, rawByKey.get(k)])); }, 2000);
+}
 function onAdded(snap) {
   const raw = snap.val();
+  if (raw) { rawByKey.set(snap.key, raw); persistPage(); }
   if (!raw || document.getElementById("msg-" + snap.key) || pendingKeys.has(snap.key)) return;   // pending: finishJob swaps it in
   const pr = protect();
   if (pr && raw.type !== "event" && !(raw.timestamp >= pr.since())) return;
@@ -519,6 +529,7 @@ function onAdded(snap) {
 function onChanged(snap) {
   const raw = snap.val();
   if (!raw) return;
+  rawByKey.set(snap.key, raw); persistPage();
   addQ = addQ.then(async () => {
     const msg = await hydrate(raw);
     msgData.set(snap.key, msg);
@@ -528,6 +539,7 @@ function onChanged(snap) {
 }
 
 function onRemoved(snap) {
+  rawByKey.delete(snap.key); persistPage();
   cacheDrop(chatId, snap.key);                          // its picture / clip / voice note is no longer worth keeping on this device
   msgData.delete(snap.key);
   document.getElementById("msg-" + snap.key)?.remove();
@@ -1706,10 +1718,10 @@ async function dropKeyIfUnused() {
 }
 async function setupKeys() {
   try {
-    chatEncrypted = (await get(ref(db, `${chatPath}/chatData/encrypted`))).val() === true;
+    chatEncrypted = ((await getSWR(ref(db, `${chatPath}/chatData`))).val() || {}).encrypted === true;
     if (!E2E.ready()) { keyState = "waiting"; paintEnc(); return; }
     let key = await E2E.getChatKey(chatId);
-    const members = Object.keys((await get(ref(db, `${chatPath}/participants`))).val() || {});
+    const members = Object.keys((await getSWR(ref(db, `${chatPath}/participants`))).val() || {});
     if (!key && chatEncrypted && !(await get(ref(db, `${chatPath}/keys`))).exists()) {
       // flagged encrypted but nobody has made a key yet (e.g. created by an older client): make it now
       const { wrapped } = await E2E.createChatKey(chatId, members);
@@ -1806,7 +1818,7 @@ onAuthStateChanged(auth, async user => {
   ensureProfile(user).catch(() => {});
 
   // Membership + header (also detects being removed from the chat)
-  onValue(ref(db, `${chatPath}/participants`), snap => {
+  onValueSWR(ref(db, `${chatPath}/participants`), snap => {
     const v = snap.val();
     if (!v || !v[me]) { leaveChat("You're no longer in this chat."); return; }
     participants = Object.keys(v);
@@ -1815,7 +1827,7 @@ onAuthStateChanged(auth, async user => {
     if (optionsDialog.open) renderParticipants();
   }, () => leaveChat("You don't have access to this chat."));
 
-  onValue(ref(db, `${chatPath}/chatData`), snap => {        // name, photo and the encryption flag: one listener
+  onValueSWR(ref(db, `${chatPath}/chatData`), snap => {        // name, photo and the encryption flag: one listener
     const d = snap.val() || {};
     customPhoto = d.photo || ""; customName = d.name || ""; chatEncrypted = d.encrypted === true;
     updateHeader(); paintEnc();
@@ -1834,35 +1846,70 @@ onAuthStateChanged(auth, async user => {
   }, () => {});
 
   // ---- encryption: this device's identity, whether the chat is encrypted, and the chat key
-  const idState = await E2E.init(me).catch(() => "error");
-  E2E.onRemoteIdentity(async () => {                                        // identity restored in another frame → unlock this chat in place
-    if (E2E.ready()) return;
-    await E2E.init(me).catch(() => {});
+  // (runs alongside the loading of the messages: on a slow connection the saved messages must not wait for it)
+  const encP = (async () => {
+    await E2E.init(me).catch(() => "error");
+    E2E.onRemoteIdentity(async () => {                                        // identity restored in another frame → unlock this chat in place
+      if (E2E.ready()) return;
+      await E2E.init(me).catch(() => {});
+      await setupKeys();
+      refreshLocked();
+    });
     await setupKeys();
-    refreshLocked();
-  });
-  await setupKeys();
-  {   // the chat's key changed or was removed (re-enabled with a fresh one, or deleted): forget the old one and look again
-    let first = true, last = null;
-    onValue(ref(db, `${chatPath}/keys`), async snap => {
-      const wasLost = E2E.isChatLost(chatId);
-      keysExist = snap.exists();
-      keyHolders = Object.keys(snap.val() || {});
-      E2E.setChatLost(chatId, !keysExist);                                   // nobody holds a key any more → old encrypted messages are lost
-      const sig = JSON.stringify((snap.val() || {})[me] || null);
-      if (!first && sig !== last) { E2E.forgetChatKey(chatId); await setupKeys(); refreshLocked(); }
-      else if (wasLost !== !keysExist) refreshLocked();
-      if (optionsDialog.open) renderParticipants();
-      first = false; last = sig; paintEnc();
-    }, () => {});
-  }
+    {   // the chat's key changed or was removed (re-enabled with a fresh one, or deleted): forget the old one and look again
+      let first = true, last = null;
+      onValue(ref(db, `${chatPath}/keys`), async snap => {
+        const wasLost = E2E.isChatLost(chatId);
+        keysExist = snap.exists();
+        keyHolders = Object.keys(snap.val() || {});
+        E2E.setChatLost(chatId, !keysExist);                                   // nobody holds a key any more → old encrypted messages are lost
+        const sig = JSON.stringify((snap.val() || {})[me] || null);
+        if (!first && sig !== last) { E2E.forgetChatKey(chatId); await setupKeys(); refreshLocked(); }
+        else if (wasLost !== !keysExist) refreshLocked();
+        if (optionsDialog.open) renderParticipants();
+        first = false; last = sig; paintEnc();
+      }, () => {});
+    }
+
+  })().catch(e => console.warn("encryption setup", e));
   paintVerify(); watchVerified(paintVerify);
 
   // Initial page of history, then a live window starting at its oldest message.
   historyStatus.textContent = "Loading messages…";
   const slowT = setTimeout(() => { if (!ready) historyStatus.textContent = "Still loading… your connection looks slow"; }, 5000);
   try {
-    const initSnap = await Promise.race([get(query(messagesRef, orderByKey(), limitToLast(PAGE))), new Promise((_, rej) => setTimeout(() => rej(new Error("timeout")), 25000))]);
+    // Saved copy first when the live page is slow (1.2 s) or can't arrive; the live page is always fetched and then reconciles what was shown.
+    const pageQ = query(messagesRef, orderByKey(), limitToLast(PAGE));
+    const realP = get(pageQ);
+    const saved = offlineOn() ? await ocGet("page:" + chatId).catch(() => undefined) : undefined;
+    const savedItems = saved && Array.isArray(saved.v) && saved.v.length ? saved.v : null;
+    let shownSaved = null;
+    const initSnap = await new Promise((res, rej) => {
+      const t25 = setTimeout(() => rej(new Error("timeout")), 25000);
+      const useSaved = () => { if (shownSaved) return; shownSaved = savedItems; res(savedPage(savedItems)); };
+      const tS = savedItems ? setTimeout(useSaved, 1000) : null;
+      realP.then(s => { clearTimeout(t25); clearTimeout(tS); res(s); }, e => { clearTimeout(t25); clearTimeout(tS); if (savedItems) useSaved(); else rej(e); });
+    });
+    const keepPage = s => { const it = []; s.forEach(x => { it.push([x.key, x.val()]); }); return it; };
+    realP.then(s => ocSet("page:" + chatId, keepPage(s)), () => {});
+    if (shownSaved) {
+      // what the live page says about the messages that were shown from the saved copy: deleted ones go, edited ones update, new ones appear
+      const endSync = beginSync("messages");
+      let reconciled = false;
+      const reconcile = s => {
+        if (!ready) { setTimeout(() => reconcile(s), 150); return; }                      // after the saved messages are on screen
+        if (reconciled) return; reconciled = true;
+        const real = keepPage(s), realKeys = new Set(real.map(x => x[0])), first = real.length ? real[0][0] : null;
+        for (const [k] of shownSaved) if (!realKeys.has(k) && (first === null || k >= first)) onRemoved(new SavedSnap(null, k, null));
+        for (const [k, v] of real) { const mine = rawByKey.get(k); if (!mine) onAdded(new SavedSnap(null, k, v)); else if (JSON.stringify(mine) !== JSON.stringify(v)) onChanged(new SavedSnap(null, k, v)); }
+        endSync();
+      };
+      const retryOnline = () => {
+        let off = () => {};
+        off = onValue(ref(db, ".info/connected"), c => { if (c.val() === true) { off(); get(pageQ).then(reconcile, retryOnline); } }, () => {});
+      };
+      realP.then(reconcile, retryOnline);
+    }
     clearTimeout(slowT);
     if (historyStatus.textContent.startsWith("Loading") || historyStatus.textContent.startsWith("Still loading")) historyStatus.textContent = "";
     const initial = [];
@@ -1885,6 +1932,8 @@ onAuthStateChanged(auth, async user => {
       messagesDiv.prepend(b);
       const t = setInterval(() => { if (!protect()) { clearInterval(t); location.reload(); } }, 1000);
     }
+    await Promise.race([encP, new Promise(r => setTimeout(r, offlineOn() ? 1500 : 60000))]);          // the chat key, unless that is slow (then the messages show locked, and unlock below)
+    keep.forEach(s => rawByKey.set(s.key, s.val()));
     const plains = await Promise.all(keep.map(s => hydrate(s.val())));
     keep.forEach((s, i) => appendLive(s.key, plains[i]));
     renderReceipts();
@@ -1894,6 +1943,7 @@ onAuthStateChanged(auth, async user => {
     fillViewport();
     cachePrune(chatId, oldestKey ?? "", new Set(msgData.keys())).catch(() => {});      // anything deleted while this device was away
 
+    encP.then(() => { try { refreshLocked(); } catch (_) { /* ignore */ } });
     const live = query(messagesRef, orderByKey(), startAt(oldestKey ?? ""));
     onChildAdded(live, onAdded);
     onChildChanged(live, onChanged);

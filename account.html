@@ -248,6 +248,14 @@
         <select id="saverMode" class="field"></select>
         <p id="saverNow" class="muted" style="margin-bottom:0"></p>
       </section>
+      <section class="card" id="offlineCard">
+        <h2>Offline data</h2>
+        <p class="muted" style="margin-top:0">Your chat list, the newest messages of each chat, and profiles are kept on this device so they show right away on a slow or missing connection. The latest data is always fetched too, and a small "Updating…" note shows until it arrives. It is erased when you sign out.</p>
+        <label class="row" style="gap:.5rem;align-items:center"><input type="checkbox" id="offlineOn"> Keep chats and messages for offline use</label>
+        <p id="offlineNow" class="muted"></p>
+        <button id="offlineClear" class="btn" type="button">Clear offline data</button>
+      </section>
+
       <section class="card" id="mediaCard">
         <h2>Stored media</h2>
         <p class="muted" style="margin-top:0">Pictures, videos and voice notes are kept on this device after the first download, so the database never has to send them again. They are removed when the message is deleted, and the oldest go first when the limit is reached.</p>

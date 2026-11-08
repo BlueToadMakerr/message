@@ -2,6 +2,11 @@
 
 Newest first. Older rounds (1–43) are kept below exactly as they were written.
 
+## 1.57.0 — Offline data, "Updating…" note, Android call audio fix
+
+- **Offline data.** The chat list, each chat's details and last message, the newest 30 messages of every chat you open, and profiles are kept on the device (IndexedDB). On a slow or missing connection they show right away (after 1 s of waiting for the live answer, instantly for the chat list); **the live data is always fetched too** and replaces what was shown: deleted messages disappear, edited ones update, new ones appear, removed chats leave the list. While the live data is still on its way a small pill at the top says **"Updating…"** (**"Still updating… slow connection"** after 10 s, **"Offline — showing saved data"** when the device is offline). Start-up no longer waits for the profile, key check or encryption set-up before showing the list (a slow key check gets 1.2 s, then this device's own key is used and the check finishes in the background; a reset found later locks the identity again). Encrypted messages stay encrypted on disk. Everything is erased on sign-out (and when another account signs in); size is capped at 30 MB; Account → Data & storage → *Offline data* has a switch and a Clear button. Pictures, videos and voice notes were already kept by *Stored media*.
+- **Android: calls no longer jump to the speaker.** Showing or hiding the call page re-applied "speaker" every time, undoing the output you chose. The app now only touches the audio when a call really starts or ends; a call starts on the output you used last (speaker if you never chose), and when it ends the speaker / Bluetooth route is released.
+
 ## 1.56.1 — Settings in sections
 
 - The Account page is now **Settings**, split into sections: **Account** (opens by default: profile, friend code, sign-in, password, log out, delete account), **Appearance**, **Calls & notifications** (call notification, audio, screen sharing, call display), **Privacy & security** (privacy, encryption, file hosting), **Data & storage** (Data Saver, stored media, saved copy, site updates, compatibility mode) and **Advanced** (bots, developer, welcome tour, suggest a feature). `account.html?tab=data` (also `appearance`, `calls`, `privacy`, `advanced`) opens a section directly. Nothing was removed.

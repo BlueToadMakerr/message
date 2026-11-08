@@ -101,7 +101,23 @@ export async function init(uid) {
     if (ident && ident.uid === uid) return "ready";
     const local = await kvGet("id:" + uid);
     if (local) {
-      const remote = (await get(ref(db, `userKeys/${uid}/pub`)).catch(() => null))?.val();
+      // The check that the keys weren't reset elsewhere needs the network. On a slow connection (offline data on) it gets 2 s; after that this
+      // device's own key is used right away and the check finishes in the background (a reset found later locks this device's identity again).
+      const remoteP = get(ref(db, `userKeys/${uid}/pub`)).then(s => s.val(), () => null);
+      let remote = null;
+      const slow = Symbol("slow");
+      if (localStorage.getItem("qm-offline") !== "off") remote = await Promise.race([remoteP, new Promise(r => setTimeout(() => r(slow), 1200))]); else remote = await remoteP;
+      if (remote === slow) {
+        await adopt(uid, local);
+        remoteP.then(async r => {
+          if (typeof r === "string" && r !== pubStr(local)) {
+            await kvSet("id:" + uid, null); await kvSet("code:" + uid, null);
+            try { window.QMApp && window.QMApp.setCryptoKey && window.QMApp.setCryptoKey(uid, ""); } catch (_) { /* ignore */ }
+            if (ident && ident.uid === uid) { ident = null; keyCache.clear(); emit(); }
+          } else if (ident && ident.uid === uid && r !== ident.pubStr) update(ref(db, `userKeys/${uid}`), { pub: ident.pubStr, fp: ident.fp }).catch(() => {});
+        });
+        return "ready";
+      }
       if (typeof remote === "string" && remote !== pubStr(local)) {
         // the keys were reset on another device: this device's old key doesn't work any more, so forget it
         await kvSet("id:" + uid, null); await kvSet("code:" + uid, null);

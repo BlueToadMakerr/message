@@ -1,6 +1,7 @@
 // Profile helpers with a small in-memory cache.
 import { db } from "./firebase.js";
 import { ref, get, update } from "./sdk.js";
+import { getSWR } from "./offline.js";
 
 const pending = new Map();   // uid -> Promise<profile>
 const resolved = new Map();  // uid -> profile (for synchronous peeks)
@@ -34,7 +35,7 @@ function storeRaw(uid, raw) {
 export function getProfile(uid) {
   if (!pending.has(uid)) {
     const hit = cachedRaw(uid);
-    const p = (hit ? Promise.resolve(hit.raw) : get(ref(db, `accsettings/${uid}/settings`)).then(s => { const v = s.val(); storeRaw(uid, v); return v; }))
+    const p = (hit ? Promise.resolve(hit.raw) : getSWR(ref(db, `accsettings/${uid}/settings`)).then(s => { const v = s.val(); if (!s.fromCache) storeRaw(uid, v); return v; }))
       .then(raw => normalize(uid, raw))
       .catch(() => normalize(uid, null))
       .then(profile => { resolved.set(uid, profile); return profile; });
@@ -60,7 +61,7 @@ export async function profileExists(uid) {
 // which made other people see "User does not exist" / broken chat rows.
 export async function ensureProfile(user) {
   const r = ref(db, `accsettings/${user.uid}/settings`);
-  const snap = await get(r);
+  const snap = await getSWR(r);
   const cur = snap.val() || {};
   if (cur.displayName) return normalize(user.uid, cur);
   const fallback = {

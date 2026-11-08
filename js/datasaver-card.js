@@ -4,6 +4,7 @@ import { LIMITS, getLimitMb, setLimitMb, cacheStats, cacheClear, storageInfo } f
 import { copyStatus, setSafeMode, saveWorkingCopy } from "./sitecopy.js";
 import { SITE_VERSION } from "./version.js";
 import { toast, confirmDialog } from "./ui.js";
+import { offlineOn, setOfflineOn, ocStats, ocClear } from "./offline.js";
 const $ = id => document.getElementById(id);
 const mb = b => b >= 1073741824 ? (b / 1073741824).toFixed(1) + " GB" : b >= 1048576 ? (b / 1048576).toFixed(1) + " MB" : Math.max(0, Math.round(b / 1024)) + " KB";
 const opt = (v, t) => Object.assign(document.createElement("option"), { value: v, textContent: t });
@@ -53,3 +54,12 @@ async function paintCopy() {
   };
 }
 if ($("copyCard")) paintCopy();
+
+// ---- Offline data
+async function paintOffline() { const st = await ocStats(); $("offlineNow").textContent = offlineOn() ? `${st.count} saved item${st.count === 1 ? "" : "s"}, about ${mb(st.bytes)}.` : "Switched off: nothing is kept."; }
+if ($("offlineCard")) {
+  $("offlineOn").checked = offlineOn();
+  $("offlineOn").onchange = async e => { setOfflineOn(e.target.checked); setTimeout(paintOffline, 300); };
+  $("offlineClear").onclick = async () => { await ocClear(); toast("Offline data cleared.", "success"); setTimeout(paintOffline, 300); };
+  paintOffline();
+}
