@@ -72,6 +72,17 @@ f.sent.clear(); msg("m7", type="event"); w.handle_entry("bob", "ping", "c1", {**
 f.sent.clear(); f.t["FCM"]["bob"]["webtok"] = True; msg("m8", fromUid="bot_abcdefghij12", botId="bot_abcdefghij12", **{"as": {"name": "Zed"}}); w.handle_entry("bob", "ping", "c1", {**ping, "id": "m8"}); t("bot message uses its display name", next(p for _, k, p in f.sent if k == "web")["notification"]["title"] == "Zed")
 f.sent.clear(); msg("m9", type="file", kind="image", url="https://img.example/a.png", name="a.png", text="a.png"); w.handle_entry("bob", "ping", "c1", {**ping, "id": "m9"}); t("public image shown", next(p for _, k, p in f.sent if k == "web")["image"] == "https://img.example/a.png")
 
+# notification results (shown in the message Info dialog)
+L = lambda mid: f.get(f"pushLog/c1/{mid}/bob") or {}
+t("sent is logged with device counts", L("m1").get("status") == "sent" and L("m1").get("ok") == 2 and "removed" in (L("m1").get("why") or ""), str(L("m1")))
+t("already read is logged as skipped", L("m3").get("status") == "skipped" and L("m3").get("why"), str(L("m3")))
+f.t["FCM"]["bob"] = {}; msg("n1"); w.handle_entry("bob", "ping", "c1", {**ping, "id": "n1"})
+t("no device is logged with the reason", L("n1").get("status") == "no_token" and "set up" in L("n1")["why"], str(L("n1")))
+f.t["FCM"]["bob"] = {"webtok": True}; f.dead.add("webtok"); msg("n2"); w.handle_entry("bob", "ping", "c1", {**ping, "id": "n2"})
+t("a refused push is logged as failed with the error", L("n2").get("status") == "failed" and "dead" in L("n2")["why"], str(L("n2")))
+f.t["FCM"]["bob"] = {"webtok": True, "apptok": "android"}; f.dead.discard("webtok")
+f.set("pushLog/c1/old1/bob", {"status": "sent", "ts": 1}); w._log_sweep = 0; w.sweep(); t("old results are swept after 3 days", f.get("pushLog/c1/old1/bob") is None and f.get("pushLog/c1/n2/bob") is not None)
+
 # webhook to a bot (a human's message pings the bot)
 msg("h1", text="to the bot"); w.handle_entry("bot_abcdefghij12", "ping", "c1", {**ping, "id": "h1"})
 t("webhook called, signed", len(hooks) == 1 and hooks[0][0] == "https://hook.example/x" and hooks[0][2] == __import__("hmac").new(botapi.sha256(token).encode(), hooks[0][1], "sha256").hexdigest())

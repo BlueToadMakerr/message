@@ -1049,3 +1049,6 @@ button.pw-item{cursor:pointer}button.pw-item:hover{background:var(--surface-2)}
 .sync-pill .spinner{width:.9rem;height:.9rem;border-radius:50%;border:2px solid var(--border,#8886);border-top-color:var(--accent,#4f46e5);animation:qm-spin .9s linear infinite;flex:0 0 auto}
 .sync-pill.offline{background:#b45309;border-color:#b45309;color:#fff}
 .sync-pill.offline .spinner{display:none}
+
+.mi-notify.good .mi-v{color:#22c55e}.mi-notify.bad .mi-v{color:#ef4444}
+.msg-info .mi-notify .mi-v small{color:var(--muted,#999);font-weight:400}

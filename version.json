@@ -1,1 +1,1 @@
-{ "version": "1.57.0", "apiVersion": 1, "released": "2026-11-08", "notes": "Offline data with an Updating indicator; Android call audio no longer forced to speaker." }
+{ "version": "1.57.1", "apiVersion": 1, "released": "2026-11-09", "notes": "Notification result in message Info." }

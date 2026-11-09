@@ -17,7 +17,7 @@ from urllib.parse import urlparse, parse_qs
 
 import botapi
 
-VERSION = "1.1.0"
+VERSION = "1.2.0"
 DEFAULT_DB = "https://quickmessage-ac953-default-rtdb.firebaseio.com"
 _PCH = "-0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ_abcdefghijklmnopqrstuvwxyz"
 _pl, _plock = {"last": 0, "rand": [0] * 12}, threading.Lock()
@@ -157,6 +157,12 @@ class Worker:
         for bot, reqs in (be.get("botInbox") or {}).items():
             for rid, v in (reqs or {}).items():
                 if not isinstance(v, dict) or v.get("ts", 0) < now - 3600000: ups[f"botInbox/{bot}/{rid}"] = None
+        if now - getattr(self, "_log_sweep", 0) > 3600000:                         # notification results are kept for 3 days
+            self._log_sweep = now
+            for chat, mids in (be.get("pushLog") or {}).items():
+                for mid, users in (mids or {}).items():
+                    for u, v in (users or {}).items():
+                        if not isinstance(v, dict) or v.get("ts", 0) < now - 3 * 86400000: ups[f"pushLog/{chat}/{mid}/{u}"] = None
         if ups: be.update(ups)
 
     @staticmethod
@@ -206,20 +212,29 @@ class Worker:
     # ---- push
     def push_to(self, uid, build, app_data):
         tokens = self.be.get(f"FCM/{uid}") or {}
-        acc = fail = 0
+        acc = fail = eligible = 0; err = ""
         for tok, kind in list(tokens.items()):
             app = kind == "android"
             if app and not app_data: continue
+            eligible += 1
             try:
                 if app: self.be.send_push(tok, "app", {"data": app_data, "ttl": 86400, "collapse": f"{app_data['type']}_{app_data['chatId']}"})
                 else: self.be.send_push(tok, "web", build())
                 acc += 1
             except Exception as e:
-                fail += 1; self.stats["lastPushError"] = f"{e.__class__.__name__}: {str(e)[:100]}"
-                if self.be.is_dead(e): self.be.update({f"FCM/{uid}/{tok}": None})
-                else: log("push failed", uid, self.stats["lastPushError"])
+                fail += 1; err = f"{e.__class__.__name__}: {str(e)[:100]}"; self.stats["lastPushError"] = err
+                if self.be.is_dead(e): self.be.update({f"FCM/{uid}/{tok}": None}); err += " (device removed)"
+                else: log("push failed", uid, err)
         self.stats["pushed"] += acc; self.stats["pushFailed"] += fail
-        return acc, fail, len(tokens)
+        return acc, fail, eligible, err
+
+    def log_push(self, chat, mid, uid, status, why=None, ok=0, total=0):
+        """What happened to the notification for one person: shown in the message's Info dialog (readable by that person and the sender only)."""
+        try:
+            v = {"status": status, "ts": int(time.time() * 1000), "ok": ok, "total": total}
+            if why: v["why"] = str(why)[:160]
+            self.be.update({f"pushLog/{chat}/{mid}/{uid}": v})
+        except Exception as e: log("push log failed", str(e)[:80])
 
     def on_ping(self, uid, chat, mid, ping):
         be = self.be
@@ -238,7 +253,8 @@ class Worker:
                 except Exception as e:
                     self.stats["webhookFailed"] += 1; log("webhook failed", uid, str(e)[:100])
             return
-        if be.get(f"privateChats/{chat}/messageRead/{uid}") == mid: return        # already looking at it
+        if be.get(f"privateChats/{chat}/messageRead/{uid}") == mid:                 # already looking at it
+            return self.log_push(chat, mid, uid, "skipped", "They had already read it (or had the chat open), so no notification was needed.")
         last = be.get(f"privateChats/{chat}/lastMessage") or {}
         name = (msg.get("as") or {}).get("name") or be.get(f"accsettings/{frm}/settings/displayName") or "New message"
         same = last.get("id") == mid
@@ -253,7 +269,10 @@ class Worker:
         title = f"{name} mentioned you" if mentioned else name
         build = lambda: {"notification": {"title": title, "body": text}, "tag": f"chat_{chat}", "collapse": f"chat_{chat}", "image": img, "web_ttl": 86400, "require": False, "link": link,
                          "apns": {"apns-collapse-id": f"chat_{chat}", "apns-priority": "10"}, "data": {"link": link, "chatId": chat, **({"image": img} if img else {})}}
-        self.push_to(uid, build, {"type": "msg", "chatId": chat, "msgId": mid, "from": frm})
+        acc, fail, eligible, err = self.push_to(uid, build, {"type": "msg", "chatId": chat, "msgId": mid, "from": frm})
+        if acc > 0: self.log_push(chat, mid, uid, "sent", f"{fail} of {eligible} devices failed: {err}" if fail else None, acc, eligible)
+        elif eligible == 0: self.log_push(chat, mid, uid, "no_token", "No device of theirs is set up for notifications.", 0, 0)
+        else: self.log_push(chat, mid, uid, "failed", err or "The push service refused every device.", 0, eligible)
 
     def on_ring(self, uid, chat, ring):
         """A ring was written: push to the person's devices and ALWAYS answer in calls/{chat}/ringing/{uid}/notifyStatus (the caller waits for it),

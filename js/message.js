@@ -767,7 +767,45 @@ async function showInfo(key, msg) {
     r.prepend(avatarEl(p?.displayName || "?", p?.pfp || "", "avatar sm"));
     r.classList.toggle("mi-unread", !read);
   }
+  await notifyRows(box, key, msg, row);
   confirmDialog({ title: "Message info", node: box, okText: "Close", hideCancel: true });
+}
+
+/** "Notification": did the push go out for this message, and if not, why. The notification server writes pushLog/{chat}/{message}/{person};
+ *  the sender sees everyone's, a recipient sees their own. */
+function pushWhy(w) {
+  w = String(w || "");
+  if (/Unregistered|device removed|SenderIdMismatch|registration token/i.test(w)) return "Their device's notification registration had expired, so it was removed. They need to turn notifications on again on that device.";
+  if (/Quota|exceed|rate|Unavailable|Internal/i.test(w)) return "The push service was busy or limiting requests. " + w;
+  if (/Permission|Unauthenticated|credential|403|401/i.test(w)) return "The notification server isn't allowed to use the push service (check its service account). " + w;
+  return w;
+}
+async function notifyRows(box, key, msg, row) {
+  if (msg.type === "event") return;
+  const mine = msg.fromUid === me;
+  const who = (mine ? participants.filter(u => u !== me) : [me]).filter(u => !String(u).startsWith("bot_") && u !== msg.fromUid);
+  if (!who.length) return;
+  const head = document.createElement("div"); head.className = "mi-head"; head.textContent = "Notification"; box.append(head);
+  const [srv, logs] = await Promise.all([
+    import("./serverstatus.js").then(m => m.getServerStatus()).catch(() => null),
+    Promise.all(who.map(u => get(ref(db, `pushLog/${chatId}/${key}/${u}`)).then(s => s.val()).catch(() => undefined)))
+  ]);
+  await Promise.all(who.map(getProfile));
+  who.forEach((u, i) => {
+    const p = peekProfile(u), l = logs[i], name = u === me ? "You" : (p?.displayName || "Someone");
+    let value, sub, cls = "";
+    if (l && l.status === "sent") { value = "✅ Notification sent"; sub = `Accepted by the push service for ${l.ok} device${l.ok === 1 ? "" : "s"}${l.why ? " — but " + pushWhy(l.why) : ""}. It still depends on their device showing it.`; cls = "good"; }
+    else if (l && l.status === "skipped") { value = "Not needed"; sub = l.why; }
+    else if (l && l.status === "no_token") { value = "❌ Not sent"; sub = "None of their devices is set up for notifications (they haven't turned them on, or signed out). They only see the message when they open the app."; cls = "bad"; }
+    else if (l && l.status === "failed") { value = "❌ Not sent"; sub = pushWhy(l.why) || "The push service refused it."; cls = "bad"; }
+    else if (srv && srv.state === "private") { value = "Handled by your private server"; sub = "A private server sends its own notifications and doesn't keep a record of them."; }
+    else if (logs[i] === undefined) { value = "Unknown"; sub = "Couldn't read the notification record."; }
+    else if (srv && (srv.state === "offline" || srv.state === "never")) { value = "❌ Probably not sent"; sub = srv.state === "never" ? "No notification server has been set up." : "The notification server isn't running right now, so it can't have sent (or logged) anything."; cls = "bad"; }
+    else { value = "No record"; sub = (Date.now() - (msg.timestamp || 0) > 3 * 86400000) ? "Notification results are kept for 3 days." : "The server hasn't logged it (yet) — it may still be working on it, or the message was sent before results were logged."; }
+    const r = row(name, value, sub);
+    r.prepend(avatarEl(p?.displayName || "?", p?.pfp || "", "avatar sm"));
+    if (cls) r.classList.add("mi-notify", cls);
+  });
 }
 
 function explainEncrypted(msg) {

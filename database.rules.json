@@ -160,6 +160,15 @@
       }
     },
 
+    // ---------------------------------------------------------------- notification results (written only by the worker, which bypasses rules)
+    // Shown in a message's Info dialog: the person it was for and the message's sender can read it.
+    "pushLog": {
+      "$chatId": { "$msgId": { "$uid": {
+        ".read": "auth != null && (auth.uid === $uid || root.child('privateChats').child($chatId).child('messages').child($msgId).child('fromUid').val() === auth.uid)",
+        ".write": false
+      } } }
+    },
+
     // ---------------------------------------------------------------- chats
     "privateChats": {
       "$chatId": {

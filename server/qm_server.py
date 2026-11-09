@@ -173,6 +173,7 @@ def can_read(uid, pp):
     if t in ("accsettings", "userKeys", "linkPreviews"): return len(pp) > 1
     if t in ("chatList", "live", "FCM"): return len(pp) > 1 and pp[1] == uid
     if t in ("privateChats", "calls"): return len(pp) > 1 and member(pp[1], uid)
+    if t == "pushLog": return len(pp) >= 4 and (pp[3] == uid or get_at(["privateChats", pp[1], "messages", pp[2], "fromUid"]) == uid)    # nothing writes it here (no notification worker), so it stays empty
     return False
 
 def can_write(uid, pp, value, newtree):
