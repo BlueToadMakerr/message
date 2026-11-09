@@ -17,7 +17,7 @@ from urllib.parse import urlparse, parse_qs
 
 import botapi
 
-VERSION = "1.2.0"
+VERSION = "1.2.1"
 DEFAULT_DB = "https://quickmessage-ac953-default-rtdb.firebaseio.com"
 _PCH = "-0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ_abcdefghijklmnopqrstuvwxyz"
 _pl, _plock = {"last": 0, "rand": [0] * 12}, threading.Lock()
@@ -39,6 +39,22 @@ def push_id():
 
 
 def log(*a): print(time.strftime("%H:%M:%S"), *a, flush=True)
+
+
+def unslash(d):
+    """A multi-path update (the app writes the message and everybody's ping in ONE update) reaches a listener as a "patch" event whose keys are
+    whole paths: {"uidA/pings/chat": {...}, "uidB/pings/chat": {...}}. Turn that into the nested form {"uidA": {"pings": {"chat": {...}}}, ...}."""
+    if not isinstance(d, dict) or not any("/" in str(k) for k in d): return d
+    out = {}
+    for k, v in d.items():
+        ks = [x for x in str(k).split("/") if x]
+        if not ks: continue
+        n = out
+        for x in ks[:-1]:
+            if not isinstance(n.get(x), dict): n[x] = {}
+            n = n[x]
+        n[ks[-1]] = unslash(v)
+    return out
 
 
 # ---------------------------------------------------------------- the real database / push (thin wrappers around firebase_admin)
@@ -108,8 +124,8 @@ class Worker:
         try:
             self.stats["events"] += 1
             path = getattr(ev, "path", "/")
-            live = str(path).strip("/") != ""                      # a change that just happened (not the whole tree sent when the listener starts)
-            for uid, kind, chat, val in self.flatten(path, getattr(ev, "data", None)):
+            live = getattr(ev, "event_type", "put") == "patch" or str(path).strip("/") != ""      # a change that just happened (not the whole tree sent when the listener starts)
+            for uid, kind, chat, val in self.flatten(path, unslash(getattr(ev, "data", None))):
                 self.pool.submit(self.safe, self.handle_entry, uid, kind, chat, val, live)
         except Exception as e: self.err("event", e)
 
@@ -118,7 +134,7 @@ class Worker:
         try:
             self.stats["events"] += 1
             parts = [p for p in str(getattr(ev, "path", "/")).split("/") if p]
-            data = getattr(ev, "data", None)
+            data = unslash(getattr(ev, "data", None))
             if len(parts) > 2 or data is None: return
             items = [(parts[0], parts[1], data)] if len(parts) == 2 else [(parts[0], r, v) for r, v in data.items()] if len(parts) == 1 and isinstance(data, dict) \
                 else [(b, r, v) for b, reqs in data.items() if isinstance(reqs, dict) for r, v in reqs.items()] if isinstance(data, dict) else []
@@ -233,7 +249,7 @@ class Worker:
         try:
             v = {"status": status, "ts": int(time.time() * 1000), "ok": ok, "total": total}
             if why: v["why"] = str(why)[:160]
-            self.be.update({f"pushLog/{chat}/{mid}/{uid}": v})
+            self.be.update({f"pushLog/{chat}/{mid}/{uid}": v}); log("notify", uid[:8], status, f"{ok}/{total}", (why or "")[:70])
         except Exception as e: log("push log failed", str(e)[:80])
 
     def on_ping(self, uid, chat, mid, ping):

@@ -1,1 +1,1 @@
-{ "version": "1.57.1", "apiVersion": 1, "released": "2026-11-09", "notes": "Notification result in message Info." }
+{ "version": "1.57.3", "apiVersion": 1, "released": "2026-11-09", "notes": "Worker 1.2.1: handles multi-path (patch) events." }

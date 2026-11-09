@@ -2,6 +2,14 @@
 
 Newest first. Older rounds (1–43) are kept below exactly as they were written.
 
+## 1.57.3 — Worker: messages and calls written as one update were missed (the cause of "notification couldn't be sent")
+
+- **Restart the worker (1.2.1).** The app writes a message and every recipient's ping in ONE multi-path update. The database hands such a write to a listener as a "patch" event whose keys are whole paths (`"uid/pings/chat"`), and the worker only understood nested data, so it **ignored them**: no push for messages, no answer for call rings (the caller then saw "The notification couldn't be sent"), and nothing in a message's Info. It now handles both forms, for pings, rings and bot requests, and treats every patch as a live change. The worker prints a line for each notification it handles (`notify <uid> sent 2/2`).
+
+## 1.57.2 — Clearer error in message Info
+
+- If the database refuses the notification record (the new `pushLog` rules haven't been published yet), Info now says so and what to do, instead of "Couldn't read the notification record".
+
 ## 1.57.1 — Notification result in message Info
 
 - A message's **Info** now has a **Notification** section: for each person it was for, whether the push notification was **sent** (and to how many devices), **not needed** (they had already read it), or **not sent — and why** (no device set up for notifications, an expired device registration, the push service refusing or rate-limiting, the notification server being offline, …). The sender sees everyone's result; a recipient sees their own. The notification worker (1.2.0) writes one small record per person to `pushLog/{chat}/{message}/{uid}` and deletes records after 3 days. **Publish the updated `database.rules.json`** (new `pushLog` rule: read by that person and the message's sender, written only by the worker) and **restart the worker** for this to work; messages from before that show "No record". Private servers show that they handle notifications themselves.

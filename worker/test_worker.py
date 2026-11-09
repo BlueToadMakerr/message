@@ -55,6 +55,19 @@ t("flatten kind", W.Worker.flatten("/bob/pings", {"c1": ping}) == [("bob", "ping
 t("flatten chat", W.Worker.flatten("/bob/pings/c1", ping) == [("bob", "ping", "c1", ping)])
 t("flatten ignores field + deletion + other nodes", W.Worker.flatten("/bob/pings/c1/ts", 5) == [] and W.Worker.flatten("/bob/pings/c1", None) == [] and W.Worker.flatten("/bob/declines/c1", {"a": 1}) == [])
 
+# multi-path updates reach the listener as "patch" events with whole paths as keys
+patch = {"bob/pings/c1": ping, "carol/pings/c1": ping, "bob/rings/c1": {"ringId": "r", "fromUid": "alice", "chatId": "c1", "createdAt": 1}}
+t("patch event keys are paths", sorted((u, k) for u, k, _, _ in W.Worker.flatten("/", W.unslash(patch))) == [("bob", "ping"), ("bob", "ring"), ("carol", "ping")])
+t("patch at a deeper path", W.Worker.flatten("/bob", W.unslash({"pings/c1": ping})) == [("bob", "ping", "c1", ping)])
+t("normal nested data untouched", W.unslash({"bob": {"pings": {"c1": ping}}}) == {"bob": {"pings": {"c1": ping}}} and W.unslash(None) is None and W.unslash(5) == 5)
+class Ev:
+    def __init__(s, path, data, event_type="patch"): s.path, s.data, s.event_type = path, data, event_type
+hits = []; w.pool = type("P", (), {"submit": lambda s, fn, *a: hits.append(a)})(); w.on_event(Ev("/", patch)); t("on_event handles a patch (this is how the app writes pings and rings)", len(hits) == 3 and all(h[-1] is True for h in hits), str(hits)[:120])
+inb = []; real_first = w.first_time; w.pool = type("P", (), {"submit": lambda s, fn, *a: inb.append(a)})()
+w.on_inbox_event(Ev("/", {"bot_abcdefghij12/r1": {"ts": 1, "op": "me"}})); t("inbox patch handled", len(inb) == 1 and inb[0][2] == "r1", str(inb))
+hits.clear(); w.pool = type("P", (), {"submit": lambda s, fn, *a: hits.append(a)})(); w.on_event(Ev("/", {"bob": {"pings": {"c1": ping}}}, "put")); t("the start-up snapshot (a put at the root) is not live", len(hits) == 1 and hits[0][-1] is False)
+w.pool = W.ThreadPoolExecutor(2)
+
 # message push
 msg("m1"); w.handle_entry("bob", "ping", "c1", ping)
 kinds = sorted(k for _, k, _ in f.sent)
