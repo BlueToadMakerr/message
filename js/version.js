@@ -1,6 +1,6 @@
 // Site version. Bump SITE_VERSION here and in version.json (the file the check reads) on every release.
 // API_VERSION is the plugin API (docs: plugin-docs.html): it only changes when a plugin could stop working.
-export const SITE_VERSION = "1.58.0";
+export const SITE_VERSION = "1.58.1";
 export const API_VERSION = 1;
 import { saverOn, onSaverChange } from "./datasaver.js";
 import { fullRefresh } from "./refresh.js";

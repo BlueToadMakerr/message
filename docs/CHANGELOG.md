@@ -2,6 +2,12 @@
 
 Newest first. Older rounds (1–43) are kept below exactly as they were written.
 
+## 1.58.1 — Upload a profile photo, pill under the offline banner
+
+- Settings → Account: "Upload a photo" for your profile picture. The photo is cropped square, shrunk, and stored as a data link in your profile (no hosting needed). "Remove photo" clears it. Links still work.
+- **Republish `database.rules.json`**: the profile picture limit went from 2000 to 30000 characters so uploaded photos fit.
+- The "Offline — showing saved data" / "Updating…" pill now sits below the offline and other top banners instead of underneath them (including under the Android status bar).
+
 ## 1.58.0 — Full refresh, banner stacking, error screens
 
 - The new-version "Reload" button now does a full refresh (clears the app's cached files, then reloads) instead of just reloading the page.

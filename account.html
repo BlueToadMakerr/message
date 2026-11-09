@@ -60,7 +60,13 @@
           </div>
           <div>
             <label class="lbl" for="pfpUrl">Profile picture URL</label>
-            <input id="pfpUrl" class="field" type="url" placeholder="https://… (optional)">
+            <input id="pfpUrl" class="field" placeholder="https://… or upload a photo (optional)" autocomplete="off">
+            <div class="row" style="gap:.5rem;margin-top:.4rem;flex-wrap:wrap">
+              <button type="button" class="btn" id="pfpUpload">Upload a photo</button>
+              <button type="button" class="btn" id="pfpClear" hidden>Remove photo</button>
+              <input id="pfpFile" type="file" accept="image/*" hidden>
+            </div>
+            <div class="hint" id="pfpNote" hidden></div>
           </div>
           <div>
             <label class="lbl" for="themeSelect">Appearance</label>

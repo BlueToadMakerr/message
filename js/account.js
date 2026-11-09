@@ -48,9 +48,35 @@ addEventListener("pagehide", revertPreview);
 addEventListener("beforeunload", revertPreview);
 
 // Live avatar preview
-$("pfpUrl").addEventListener("input", () => {
-  renderHeader($("displayName").value.trim() || user?.email || "?", $("pfpUrl").value.trim());
-});
+function pfpPaint() {
+  const v = $("pfpUrl").value.trim(), isData = /^data:image\//i.test(v);
+  renderHeader($("displayName").value.trim() || user?.email || "?", v);
+  $("pfpClear").hidden = !v;
+  $("pfpNote").hidden = !isData; if (isData) $("pfpNote").textContent = "Uploaded photo (" + Math.round(v.length / 1024) + " KB, stored as a data link). Press Save changes to keep it.";
+  // a long data link would bury the field: show a short stand-in instead
+  $("pfpUrl").dataset.full = isData ? v : "";
+}
+$("pfpUrl").addEventListener("input", pfpPaint);
+// Upload: shrink to a small square JPEG and keep it as a data: link in the profile (no file hosting needed)
+async function photoToDataUrl(file) {
+  const bmp = await (window.createImageBitmap ? createImageBitmap(file) : new Promise((res, rej) => { const i = new Image(); i.onload = () => res(i); i.onerror = rej; i.src = URL.createObjectURL(file); }));
+  const w = bmp.width || bmp.naturalWidth, h = bmp.height || bmp.naturalHeight, side = Math.min(w, h);
+  for (const [px, q] of [[256, .8], [256, .65], [192, .6], [160, .5], [128, .45], [96, .4]]) {
+    const c = document.createElement("canvas"); c.width = c.height = px;
+    c.getContext("2d").drawImage(bmp, (w - side) / 2, (h - side) / 2, side, side, 0, 0, px, px);
+    const out = c.toDataURL("image/jpeg", q);
+    if (out.length <= 28000) return out;
+  }
+  throw new Error("too big");
+}
+$("pfpUpload").onclick = () => $("pfpFile").click();
+$("pfpFile").onchange = async e => {
+  const f = e.target.files[0]; e.target.value = ""; if (!f) return;
+  if (!/^image\//.test(f.type)) return toast("Choose an image file.", "error");
+  try { $("pfpUrl").value = await photoToDataUrl(f); pfpPaint(); toast("Photo ready. Press Save changes to keep it.", "success", 3000); }
+  catch (_) { toast("Couldn't use that photo. Try a different one.", "error"); }
+};
+$("pfpClear").onclick = () => { $("pfpUrl").value = ""; pfpPaint(); };
 
 onAuthStateChanged(auth, async u => {
   if (!u) { toHome(); return; }
@@ -63,7 +89,7 @@ onAuthStateChanged(auth, async u => {
   $("headEmail").textContent = u.email || "";
   paintFriend(u.uid);
   $("displayName").value = profile.displayName === "Unknown user" ? "" : profile.displayName;
-  $("pfpUrl").value = profile.pfp || "";
+  $("pfpUrl").value = profile.pfp || ""; pfpPaint();
   // Bug fix: the old page read an undefined `info.theme` here and crashed.
   const theme = profile.theme || getTheme();
   $("themeSelect").value = applyTheme(theme); savedTheme = $("themeSelect").value;
@@ -418,7 +444,8 @@ $("profileForm").addEventListener("submit", async e => {
   const displayName = $("displayName").value.trim();
   const pfp = $("pfpUrl").value.trim();
   if (!displayName) return toast("Display name can't be empty.", "error");
-  if (pfp && !/^https?:\/\//i.test(pfp)) return toast("Profile picture must be an http(s) link.", "error");
+  if (pfp && !/^(https?:\/\/|data:image\/)/i.test(pfp)) return toast("Profile picture must be an http(s) link or an uploaded photo.", "error");
+  if (pfp.length > 30000) return toast("That picture is too large. Upload a photo instead.", "error");
 
   const btn = $("saveSettingsBtn");
   btn.disabled = true;
