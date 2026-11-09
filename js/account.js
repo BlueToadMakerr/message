@@ -25,6 +25,7 @@ import { PRESETS, RES, getScreenPrefs, setScreenPrefs, resetScreenPrefs, DEFAULT
 import { previewsOn, setPreviews } from "./linkpreview.js";
 import "./datasaver-card.js";
 import "./settings-tabs.js";
+import { wirePhotoUpload } from "./photo.js";
 import { refreshVerified, resendVerification } from "./verify.js";
 import { showTour } from "./onboarding.js";
 import { SITE_VERSION, API_VERSION, checkSiteVersion, lastCheck } from "./version.js";
@@ -58,24 +59,7 @@ function pfpPaint() {
 }
 $("pfpUrl").addEventListener("input", pfpPaint);
 // Upload: shrink to a small square JPEG and keep it as a data: link in the profile (no file hosting needed)
-async function photoToDataUrl(file) {
-  const bmp = await (window.createImageBitmap ? createImageBitmap(file) : new Promise((res, rej) => { const i = new Image(); i.onload = () => res(i); i.onerror = rej; i.src = URL.createObjectURL(file); }));
-  const w = bmp.width || bmp.naturalWidth, h = bmp.height || bmp.naturalHeight, side = Math.min(w, h);
-  for (const [px, q] of [[256, .8], [256, .65], [192, .6], [160, .5], [128, .45], [96, .4]]) {
-    const c = document.createElement("canvas"); c.width = c.height = px;
-    c.getContext("2d").drawImage(bmp, (w - side) / 2, (h - side) / 2, side, side, 0, 0, px, px);
-    const out = c.toDataURL("image/jpeg", q);
-    if (out.length <= 28000) return out;
-  }
-  throw new Error("too big");
-}
-$("pfpUpload").onclick = () => $("pfpFile").click();
-$("pfpFile").onchange = async e => {
-  const f = e.target.files[0]; e.target.value = ""; if (!f) return;
-  if (!/^image\//.test(f.type)) return toast("Choose an image file.", "error");
-  try { $("pfpUrl").value = await photoToDataUrl(f); pfpPaint(); toast("Photo ready. Press Save changes to keep it.", "success", 3000); }
-  catch (_) { toast("Couldn't use that photo. Try a different one.", "error"); }
-};
+wirePhotoUpload($("pfpUpload"), $("pfpFile"), d => { $("pfpUrl").value = d; pfpPaint(); toast("Photo ready. Press Save changes to keep it.", "success", 3000); }, m => toast(m, "error"));
 $("pfpClear").onclick = () => { $("pfpUrl").value = ""; pfpPaint(); };
 
 onAuthStateChanged(auth, async u => {

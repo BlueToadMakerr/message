@@ -282,6 +282,7 @@ function indexDuplicates() {
   for (const ids of groups.values()) if (ids.length > 1) ids.sort().forEach((id, i) => { if (i) dupIndex.set(id, i + 1); });
 }
 
+document.getElementById("chatSearch")?.addEventListener("input", () => renderList());
 function renderList() {
   indexDuplicates();
   const items = [...chats.values()]
@@ -314,7 +315,11 @@ function renderList() {
     return;
   }
 
-  for (const s of items) {
+  const csEl = document.getElementById("chatSearch"); if (csEl) csEl.hidden = items.length < 2 && !csEl.value;
+  const needle = (csEl?.value || "").trim().toLowerCase();
+  const shown = !needle ? items : items.filter(s => (chatTitle(s) + " " + s.otherProfiles.map(p => p.displayName || "").join(" ") + " " + (s.lastText || s.last.text || "")).toLowerCase().includes(needle));
+  if (needle && !shown.length) { const e = document.createElement("div"); e.className = "empty"; e.innerHTML = "<strong>No chats match</strong><p>Try a name or a word from the last message. To search inside a chat, open it and tap the magnifier.</p>"; chatListEl.append(e); return; }
+  for (const s of shown) {
     const unread = !!(s.last.fromUid && s.last.fromUid !== currentUid && s.last.id &&
       String(s.readKey) !== String(s.last.id));
 

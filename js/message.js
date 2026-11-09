@@ -1,4 +1,6 @@
 import { auth, db } from "./firebase.js";
+import { wirePhotoUpload } from "./photo.js";
+import { initChatSearch } from "./chatsearch.js";
 import { onAuthStateChanged } from "./sdk.js";
 import {
   ref, push, set, get, update, remove, onValue, onDisconnect, serverTimestamp,
@@ -786,6 +788,7 @@ async function notifyRows(box, key, msg, row) {
   const who = (mine ? participants.filter(u => u !== me) : [me]).filter(u => !String(u).startsWith("bot_") && u !== msg.fromUid);
   if (!who.length) return;
   const head = document.createElement("div"); head.className = "mi-head"; head.textContent = "Notification"; box.append(head);
+  if (Date.now() - (msg.timestamp || 0) > 3 * 86400000) { const n = document.createElement("div"); n.className = "muted"; n.textContent = "Notification logs are only kept for 3 days, so there is no record for this message anymore."; box.append(n); return; }
   const [srv, logs] = await Promise.all([
     import("./serverstatus.js").then(m => m.getServerStatus()).catch(() => null),
     Promise.all(who.map(u => get(ref(db, `pushLog/${chatId}/${key}/${u}`)).then(s => s.val()).catch(e => ({ __err: String((e && (e.code || e.message)) || e) }))))
@@ -805,7 +808,7 @@ async function notifyRows(box, key, msg, row) {
     else if (srv && srv.state === "private") { value = "Not tracked"; note(value, "A private server sends its own notifications and doesn't keep a record of them.", name); }
     else if (l0 && l0.__err) { value = "Unknown"; note(value, /permission/i.test(l0.__err) ? "The database refused to show the record. Publish the newest database.rules.json (new \"pushLog\" rule) in the Firebase console → Realtime Database → Rules." : "Couldn't read the record (" + l0.__err.slice(0, 80) + ").", name); }
     else if (srv && (srv.state === "offline" || srv.state === "never")) { value = "❌ Probably not sent"; cls = "bad"; note(value, srv.state === "never" ? "No notification server has been set up." : "The notification server isn't running right now, so it can't have sent (or logged) anything.", name); }
-    else { value = "No record"; note(value, (Date.now() - (msg.timestamp || 0) > 3 * 86400000) ? "Notification results are kept for 3 days." : "The server hasn't logged it (yet): it may still be working on it, or the message was sent before results were logged.", name); }
+    else { value = "No record"; note(value, "The server hasn't logged it (yet): it may still be working on it, or the message was sent before results were logged.", name); }
     const r = row(name, value);
     r.prepend(avatarEl(p?.displayName || "?", p?.pfp || "", "avatar sm"));
     if (cls) r.classList.add("mi-notify", cls);
@@ -857,6 +860,23 @@ async function setReply(key) {
   if (m.fromUid !== me) getProfile(m.fromUid).then(p => { if (replyingTo && replyingTo.key === key) $("rbName").textContent = "Replying to " + p.displayName; });
   msgInput.focus();
 }
+// ---------- search this chat ----------
+async function loadAllOlder() {          // pull older pages in until the start of the chat (or a safety cap of ~2000 messages)
+  for (let i = 0; i < 40 && !reachedStart; i++) {
+    const before = oldestKey; lastOlderAt = 0; await loadOlder();
+    while (loadingOlder) await new Promise(r => setTimeout(r, 80));
+    if (!reachedStart && oldestKey === before && !lastPageShort) break;
+  }
+}
+initChatSearch({
+  $, msgData, nameOf: u => u === me ? "You" : (peekProfile(u)?.displayName || "Someone"),
+  loadOlderAll: loadAllOlder, atStart: () => reachedStart,
+  jumpTo: key => {
+    const t = document.getElementById("msg-" + key); if (!t) { toast("Couldn't find that message on screen.", "info", 2500); return; }
+    t.scrollIntoView({ block: "center", behavior: "smooth" }); t.classList.add("flash"); setTimeout(() => t.classList.remove("flash"), 1600);
+  }
+});
+
 function clearReply() { replyingTo = null; replyBar.classList.add("hidden"); }
 $("rbClose").onclick = clearReply;
 function quoteEl(r) {
@@ -1595,9 +1615,11 @@ $("chatOptionsBtn").onclick = () => {
 };
 $("optionsClose").onclick = () => optionsDialog.close();
 
+wirePhotoUpload($("uploadPhotoBtn"), $("chatPhotoFile"), d => { $("chatPhotoInput").value = d; $("savePhotoBtn").click(); }, m => toast(m, "error"));
 $("savePhotoBtn").onclick = async () => {
   const v = $("chatPhotoInput").value.trim();
-  if (v && !/^https?:\/\/\S+$/i.test(v)) { toast("Enter a full image URL starting with http:// or https://", "error"); return; }
+  if (v && !/^(https?:\/\/\S+|data:image\/\S+)$/i.test(v)) { toast("Enter a full image URL starting with http:// or https://, or upload a photo.", "error"); return; }
+  if (v.length > 30000) { toast("That picture is too large. Upload a photo instead.", "error"); return; }
   try { await set(ref(db, `${chatPath}/chatData/photo`), v); toast(v ? "Group photo saved." : "Group photo removed.", "success"); }
   catch (err) { console.error(err); toast("Couldn't save the photo.", "error"); }
 };

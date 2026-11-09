@@ -2,6 +2,14 @@
 
 Newest first. Older rounds (1–43) are kept below exactly as they were written.
 
+## 1.59.0 — Search chats and files, photo uploads for groups and bots
+
+- **Search chats:** a search box above the chat list filters by chat name, people's names and the last message.
+- **Search inside a chat:** the new magnifier button in a chat searches message text and file names, with tabs for Messages, Photos, Videos, Audio and Files. Tapping a result jumps to it. "Search older messages" loads the rest of the history first. Encrypted chats are searched after decryption, on your device only.
+- **Photo upload for group chats and bots:** "Upload a photo" next to the group photo and bot picture fields (same as profile pictures: cropped, shrunk, stored as a data link).
+- **Republish `database.rules.json`:** group photo and bot picture limits are now 30000 characters, and group photos may be `data:image` links.
+- Message Info: for messages older than 3 days the whole Notification section is replaced by "Notification logs are only kept for 3 days" instead of "No record".
+
 ## 1.58.1 — Upload a profile photo, pill under the offline banner
 
 - Settings → Account: "Upload a photo" for your profile picture. The photo is cropped square, shrunk, and stored as a data link in your profile (no hosting needed). "Remove photo" clears it. Links still work.

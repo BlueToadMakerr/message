@@ -22,6 +22,7 @@
       </div>
     </div>
     <a id="callBtn" class="icon-btn" href="#" aria-label="Start a call" title="Start a call" data-icon="phone"></a>
+    <button id="searchBtn" class="icon-btn" type="button" aria-label="Search this chat" title="Search messages and files" data-icon="search"></button>
     <button id="chatOptionsBtn" class="icon-btn" type="button" aria-label="Chat options" data-icon="users"></button>
   </header>
 
@@ -53,6 +54,18 @@
 <div id="msgMenu" class="hidden" role="menu"></div>
 
 <!-- Chat options -->
+<dialog id="searchDialog" class="modal cs-dialog">
+  <div class="modal-body">
+    <div class="modal-head"><h2>Search this chat</h2><button type="button" class="icon-btn" id="searchClose" aria-label="Close" data-icon="close"></button></div>
+    <input id="searchInput" class="field" type="search" placeholder="Search messages, file names…" autocomplete="off" enterkeyhint="search">
+    <div class="cs-chips" id="searchChips" role="tablist">
+      <button type="button" class="chip on" data-k="all">All</button><button type="button" class="chip" data-k="text">Messages</button><button type="button" class="chip" data-k="image">Photos</button><button type="button" class="chip" data-k="video">Videos</button><button type="button" class="chip" data-k="audio">Audio</button><button type="button" class="chip" data-k="file">Files</button>
+    </div>
+    <div id="searchResults" class="cs-results"></div>
+    <div class="cs-foot"><span id="searchNote" class="muted"></span><button type="button" class="btn small" id="searchOlder">Search older messages</button></div>
+  </div>
+</dialog>
+
 <dialog id="optionsDialog" class="modal">
   <div class="modal-body">
     <div class="modal-head">
@@ -61,10 +74,14 @@
     </div>
 
     <div id="groupPhotoBox" hidden>
-      <label class="lbl" for="chatPhotoInput">Group photo (image URL)</label>
+      <label class="lbl" for="chatPhotoInput">Group photo (image URL or upload)</label>
       <div class="row">
-        <input id="chatPhotoInput" class="field" type="url" inputmode="url" placeholder="https://… (leave empty to remove)" maxlength="600">
+        <input id="chatPhotoInput" class="field" inputmode="url" placeholder="https://… (leave empty to remove)" autocomplete="off">
         <button id="savePhotoBtn" class="btn primary" type="button">Save</button>
+      </div>
+      <div class="row" style="gap:.5rem;margin-top:.4rem">
+        <button id="uploadPhotoBtn" class="btn" type="button">Upload a photo</button>
+        <input id="chatPhotoFile" type="file" accept="image/*" hidden>
       </div>
     </div>
 

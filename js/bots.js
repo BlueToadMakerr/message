@@ -28,12 +28,13 @@ export function apiBase() {
   return activeDbUrl();
 }
 const cleanName = s => String(s || "").replace(/[\u0000-\u001f]/g, " ").trim().slice(0, 100);
+const cleanPic = u => { u = String(u || "").trim(); if (!u) return ""; if (/^data:image\/\S+$/i.test(u) && u.length <= 30000) return u; return cleanUrl(u, 2000); };
 const cleanUrl = (u, n) => { u = String(u || "").trim(); if (!u) return ""; if (!/^https:\/\/\S+$/i.test(u) || u.length > n) throw new Error("That must be an https:// address."); return u; };
 
 /** Makes a bot and returns { id, token } (the token is shown once; only its hash is stored). */
 export async function createBot(me, name, pfp) {
   name = cleanName(name); if (!name) throw new Error("Give the bot a name.");
-  pfp = cleanUrl(pfp, 2000);
+  pfp = cleanPic(pfp);
   const id = newBotId(), token = newToken(id);
   await set(ref(db, `bots/${id}`), { owner: me, created: Date.now(), name, ...(pfp ? { pfp } : {}) });     // first: the rules for the rest look at the owner
   await set(ref(db, `botList/${me}/${id}`), true);
@@ -51,7 +52,7 @@ export async function listBots(me) {
 }
 export async function saveBot(id, { name, pfp, webhook }) {
   name = cleanName(name); if (!name) throw new Error("Give the bot a name.");
-  pfp = cleanUrl(pfp, 2000); webhook = cleanUrl(webhook, 300);
+  pfp = cleanPic(pfp); webhook = cleanUrl(webhook, 300);
   await update(ref(db), { [`bots/${id}/name`]: name, [`bots/${id}/pfp`]: pfp || null, [`accsettings/${id}/settings/displayName`]: name, [`accsettings/${id}/settings/pfp`]: pfp || null, [`botKeys/${id}/webhook`]: webhook || null });
 }
 export async function regenerateToken(id) {

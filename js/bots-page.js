@@ -1,6 +1,7 @@
 import { hydrateIcons, toast, confirmDialog, copyText, avatarEl } from "./ui.js";
 import { auth } from "./firebase.js";
 import { onAuthStateChanged } from "./sdk.js";
+import { wirePhotoUpload } from "./photo.js";
 import { QM, markReady } from "./embed.js";
 import { listBots, createBot, saveBot, regenerateToken, deleteBot, apiBase } from "./bots.js";
 
@@ -82,3 +83,5 @@ $("edSave").onclick = async () => {
   } catch (e) { $("edErr").textContent = e.message || "That didn't work."; }
 };
 onAuthStateChanged(auth, u => { me = u && u.uid; if (me) paint(); });
+
+wirePhotoUpload(document.getElementById("edPfpUp"), document.getElementById("edPfpFile"), d => { document.getElementById("edPfp").value = d; toast("Photo ready. Save the bot to keep it.", "success", 2500); }, m => toast(m, "error"));

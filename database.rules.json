@@ -31,7 +31,7 @@
         "owner":   { ".validate": "newData.isString()" },
         "created": { ".validate": "newData.isNumber()" },
         "name":    { ".validate": "newData.isString() && newData.val().length > 0 && newData.val().length <= 100" },
-        "pfp":     { ".validate": "newData.isString() && newData.val().length <= 2000" },
+        "pfp":     { ".validate": "newData.isString() && newData.val().length <= 30000" },
         "$other":  { ".validate": false }
       }
     },
@@ -189,7 +189,7 @@
           ".write": "auth != null && root.child('privateChats').child($chatId).child('participants').child(auth.uid).exists()",
           "name": { ".validate": "newData.isString() && newData.val().length <= 100" },
           "encrypted": { ".validate": "newData.isBoolean()" },
-          "photo": { ".validate": "newData.isString() && newData.val().length <= 600 && (newData.val() === '' || newData.val().matches(/^https?:\\/\\/.*/))" }
+          "photo": { ".validate": "newData.isString() && newData.val().length <= 30000 && (newData.val() === '' || newData.val().matches(/^https?:\\/\\/.*/) || newData.val().matches(/^data:image\\/.*/))" }
         },
 
         "lastMessage": {
