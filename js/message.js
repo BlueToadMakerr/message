@@ -861,18 +861,27 @@ async function setReply(key) {
   msgInput.focus();
 }
 // ---------- search this chat ----------
-async function loadAllOlder() {          // pull older pages in until the start of the chat (or a safety cap of ~2000 messages)
-  for (let i = 0; i < 40 && !reachedStart; i++) {
-    const before = oldestKey; lastOlderAt = 0; await loadOlder();
+// Older messages for the search are fetched as plain text pages (nothing is drawn); jumping to a result far back loads pages until it is on screen.
+async function loadUntil(key) {
+  for (let i = 0; i < 80 && !document.getElementById("msg-" + key) && !reachedStart; i++) {
+    lastOlderAt = 0; await loadOlder();
     while (loadingOlder) await new Promise(r => setTimeout(r, 80));
-    if (!reachedStart && oldestKey === before && !lastPageShort) break;
   }
 }
+let sawEnc = false;
 initChatSearch({
-  $, msgData, nameOf: u => u === me ? "You" : (peekProfile(u)?.displayName || "Someone"),
-  loadOlderAll: loadAllOlder, atStart: () => reachedStart,
-  jumpTo: key => {
-    const t = document.getElementById("msg-" + key); if (!t) { toast("Couldn't find that message on screen.", "info", 2500); return; }
+  $, msgData, chatId, nameOf: u => u === me ? "You" : (peekProfile(u)?.displayName || "Someone"),
+  oldestLoaded: () => oldestKey, atStart: () => reachedStart,
+  store: { get: k => ocGet(k).then(r => r && r.v), set: (k, v) => chatEncrypted || sawEnc ? Promise.resolve() : ocSet(k, v) },
+  fetchOlder: async (before, n) => {
+    if (before == null) return [];
+    const snap = await get(query(messagesRef, orderByKey(), endBefore(before), limitToLast(n)));
+    const rows = []; snap.forEach(s => { rows.push(s); if (s.val() && s.val().enc) sawEnc = true; });
+    return Promise.all(rows.map(async s => [s.key, await hydrate(s.val())]));
+  },
+  jumpTo: async key => {
+    if (!document.getElementById("msg-" + key)) { toast("Loading that part of the chat…", "info", 2000); await loadUntil(key); }
+    const t = document.getElementById("msg-" + key); if (!t) { toast("That message is no longer in the chat.", "info", 2500); return; }
     t.scrollIntoView({ block: "center", behavior: "smooth" }); t.classList.add("flash"); setTimeout(() => t.classList.remove("flash"), 1600);
   }
 });

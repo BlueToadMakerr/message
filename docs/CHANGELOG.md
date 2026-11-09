@@ -2,6 +2,13 @@
 
 Newest first. Older rounds (1–43) are kept below exactly as they were written.
 
+## 1.60.0 — Lighter chat search
+
+- Searching never reads the database just for typing: it searches what is already loaded.
+- "Search further back" fetches older history only when you ask, 500 messages at a time (in pages of 250), as plain text with no pictures and nothing drawn on screen. A **Stop** button cancels it, and closing the search stops it too.
+- What was searched is remembered on this device (Offline data), so searching the same chat again reads nothing from the database. Encrypted chats are never remembered on disk (their text stays in memory only). The remembered index is erased on sign-out like the rest of the offline data.
+- Tapping a result that is far back loads just enough of the chat to show it.
+
 ## 1.59.2 — Renamed chatsearch.js to catsearch.js
 
 - The chat search script is now `js/catsearch.js`: the host blocks (403) any file with "chat" in its name. **Delete `js/chatsearch.js` from the host** if you uploaded it.
