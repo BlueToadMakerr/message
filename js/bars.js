@@ -150,9 +150,26 @@ import("./customui.js").catch(() => {});
     if (window.parent !== window) return;
     standaloneError(msg);
   };
+  // A module that can't load is reported against the page's own script, even when one of the files IT imports is the real culprit
+  // (missing on the host, or the host answering with a web page). Walk the imports to name the file that is actually bad.
+  async function culprit(src) {
+    const seen = new Set(), q = [src]; let n = 0;
+    while (q.length && n++ < 60) {
+      const u = q.shift(); if (seen.has(u)) continue; seen.add(u);
+      let r, txt = "";
+      try { r = await fetch(u, { cache: "no-store" }); txt = r.ok ? await r.text() : ""; } catch (_) { return u.replace(location.origin, "") + " (can't be reached)"; }
+      if (!r.ok) return u.replace(location.origin, "") + " (HTTP " + r.status + ")";
+      if (/^\s*</.test(txt)) return u.replace(location.origin, "") + " (the host sent a web page instead of the script)";
+      for (const m of txt.matchAll(/(?:from|import)\s*\(?\s*["'](\.{1,2}\/[^"']+)["']/g)) q.push(new URL(m[1], u).href);
+    }
+    return "";
+  }
   addEventListener("error", e => {
     const t = e.target;
-    if (t && t !== window && t.tagName === "SCRIPT") { if (sameOrigin(t.src)) fatal("A script didn't load: " + String(t.src).replace(location.origin, "")); return; }
+    if (t && t !== window && t.tagName === "SCRIPT") {
+      if (sameOrigin(t.src)) { const base = "A script didn't load: " + String(t.src).replace(location.origin, ""); Promise.race([culprit(t.src), new Promise(r => setTimeout(() => r(""), 2500))]).catch(() => "").then(c => fatal(c && !base.includes(c.split(" ")[0]) ? base + " \u2192 bad file: " + c : (c ? base + " \u2192 " + c.replace(/^\S+ /, "") : base))); }
+      return;
+    }
     if (t === window && sameOrigin(e.filename) && e.filename && !/ResizeObserver/.test(e.message || "")) fatal((e.message || "Script error") + (e.filename ? " (" + String(e.filename).replace(location.origin, "") + ":" + e.lineno + ")" : ""));
   }, true);
   addEventListener("unhandledrejection", e => {
