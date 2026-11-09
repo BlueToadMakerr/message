@@ -1,6 +1,6 @@
 import { auth, db } from "./firebase.js";
 import { wirePhotoUpload } from "./photo.js";
-import { initChatSearch } from "./chatsearch.js";
+import { initChatSearch } from "./catsearch.js";
 import { onAuthStateChanged } from "./sdk.js";
 import {
   ref, push, set, get, update, remove, onValue, onDisconnect, serverTimestamp,

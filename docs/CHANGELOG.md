@@ -2,10 +2,14 @@
 
 Newest first. Older rounds (1–43) are kept below exactly as they were written.
 
+## 1.59.2 — Renamed chatsearch.js to catsearch.js
+
+- The chat search script is now `js/catsearch.js`: the host blocks (403) any file with "chat" in its name. **Delete `js/chatsearch.js` from the host** if you uploaded it.
+
 ## 1.59.1 — Error screen names the file that failed
 
 - When a page's script fails to load, the error screen now checks the files it imports and names the one that is actually missing or wrong (for example "bad file: /js/photo.js (HTTP 404)"), instead of only naming the page's own script.
-- Note: 1.58.1+ added new files (`js/photo.js`, `js/chatsearch.js`). If they aren't uploaded next to the rest, the chat page can't start.
+- Note: 1.58.1+ added new files (`js/photo.js`, `js/catsearch.js`). If they aren't uploaded next to the rest, the chat page can't start.
 
 ## 1.59.0 — Search chats and files, photo uploads for groups and bots
 

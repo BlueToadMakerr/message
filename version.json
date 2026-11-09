@@ -1,1 +1,1 @@
-{ "version": "1.59.1", "apiVersion": 1, "released": "2026-11-09", "notes": "Error screen names the failing file." }
+{ "version": "1.59.2", "apiVersion": 1, "released": "2026-11-09", "notes": "Renamed chatsearch.js to catsearch.js." }
