@@ -35,3 +35,9 @@ export async function refreshSite({ unregister = false, onProgress = () => {} } 
   } catch (_) { /* ignore */ }
   return n;
 }
+
+/** The Reload / "Full refresh" buttons: every file the app uses is fetched again from the host (not from any cache), then the whole app restarts. */
+export async function fullRefresh() {
+  try { await Promise.race([refreshSite(), new Promise(r => setTimeout(r, 20000))]); } catch (_) { /* reload anyway */ }
+  try { (window.top || window).location.reload(); } catch (_) { location.reload(); }
+}

@@ -145,10 +145,23 @@ class MainActivity : Activity() {
             override fun onPageFinished(v: WebView, url: String?) { loaded = true }
             // Network errors show the same offline page the website uses (assets/offline.html), with the net:: code.
             override fun onReceivedError(v: WebView, r: WebResourceRequest, e: WebResourceError) {
-                if (!r.isForMainFrame || r.url.scheme == "file") return
+                if (r.url.scheme == "file") return
                 val code = (e.description?.toString() ?: "").removePrefix("net::")
+                if (r.isForMainFrame) {
+                    // stop the built-in "web page not available" page and show ours instead
+                    v.stopLoading()
+                    val u = Uri.encode(r.url.toString())
+                    v.post { v.loadUrl("file:///android_asset/offline.html?code=" + Uri.encode(code) + "&url=" + u) }
+                } else if (r.url.host == Uri.parse(Config.SITE_URL).host && (r.url.path ?: "").let { it.endsWith(".html") || it.endsWith("/") || !it.contains('.') }) {
+                    // a pane (iframe) page failed: tell the app shell so it can show its own error screen
+                    val js = "window.QM&&QM.frameFailed(" + org.json.JSONObject.quote(r.url.toString()) + "," + org.json.JSONObject.quote(code) + ")"
+                    v.post { v.evaluateJavascript(js, null) }
+                }
+            }
+            override fun onReceivedHttpError(v: WebView, r: WebResourceRequest, resp: android.webkit.WebResourceResponse) {
+                if (!r.isForMainFrame || r.url.scheme == "file" || resp.statusCode < 500) return
                 val u = Uri.encode(r.url.toString())
-                v.loadUrl("file:///android_asset/offline.html?code=" + Uri.encode(code) + "&url=" + u)
+                v.post { v.loadUrl("file:///android_asset/offline.html?code=HTTP_" + resp.statusCode + "&url=" + u) }
             }
         }
         web.webChromeClient = object : WebChromeClient() {

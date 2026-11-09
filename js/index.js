@@ -664,8 +664,7 @@ const vb = $("verifyBanner");
 function paintVerifyBanner() {
   const u = auth.currentUser, show = !!u && !u.emailVerified;
   vb.hidden = !show;
-  document.documentElement.classList.toggle("has-vb", show);
-  document.documentElement.style.setProperty("--vb-h", show ? vb.offsetHeight + "px" : "0px");
+  window.__qmStack && window.__qmStack();                       // js/bars.js stacks every banner (offline, verify, new version, safe mode) and pushes the page down
   $("vbEmail").textContent = show && u.email ? "(sent to " + u.email + ")" : "";
 }
 setInterval(paintVerifyBanner, 1000);

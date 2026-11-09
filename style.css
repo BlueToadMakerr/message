@@ -518,8 +518,8 @@ html.panel .chat-shell { max-width: none; }
 [data-theme="dark"] .protect-banner { background: #422006; color: #fde68a; }
 
 /* verify banner */
-.verify-banner { position: fixed; z-index: 99990; left: 0; right: 0; top: var(--off-h, 0px); display: flex; flex-wrap: wrap; gap: .5rem; align-items: center; justify-content: center; padding: 6px 12px; background: #fef3c7; color: #78350f; font: 600 13px system-ui, sans-serif; text-align: center; }
-html:not(.is-offline) .verify-banner { padding-top: calc(var(--sat-raw, env(safe-area-inset-top, 0px)) + 6px); }
+.verify-banner { position: fixed; z-index: 99990; left: 0; right: 0; top: var(--off-h, 0px); box-sizing: border-box; display: flex; flex-wrap: wrap; gap: .5rem; align-items: center; justify-content: center; padding: 6px 12px; background: #fef3c7; color: #78350f; font: 600 13px system-ui, sans-serif; text-align: center; }
+html:not(.is-offline) .verify-banner.vb-first { padding-top: calc(var(--sat-raw, env(safe-area-inset-top, 0px)) + 6px); }
 .verify-banner[hidden] { display: none; }
 .verify-banner small { font-weight: 500; opacity: .85; }
 [data-theme="dark"] .verify-banner { background: #422006; color: #fde68a; }
@@ -1052,3 +1052,13 @@ button.pw-item{cursor:pointer}button.pw-item:hover{background:var(--surface-2)}
 
 .mi-notify.good .mi-v{color:#22c55e}.mi-notify.bad .mi-v{color:#ef4444}
 .msg-info .mi-notify .mi-v small{color:var(--muted,#999);font-weight:400}
+
+.msg-info .mi-legend{margin-top:.6rem;padding-top:.5rem;border-top:1px solid var(--border,#8884);display:grid;gap:.35rem;font-size:.8rem;color:var(--muted,#999);line-height:1.35}
+.msg-info .mi-legend b{color:var(--text,inherit)}
+.mi-notify.warn .mi-v{color:#eab308}
+
+/* pane error screen (js/shell.js) */
+.frame-err .fe-card{max-width:420px}
+.frame-err strong{font-size:1.15rem}
+.frame-err .fe-detail{display:block;margin:.2rem 0 .8rem;font-size:.75rem;opacity:.6;word-break:break-all}
+.frame-err .fe-actions{display:flex;flex-wrap:wrap;gap:.5rem;justify-content:center}

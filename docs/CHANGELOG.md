@@ -2,6 +2,19 @@
 
 Newest first. Older rounds (1–43) are kept below exactly as they were written.
 
+## 1.58.0 — Full refresh, banner stacking, error screens
+
+- The new-version "Reload" button now does a full refresh (clears the app's cached files, then reloads) instead of just reloading the page.
+- Banners (offline, verify email, new version, saved-copy) now stack in order and push the page down; the offline banner no longer hides the "outdated" pill.
+- A page that breaks while starting (script error, module fails to load) is treated as unrecoverable immediately: the app does one automatic full refresh (at most once per 10 minutes), otherwise shows an error screen.
+- After 3 failed tries a pane shows a custom error screen with Full refresh / Try again instead of reloading forever.
+- Android: failed pages show our own offline screen instead of the system error (also for server 5xx and for panes that fail inside the app).
+- Android: the "Saved copy of the site" setting is hidden (the app keeps its own copy and has no service worker).
+
+## 1.57.4 — Compact notification list in Info
+
+- In a message's Info, each person now has just a short result (✅ Sent, ❌ Not sent, ⚠️ Partly sent, Not needed, No record, …). What each result means is explained once below the list, only for the results that appear; when people have different reasons, the names are listed beside each reason.
+
 ## 1.57.3 — Worker: messages and calls written as one update were missed (the cause of "notification couldn't be sent")
 
 - **Restart the worker (1.2.1).** The app writes a message and every recipient's ping in ONE multi-path update. The database hands such a write to a listener as a "patch" event whose keys are whole paths (`"uid/pings/chat"`), and the worker only understood nested data, so it **ignored them**: no push for messages, no answer for call rings (the caller then saw "The notification couldn't be sent"), and nothing in a message's Info. It now handles both forms, for pings, rings and bot requests, and treats every patch as a live change. The worker prints a line for each notification it handles (`notify <uid> sent 2/2`).

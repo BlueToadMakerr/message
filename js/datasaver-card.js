@@ -53,7 +53,7 @@ async function paintCopy() {
     toast(r && r.ok ? `Saved ${r.count} files as the copy.` : "Couldn't save a copy (open the app's main page first).", r && r.ok ? "success" : "error"); paintCopy();
   };
 }
-if ($("copyCard")) paintCopy();
+if ($("copyCard")) { if (window.QMApp) $("copyCard").hidden = true; else paintCopy(); }  // the apps keep their own copy and have no service worker
 
 // ---- Offline data
 async function paintOffline() { const st = await ocStats(); $("offlineNow").textContent = offlineOn() ? `${st.count} saved item${st.count === 1 ? "" : "s"}, about ${mb(st.bytes)}.` : "Switched off: nothing is kept."; }

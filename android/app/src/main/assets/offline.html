@@ -46,6 +46,9 @@
     ERR_CONNECTION_CLOSED: ["Connection interrupted", "The server closed the connection. Try again."],
     ERR_NAME_NOT_RESOLVED: ["Can't find the server", "The address couldn't be looked up. Check your connection or DNS settings."],
     ERR_ADDRESS_UNREACHABLE: ["Can't reach the server", "There's no route to the server from your current network."],
+    HTTP_500: ["Server problem", "The server had an error. Try again in a moment."],
+    HTTP_502: ["Server problem", "The server had an error. Try again in a moment."],
+    HTTP_503: ["Server busy", "The server is busy or down for maintenance. Try again in a moment."],
     ERR_SSL_PROTOCOL_ERROR: ["Secure connection failed", "A secure connection to the server couldn't be made."],
     ERR_CERT_DATE_INVALID: ["Secure connection failed", "The server's certificate is expired or your device's date is wrong."]
   };
@@ -55,7 +58,7 @@
   if (hit) { document.getElementById("title").textContent = hit[0]; document.getElementById("msg").textContent = hit[1]; }
   else if (code) { document.getElementById("title").textContent = "Can't load the page"; document.getElementById("msg").textContent = "Something went wrong while loading."; }
   else { document.getElementById("title").textContent = "You're offline"; document.getElementById("msg").textContent = "This page isn't available without a connection."; }
-  document.getElementById("code").textContent = code ? "net::" + code : "";
+  document.getElementById("code").textContent = code ? (/^HTTP_/.test(code) ? code.replace("_"," ") : "net::" + code) : "";
   // follow the app's theme when running inside the Android app
   try { if (window.QMApp && QMApp.isDark) { var t = localStorage.getItem("theme") || "system"; document.documentElement.dataset.theme = t === "system" ? (QMApp.isDark() ? "dark" : "light") : t; } } catch (e) {}
   function retry() {

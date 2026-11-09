@@ -42,5 +42,5 @@ function banner() {
   const t = document.createElement("span"); t.className = "vb-text"; t.textContent = "Safe mode: you are using the last working copy of QuickMessage, not the newest site.";
   const go = document.createElement("button"); go.type = "button"; go.className = "btn small primary"; go.textContent = "Use the live site";
   go.onclick = async () => { await setSafeMode(false); location.reload(); };
-  b.append(t, go); document.body.prepend(b);
+  b.append(t, go); document.body.prepend(b); window.__qmStack && window.__qmStack();
 }

@@ -791,24 +791,33 @@ async function notifyRows(box, key, msg, row) {
     Promise.all(who.map(u => get(ref(db, `pushLog/${chatId}/${key}/${u}`)).then(s => s.val()).catch(e => ({ __err: String((e && (e.code || e.message)) || e) }))))
   ]);
   await Promise.all(who.map(getProfile));
+  // One short result per person; what each result means is explained once, below the list, and only for the results that appear.
+  const legend = new Map();                                   // "icon label|explanation" -> names
+  const note = (label, text, name) => { const k = label + "\u0001" + text; (legend.get(k) || legend.set(k, []).get(k)).push(name); };
   who.forEach((u, i) => {
     const p = peekProfile(u), l0 = logs[i], l = l0 && l0.__err ? undefined : l0, name = u === me ? "You" : (p?.displayName || "Someone");
-    let value, sub, cls = "";
-    if (l && l.status === "sent") { value = "✅ Notification sent"; sub = `Accepted by the push service for ${l.ok} device${l.ok === 1 ? "" : "s"}${l.why ? " — but " + pushWhy(l.why) : ""}. It still depends on their device showing it.`; cls = "good"; }
-    else if (l && l.status === "skipped") { value = "Not needed"; sub = l.why; }
-    else if (l && l.status === "no_token") { value = "❌ Not sent"; sub = "None of their devices is set up for notifications (they haven't turned them on, or signed out). They only see the message when they open the app."; cls = "bad"; }
-    else if (l && l.status === "failed") { value = "❌ Not sent"; sub = pushWhy(l.why) || "The push service refused it."; cls = "bad"; }
-    else if (srv && srv.state === "private") { value = "Handled by your private server"; sub = "A private server sends its own notifications and doesn't keep a record of them."; }
-    else if (l0 && l0.__err) {
-      value = "Unknown";
-      sub = /permission/i.test(l0.__err) ? "The database refused to show the notification record. Publish the newest database.rules.json (it has a new \"pushLog\" rule) in the Firebase console → Realtime Database → Rules." : "Couldn't read the notification record (" + l0.__err.slice(0, 80) + ").";
-    }
-    else if (srv && (srv.state === "offline" || srv.state === "never")) { value = "❌ Probably not sent"; sub = srv.state === "never" ? "No notification server has been set up." : "The notification server isn't running right now, so it can't have sent (or logged) anything."; cls = "bad"; }
-    else { value = "No record"; sub = (Date.now() - (msg.timestamp || 0) > 3 * 86400000) ? "Notification results are kept for 3 days." : "The server hasn't logged it (yet) — it may still be working on it, or the message was sent before results were logged."; }
-    const r = row(name, value, sub);
+    let value, cls = "";
+    if (l && l.status === "sent" && !l.why) { value = "✅ Sent"; cls = "good"; note(value, "The push service accepted it for their device(s). Whether it shows up still depends on their device.", name); }
+    else if (l && l.status === "sent") { value = "⚠️ Partly sent"; cls = "warn"; note(value, `Accepted for ${l.ok} device${l.ok === 1 ? "" : "s"}, but another one failed: ${pushWhy(l.why)}`, name); }
+    else if (l && l.status === "skipped") { value = "Not needed"; note(value, "They had already read it or had the chat open.", name); }
+    else if (l && l.status === "no_token") { value = "❌ Not sent"; cls = "bad"; note(value, "None of their devices is set up for notifications (they haven't turned them on, or signed out). They only see the message when they open the app.", name); }
+    else if (l && l.status === "failed") { value = "❌ Not sent"; cls = "bad"; note(value, pushWhy(l.why) || "The push service refused it.", name); }
+    else if (srv && srv.state === "private") { value = "Not tracked"; note(value, "A private server sends its own notifications and doesn't keep a record of them.", name); }
+    else if (l0 && l0.__err) { value = "Unknown"; note(value, /permission/i.test(l0.__err) ? "The database refused to show the record. Publish the newest database.rules.json (new \"pushLog\" rule) in the Firebase console → Realtime Database → Rules." : "Couldn't read the record (" + l0.__err.slice(0, 80) + ").", name); }
+    else if (srv && (srv.state === "offline" || srv.state === "never")) { value = "❌ Probably not sent"; cls = "bad"; note(value, srv.state === "never" ? "No notification server has been set up." : "The notification server isn't running right now, so it can't have sent (or logged) anything.", name); }
+    else { value = "No record"; note(value, (Date.now() - (msg.timestamp || 0) > 3 * 86400000) ? "Notification results are kept for 3 days." : "The server hasn't logged it (yet): it may still be working on it, or the message was sent before results were logged.", name); }
+    const r = row(name, value);
     r.prepend(avatarEl(p?.displayName || "?", p?.pfp || "", "avatar sm"));
     if (cls) r.classList.add("mi-notify", cls);
   });
+  const key2 = document.createElement("div"); key2.className = "mi-legend";
+  for (const [k, names] of legend) {
+    const [label, text] = k.split("\u0001"), line = document.createElement("div");
+    const who2 = names.length > 3 && legend.size > 1 ? ` (${names.slice(0, 3).join(", ")} +${names.length - 3})` : legend.size > 1 && names.length ? ` (${names.join(", ")})` : "";
+    const b = document.createElement("b"); b.textContent = label;
+    line.append(b, document.createTextNode(" — " + text + who2)); key2.append(line);
+  }
+  box.append(key2);
 }
 
 function explainEncrypted(msg) {

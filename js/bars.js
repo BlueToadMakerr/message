@@ -79,11 +79,23 @@ function pill(id, cls) {
     "#qmSlow{position:fixed;z-index:99997;left:50%;bottom:calc(var(--sab,0px) + 14px);transform:translateX(-50%);padding:7px 14px;border-radius:999px;background:rgba(20,22,28,.88);color:#fff;font:600 13px system-ui,sans-serif;max-width:90vw;text-align:center;pointer-events:none}";
   (document.head || root).append(css);
 }
+// Banners that sit at the top of the app (offline, "verify your email", "new version", "safe mode") are stacked one under the other, each
+// below the previous, and the page is pushed down by their total height (--vb-h) so nothing slides underneath them.
+function stackBanners() {
+  if (window.top !== window) return;
+  const off = document.getElementById("qmOffline"), offH = off && !off.hidden ? off.offsetHeight : 0;
+  const bs = [...document.querySelectorAll(".verify-banner")].filter(b => !b.hidden);
+  let acc = offH;
+  bs.forEach((b, i) => { b.style.top = acc + "px"; b.classList.toggle("vb-first", i === 0); acc += b.offsetHeight; });
+  root.style.setProperty("--off-h", offH + "px"); root.style.setProperty("--vb-h", (acc - offH) + "px");
+  root.classList.toggle("has-vb", bs.length > 0); root.classList.toggle("is-offline", offH > 0);
+}
+window.__qmStack = stackBanners;
 const SLOW_MS = 2500, t0 = Date.now();
 let hadFail = false;
 setInterval(() => {
   if (window.top === window) { const o = pill("qmOffline", ""); const off = navigator.onLine === false; o.hidden = !off; if (off) o.textContent = "You're offline. Waiting for a connection…";
-    root.classList.toggle("is-offline", off); root.style.setProperty("--off-h", off ? o.offsetHeight + "px" : "0px"); }
+    stackBanners(); }
   const s = pill("qmSlow", ""); const waiting = !window.__qmReady && Date.now() - t0 > SLOW_MS;
   s.hidden = !waiting;
   if (waiting) s.textContent = navigator.onLine === false ? "No connection. This page will load when you're back online…" : "Still loading… your connection looks slow";
@@ -124,3 +136,41 @@ if (window.top === window) {
 
 // ---- own drop-downs / colour picker instead of the phone's white native ones (touch devices and the apps)
 import("./customui.js").catch(() => {});
+
+
+// ---- a page that breaks while it starts (a script that throws, a module that can't load) is treated as unrecoverable AT ONCE:
+// no waiting for the 15 s watchdog and no retry loop. Inside the app the shell shows its error screen (or, the first time in 10 minutes,
+// does a full refresh by itself); a page opened on its own gets the same screen here.
+{
+  let done = false;
+  const sameOrigin = f => !f || String(f).startsWith(location.origin);
+  const fatal = msg => {
+    if (done || window.__qmReady) return; done = true;
+    try { const qm = window.parent !== window && window.parent.QM; if (qm && window.frameElement && qm.frameFatal) { qm.frameFatal(window.frameElement, String(msg).slice(0, 160)); return; } } catch (_) { /* fall through */ }
+    if (window.parent !== window) return;
+    standaloneError(msg);
+  };
+  addEventListener("error", e => {
+    const t = e.target;
+    if (t && t !== window && t.tagName === "SCRIPT") { if (sameOrigin(t.src)) fatal("A script didn't load: " + String(t.src).replace(location.origin, "")); return; }
+    if (t === window && sameOrigin(e.filename) && e.filename && !/ResizeObserver/.test(e.message || "")) fatal((e.message || "Script error") + (e.filename ? " (" + String(e.filename).replace(location.origin, "") + ":" + e.lineno + ")" : ""));
+  }, true);
+  addEventListener("unhandledrejection", e => {
+    const m = String((e.reason && (e.reason.message || e.reason)) || "");
+    if (/dynamically imported module|Importing a module script failed|module script/i.test(m)) fatal(m);
+  });
+}
+function standaloneError(msg) {
+  const last = +(sessionStorage.getItem("qm-autofix") || 0), offline = navigator.onLine === false;
+  const full = () => import("./refresh.js").then(m => m.fullRefresh()).catch(() => { try { caches.keys().then(ks => Promise.all(ks.filter(k => !k.startsWith("qm-")).map(k => caches.delete(k)))).finally(() => location.reload()); } catch (_) { location.reload(); } });
+  if (!offline && Date.now() - last > 600000) { try { sessionStorage.setItem("qm-autofix", String(Date.now())); } catch (_) { /* ignore */ } full(); return; }
+  const o = document.createElement("div");
+  o.style.cssText = "position:fixed;inset:0;z-index:100000;display:grid;place-items:center;padding:24px;text-align:center;background:var(--bg,#f4f5f9);color:var(--text,#161a23);font:16px/1.5 system-ui,sans-serif";
+  o.innerHTML = '<div style="max-width:420px"><h2 style="margin:.2rem 0"></h2><p style="opacity:.75"></p><code style="display:block;font-size:12px;opacity:.6;word-break:break-all;margin:.6rem 0"></code><button class="a" style="height:44px;padding:0 20px;border:0;border-radius:12px;background:#4f46e5;color:#fff;font:600 1rem system-ui;cursor:pointer;margin:4px">Full refresh</button><button class="b" style="height:44px;padding:0 20px;border:1px solid #8886;border-radius:12px;background:none;color:inherit;font:600 1rem system-ui;cursor:pointer;margin:4px">Try again</button></div>';
+  o.querySelector("h2").textContent = offline ? "You're offline" : "QuickMessage hit a problem";
+  o.querySelector("p").textContent = offline ? "This page isn't saved on this device yet. It will load when you're back online." : "Something went wrong while the page was starting. A full refresh fetches everything again and usually fixes it.";
+  o.querySelector("code").textContent = String(msg).slice(0, 200);
+  o.querySelector(".a").onclick = e => { e.target.disabled = true; e.target.textContent = "Refreshing\u2026"; full(); };
+  o.querySelector(".b").onclick = () => location.reload();
+  (document.body || document.documentElement).append(o);
+}

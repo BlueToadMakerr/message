@@ -12,6 +12,7 @@ import { iosUploads, iosUploadFailed } from "./ios-notify.js";     // iPhone app
 import { plugins as pluginHost } from "./plugins.js";    // Developer-mode plugins (sandboxed): see plugin-docs.html
 import { watchSiteVersion, SITE_VERSION } from "./version.js";
 import { watchSavedCopy, copyStatus, setSafeMode } from "./sitecopy.js";
+import { fullRefresh } from "./refresh.js";
 import "./viewer.js";                 // registers window.__qmOpenImage: images from every frame open full-screen here
 
 const $ = id => document.getElementById(id);
@@ -60,7 +61,7 @@ function armWatch(frame, url, retry) {
 function stalled(frame) {
   const w = watch.get(frame);
   if (!w) return;
-  if (w.tries >= MAX_TRIES) { showFrameError(frame, true); return; }
+  if (w.tries >= MAX_TRIES) { showFrameError(frame, true, { kind: navigator.onLine === false ? "offline" : "stall" }); return; }
   w.tries++;
   const url = w.base + (w.base.includes("?") ? "&" : "?") + "_r=" + Date.now();
   const keep = w.tries;
@@ -68,25 +69,64 @@ function stalled(frame) {
   const nw = watch.get(nf); if (nw) nw.tries = keep;
 }
 function frameReady(frame) { if (frame && watch.has(frame)) clearWatch(frame); }
-function showFrameError(frame, on) {
+/** The error screen for a pane. info.kind: "stall" (didn't load in time), "offline", "script" (the page broke while starting), "fixing" (a full refresh is running). */
+function showFrameError(frame, on, info = {}) {
   const host = frame && frame.parentElement;
   if (!host) return;
   let box = host.querySelector(":scope > .frame-err[data-for='" + frame.id + "']");
   if (!on) { box?.remove(); return; }
-  if (box) return;
+  if (box && box.dataset.kind === (info.kind || "stall")) return;
+  box?.remove();
+  const kind = info.kind || (navigator.onLine === false ? "offline" : "stall");
   box = document.createElement("div");
-  box.className = "frame-err"; box.dataset.for = frame.id;
-  box.innerHTML = `<div><strong>This page didn't load.</strong><p>Check your connection and try again.</p><button type="button" class="btn primary">Try again</button></div>`;
-  box.querySelector("button").onclick = () => { box.remove(); const cf = document.getElementById(frame.id) || frame; const w = watch.get(cf); const base = w ? w.base : cf.dataset.src || cf.src; if (w) w.tries = 0; navFrame(cf, base, false); };
-  host.append(box);
-  // Maybe a broken update: offer the last working copy of the site
+  box.className = "frame-err"; box.dataset.for = frame.id; box.dataset.kind = kind;
+  const T = {
+    offline: ["You're offline", "This page isn't saved on this device yet. It will load when you're back online."],
+    script: ["This page hit a problem", "Something went wrong while it was starting. A full refresh fetches everything again and usually fixes it."],
+    fixing: ["Refreshing QuickMessage\u2026", "This page hit a problem, so the app is fetching a fresh copy of everything."],
+    stall: ["This page didn't load", "Check your connection. If it keeps failing, a full refresh fetches everything again."]
+  }[kind];
+  const inner = document.createElement("div"); inner.className = "fe-card";
+  const h = document.createElement("strong"); h.textContent = T[0];
+  const pp = document.createElement("p"); pp.textContent = T[1];
+  inner.append(h, pp);
+  if (info.detail) { const c = document.createElement("code"); c.className = "fe-detail"; c.textContent = info.detail; inner.append(c); }
+  const row = document.createElement("div"); row.className = "fe-actions";
+  const mk = (label, cls, fn) => { const b = document.createElement("button"); b.type = "button"; b.className = "btn " + cls; b.textContent = label; b.onclick = fn; row.append(b); return b; };
+  if (kind !== "fixing") {
+    mk("Full refresh", kind === "script" || kind === "stall" ? "primary" : "", e => { e.target.disabled = true; e.target.textContent = "Refreshing\u2026"; fullRefresh(); });
+    mk("Try again", kind === "offline" ? "primary" : "", () => { box.remove(); const cf = document.getElementById(frame.id) || frame; const w = watch.get(cf); const base = w ? w.base : cf.dataset.src || cf.src; if (w) w.tries = 0; navFrame(cf, base, false); });
+  }
+  inner.append(row); box.append(inner); host.append(box);
+  if (kind === "fixing") return;
+  // Maybe a broken update: offer the last working copy of the site (not available in the apps, which keep their own copy)
+  if (window.QMApp) return;
   copyStatus().then(st => {
     if (!st || !st.has || st.safe || !box.isConnected) return;
-    const p = box.querySelector("p"); if (p) p.textContent = "Check your connection and try again. If this started after an update of QuickMessage, you can use the last working copy instead.";
-    const b = document.createElement("button"); b.type = "button"; b.className = "btn"; b.textContent = "Use the last working copy"; b.style.marginLeft = ".5rem";
-    b.onclick = async () => { b.disabled = true; await setSafeMode(true); location.reload(); };
-    box.querySelector("button").after(b);
+    mk("Use the last working copy", "", async e => { e.target.disabled = true; await setSafeMode(true); location.reload(); });
   }).catch(() => {});
+}
+/** A page broke while it started (js/bars.js): no waiting, no retries. The first time in 10 minutes the app refreshes itself completely; after that the error screen stays. */
+function frameFatal(frame, msg) {
+  if (!frame) return;
+  const w = watch.get(frame); if (w) { clearTimeout(w.timer); w.tries = MAX_TRIES; }
+  let last = 0; try { last = +(sessionStorage.getItem("qm-autofix") || 0); } catch (_) { /* ignore */ }
+  if (navigator.onLine !== false && Date.now() - last > 600000) {
+    try { sessionStorage.setItem("qm-autofix", String(Date.now())); } catch (_) { /* ignore */ }
+    showFrameError(frame, true, { kind: "fixing" }); fullRefresh(); return;
+  }
+  showFrameError(frame, true, { kind: navigator.onLine === false ? "offline" : "script", detail: msg });
+}
+/** The Android app reports a pane whose page the network refused (instead of the browser's own error page showing inside it). */
+function frameFailed(url, code) {
+  const base = String(url || "").replace(/([?&])_r=\d+/, "").replace(/[?&]$/, "");
+  const strip = u => String(u || "").replace(/([?&])_r=\d+/, "").replace(/[?&]$/, "");
+  for (const f of document.querySelectorAll("iframe")) {
+    const w = watch.get(f);
+    if (!(w && (w.base === base || w.url === url)) && strip(f.src) !== base) continue;
+    if (w) { clearTimeout(w.timer); w.tries = MAX_TRIES; }
+    showFrameError(f, true, { kind: /INTERNET_DISCONNECTED|NETWORK_CHANGED|NAME_NOT_RESOLVED/.test(code) || navigator.onLine === false ? "offline" : "stall", detail: code ? "net::" + code : "" });
+  }
 }
 // A frame that ended up showing the app shell itself (e.g. a stray link to index.html) is sent back to what it should show.
 function frameEscaped(frame) {
@@ -495,7 +535,7 @@ export const QM = (window.QM = {
   declined: (chatId, by) => { try { els().callFrame.contentWindow.__qmDeclined?.(chatId, by); } catch (_) { /* ignore */ } },
   plugins: pluginHost,
   setUploads, uploads: allUploads, foreignUploads, activeUploads, showUploadsPopup,
-  openChat, openPane, closeDetail, androidBack, openCall, minimizeCall, callEnded, setCallState, frameReady, frameEscaped,
+  openChat, openPane, closeDetail, androidBack, openCall, minimizeCall, callEnded, setCallState, frameReady, frameEscaped, frameFatal, frameFailed,
   isSplit: () => split.matches,
   toggleMute: () => callWin()?.toggleMute(), toggleDeafen: () => callWin()?.toggleDeafen(), toggleScreen: () => callWin()?.toggleScreen(), hangup: () => leaveCall(),
   protect: { active: () => prot.on, since: () => st.call.joinedAt || st.call.startLocal || prot.since, unlock: askUnlock },
@@ -557,7 +597,7 @@ export function initShell(userId) {
   if (nested) return;
   uid = userId;
   getProfile(userId).then(p => pluginHost.setContext({ uid: userId, name: p.displayName || "" })).catch(() => {});
-  if (!wired) { wired = true; wire(); watchSiteVersion(); watchSavedCopy(SITE_VERSION); }
+  if (!wired) { wired = true; wire(); watchSiteVersion(); if (!window.QMApp) watchSavedCopy(SITE_VERSION); }
   { const v = viewFromUrl(); depth = 0; history.replaceState({ qm: 1, d: 0, v }, "", location.href); render(v); }
   const q = new URLSearchParams(location.search);
   // A call link / notification carries a one-shot timestamp. It must be fresh AND come from a real navigation, so
