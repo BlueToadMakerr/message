@@ -1078,3 +1078,5 @@ html.is-offline .sync-pill{top:calc(var(--off-h,0px) + var(--vb-h,0px) + 8px)}
 .cs-empty{padding:.8rem .2rem;font-size:.9rem}.cs-foot{display:flex;justify-content:space-between;align-items:center;gap:.5rem;font-size:.8rem}
 .chat-search{display:flex;margin:0 0 .6rem}.chat-search input{width:100%}
 .chat-search input[hidden]{display:none}
+.lp-held{cursor:pointer;min-height:64px;background:var(--surface-2,#8882);border-radius:8px;object-fit:none}
+.cs-more{text-align:center;padding:.6rem;font-size:.82rem}

@@ -1,1 +1,1 @@
-{ "version": "1.60.1", "apiVersion": 1, "released": "2026-11-09", "notes": "Android push fix (worker 1.2.2)." }
+{ "version": "1.61.0", "apiVersion": 1, "released": "2026-11-09", "notes": "Saved link previews; every message searchable; windowed jump." }

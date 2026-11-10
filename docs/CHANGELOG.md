@@ -2,6 +2,13 @@
 
 Newest first. Older rounds (1–43) are kept below exactly as they were written.
 
+## 1.61.0 — Saved link previews, every message searchable, jump to a result without loading everything
+
+- **Link previews are saved on this device** (Offline data). A link is looked up once: later visits show the saved copy with no database lookup and no request to the site, and a copy over a week old is refreshed quietly in the background. With **Data Saver** on, a saved preview shows by itself (its picture waits for a tap); a link never seen before still waits for a tap. Links in encrypted chats are never saved to disk.
+- **Every message you've seen is searchable.** Each message the chat shows (latest page, older pages, live ones) is added to a search index kept on this device; edits and deletions update it. Encrypted chats are searched from memory only (their text is never written to disk).
+- **Jumping to a search result loads only that area.** Tapping a result that isn't on screen opens ~20 messages before it and ~20 from it on; scrolling up or down loads one page more at a time, and the "back to latest" button (or sending a message) returns to the present. Nothing else of the history is downloaded.
+- **Searching older history is automatic and gentle.** The "Search older messages" button is gone: when you scroll to the end of the result list (or stop typing with nothing to show) it fetches ONE page of 250 older messages, then waits until you scroll again. Never two requests at once, never chained pages. A short page marks the start of the chat.
+
 ## 1.60.1 — Android push fix (worker 1.2.2)
 
 - **Restart the worker (1.2.2).** Android pushes failed with `InvalidArgumentError: Invalid data payload key: from`: Firebase reserves the name `from` in a push's data. The worker now sends the sender as `fromUid` (nothing in the apps read the old key).

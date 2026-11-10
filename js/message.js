@@ -38,6 +38,9 @@ hydrateIcons();
 
 const $ = id => document.getElementById(id);
 const chatId = new URLSearchParams(location.search).get("chatId");
+const AT = new URLSearchParams(location.search).get("at");          // opened on one message of the history (from search): only that area is loaded
+let windowed = false, newestKey = null, loadingNewer = false, searchIdx = null, sawEnc = false;
+const idxAdd = (k, m) => { if (m && (m._enc || m.enc || rawOf.has(m))) sawEnc = true; searchIdx?.add(k, m); };
 if (!chatId || !/^[\w-]{1,64}$/.test(chatId)) {
   location.replace("index.html");
   throw new Error("Missing or invalid chatId");
@@ -493,7 +496,7 @@ new ResizeObserver(() => { if (stick) scrollToBottom(); else pickAnchor(); }).ob
 
 function appendLive(key, msg) {
   if (document.getElementById("msg-" + key)) return null;
-  msgData.set(key, msg);
+  msgData.set(key, msg); idxAdd(key, msg);
   const el = buildMessage(key, msg);
   messagesDiv.insertBefore(el, typingRow);
   if (msg.type !== "event") { try { QM?.plugins?.emit("message", { chatId, key, fromMe: msg.fromUid === me, text: isText(msg) && !msg._locked ? String(msg.text ?? msg.content ?? "").slice(0, 2000) : null, type: msg.type || "text", time: msg.timestamp || null }); } catch (_) { /* a plugin must never break the chat */ } }
@@ -534,7 +537,7 @@ function onChanged(snap) {
   rawByKey.set(snap.key, raw); persistPage();
   addQ = addQ.then(async () => {
     const msg = await hydrate(raw);
-    msgData.set(snap.key, msg);
+    msgData.set(snap.key, msg); idxAdd(snap.key, msg);
     const el = document.getElementById("msg-" + snap.key);
     if (el && msg.type !== "event") fillMessage(el, snap.key, msg); else if (!el) onAdded(snap);
   }).catch(() => {});
@@ -543,7 +546,7 @@ function onChanged(snap) {
 function onRemoved(snap) {
   rawByKey.delete(snap.key); persistPage();
   cacheDrop(chatId, snap.key);                          // its picture / clip / voice note is no longer worth keeping on this device
-  msgData.delete(snap.key);
+  msgData.delete(snap.key); searchIdx?.drop(snap.key);
   document.getElementById("msg-" + snap.key)?.remove();
   if (latestKey === snap.key) {
     const msgs = [...messagesDiv.querySelectorAll(".msg")].filter(e => msgData.get(e.dataset.key)?.type !== "event");
@@ -572,7 +575,7 @@ async function loadOlder() {
       for (const [i, s] of list.entries()) {
         if (document.getElementById("msg-" + s.key)) continue;
         const m = plains[i];
-        msgData.set(s.key, m);
+        msgData.set(s.key, m); idxAdd(s.key, m);
         const el = buildMessage(s.key, m);
         el.dataset.old = "1";
         messagesDiv.insertBefore(el, anchor);
@@ -603,13 +606,62 @@ function fillViewport() {
 messagesDiv.addEventListener("scroll", () => {
   const near = isNearBottom();
   // A scroll event right after something grew, with no finger/wheel/key involved, is the layout moving, not the reader leaving the bottom.
-  if (!(stick && !near && Date.now() - lastGrow < 200 && Date.now() - lastInput > 400)) stick = near;
+  if (!(stick && !near && Date.now() - lastGrow < 200 && Date.now() - lastInput > 400)) stick = near && !windowed;
   if (!stick) pickAnchor();
-  if (stick) jumpBtn.classList.add("hidden");
+  if (stick && !windowed) jumpBtn.classList.add("hidden");
+  if (windowed && messagesDiv.scrollHeight - messagesDiv.scrollTop - messagesDiv.clientHeight < 400) loadNewer();
   if (messagesDiv.scrollTop < 40 && Date.now() > ignoreScrollUntil) loadOlder();
   closeMenu();
 }, { passive: true });
-jumpBtn.addEventListener("click", scrollToBottom);
+jumpBtn.addEventListener("click", () => { if (windowed) goLive(); else scrollToBottom(); });
+
+// ---------- opened on one message (from search): the area around it, more when you scroll up or down ----------
+const NEWER_PAGE = 30;
+/** Leave the history view: show the latest messages and go live (the jump button, or sending a message). */
+async function goLive() {
+  if (!windowed) return; windowed = false; stick = true;
+  { const u = new URL(location.href); u.searchParams.delete("at"); history.replaceState(null, "", u); }
+  messagesDiv.querySelectorAll('[id^="msg-"]').forEach(e => e.remove());
+  msgData.clear(); rawByKey.clear(); reachedStart = false; oldestKey = null; newestKey = null;
+  historyStatus.textContent = "Loading messages…";
+  try {
+    const snap = await get(query(messagesRef, orderByKey(), limitToLast(PAGE)));
+    const items = []; snap.forEach(x => { items.push(x); });
+    historyStatus.textContent = "";
+    if (items.length) oldestKey = items[0].key; else reachedStart = true;
+    items.forEach(x => rawByKey.set(x.key, x.val()));
+    const plains = await Promise.all(items.map(x => hydrate(x.val())));
+    items.forEach((x, i) => appendLive(x.key, plains[i]));
+    scrollToBottom(); jumpBtn.classList.add("hidden"); renderReceipts(); maybeMarkRead(); fillViewport();
+    const live = query(messagesRef, orderByKey(), startAt(oldestKey ?? ""));
+    onChildAdded(live, onAdded); onChildChanged(live, onChanged); onChildRemoved(live, onRemoved);
+  } catch (_) { historyStatus.textContent = "Couldn't load the latest messages. Reload to try again."; }
+}
+async function loadNewer() {
+  if (!windowed || loadingNewer || newestKey == null) return;
+  loadingNewer = true;
+  try {
+    const snap = await get(query(messagesRef, orderByKey(), startAt(newestKey), limitToFirst(NEWER_PAGE + 1)));
+    const list = []; snap.forEach(x => { if (x.key !== newestKey) list.push(x); });
+    const plains = await Promise.all(list.map(x => hydrate(x.val())));
+    for (const [i, x] of list.entries()) {
+      rawByKey.set(x.key, x.val());
+      if (document.getElementById("msg-" + x.key)) continue;
+      msgData.set(x.key, plains[i]); idxAdd(x.key, plains[i]);
+      const el = buildMessage(x.key, plains[i]); messagesDiv.insertBefore(el, typingRow); el.dataset.h = el.offsetHeight;
+    }
+    if (list.length) newestKey = list[list.length - 1].key;
+    if (list.length < NEWER_PAGE) {                         // caught up with the present: from here on it is the normal live chat
+      windowed = false; { const u = new URL(location.href); u.searchParams.delete("at"); history.replaceState(null, "", u); }
+      const real = [...messagesDiv.querySelectorAll(".msg")].map(e => e.dataset.key).filter(k => msgData.get(k)?.type !== "event");
+      latestKey = real.length ? real[real.length - 1] : null;
+      const live = query(messagesRef, orderByKey(), startAt(newestKey ?? ""));
+      onChildAdded(live, onAdded); onChildChanged(live, onChanged); onChildRemoved(live, onRemoved);
+      jumpBtn.classList.add("hidden"); maybeMarkRead();
+    }
+  } catch (err) { console.warn("load newer", err); }
+  loadingNewer = false;
+}
 
 // ---------- read receipts ----------
 // When this page lives in the call's chat panel it stays loaded while the panel is closed; the call page tells us.
@@ -861,28 +913,22 @@ async function setReply(key) {
   msgInput.focus();
 }
 // ---------- search this chat ----------
-// Older messages for the search are fetched as plain text pages (nothing is drawn); jumping to a result far back loads pages until it is on screen.
-async function loadUntil(key) {
-  for (let i = 0; i < 80 && !document.getElementById("msg-" + key) && !reachedStart; i++) {
-    lastOlderAt = 0; await loadOlder();
-    while (loadingOlder) await new Promise(r => setTimeout(r, 80));
-  }
-}
-let sawEnc = false;
-initChatSearch({
+// Every message shown here is remembered for searching (text only). Older, never-seen history is fetched as plain pages, only when the result list asks for it.
+searchIdx = initChatSearch({
   $, msgData, chatId, nameOf: u => u === me ? "You" : (peekProfile(u)?.displayName || "Someone"),
-  oldestLoaded: () => oldestKey, atStart: () => reachedStart,
+  oldestLoaded: () => windowed ? null : oldestKey, atStart: () => reachedStart && !windowed,
   store: { get: k => ocGet(k).then(r => r && r.v), set: (k, v) => chatEncrypted || sawEnc ? Promise.resolve() : ocSet(k, v) },
   fetchOlder: async (before, n) => {
-    if (before == null) return [];
-    const snap = await get(query(messagesRef, orderByKey(), endBefore(before), limitToLast(n)));
-    const rows = []; snap.forEach(s => { rows.push(s); if (s.val() && s.val().enc) sawEnc = true; });
-    return Promise.all(rows.map(async s => [s.key, await hydrate(s.val())]));
+    const snap = await get(before == null ? query(messagesRef, orderByKey(), limitToLast(n)) : query(messagesRef, orderByKey(), endBefore(before), limitToLast(n)));
+    const rows = []; snap.forEach(x => { rows.push(x); if (x.val() && x.val().enc) sawEnc = true; });
+    return Promise.all(rows.map(async x => [x.key, await hydrate(x.val())]));
   },
-  jumpTo: async key => {
-    if (!document.getElementById("msg-" + key)) { toast("Loading that part of the chat…", "info", 2000); await loadUntil(key); }
-    const t = document.getElementById("msg-" + key); if (!t) { toast("That message is no longer in the chat.", "info", 2500); return; }
-    t.scrollIntoView({ block: "center", behavior: "smooth" }); t.classList.add("flash"); setTimeout(() => t.classList.remove("flash"), 1600);
+  jumpTo: key => {
+    const t = document.getElementById("msg-" + key);
+    if (t) { t.scrollIntoView({ block: "center", behavior: "smooth" }); t.classList.add("flash"); setTimeout(() => t.classList.remove("flash"), 1600); return; }
+    // not on screen: open just that area of the history (the chat page reloads on it; scrolling up or down loads more)
+    toast("Opening that part of the chat…", "info", 2000);
+    const u = new URL(location.href); u.searchParams.set("at", key); location.replace(u);
   }
 });
 
@@ -1111,6 +1157,7 @@ function paintJobProgress(job) {
 }
 
 async function runJob(job) {
+  if (windowed) await goLive();                           // sending from the history view: back to the present first
   job.state = "sending"; job.error = null;
   job.ctrl = new AbortController();
   paintJob(job);
@@ -1959,6 +2006,30 @@ onAuthStateChanged(auth, async user => {
   historyStatus.textContent = "Loading messages…";
   const slowT = setTimeout(() => { if (!ready) historyStatus.textContent = "Still loading… your connection looks slow"; }, 5000);
   try {
+    if (AT && !protect()) {
+      // Only the area around the chosen message: ~20 before it, ~20 from it on. No live listener until the reader scrolls down to the present.
+      const [before, after] = await Promise.all([
+        get(query(messagesRef, orderByKey(), endBefore(AT), limitToLast(20))),
+        get(query(messagesRef, orderByKey(), startAt(AT), limitToFirst(21)))
+      ]);
+      const items = []; before.forEach(x => { items.push(x); }); after.forEach(x => { items.push(x); });
+      clearTimeout(slowT); historyStatus.textContent = "";
+      windowed = true; stick = false;
+      if (items.length) { oldestKey = items[0].key; newestKey = items[items.length - 1].key; } else { reachedStart = true; }
+      await Promise.race([encP, new Promise(r => setTimeout(r, offlineOn() ? 1500 : 60000))]);
+      items.forEach(x => rawByKey.set(x.key, x.val()));
+      const plains = await Promise.all(items.map(x => hydrate(x.val())));
+      items.forEach((x, i) => appendLive(x.key, plains[i]));
+      latestKey = null;                                      // not the end of the chat: nothing here is marked as read
+      renderReceipts();
+      ready = true; jumpBtn.classList.remove("hidden"); jumpBtn.title = "Back to the latest messages";
+      const t = document.getElementById("msg-" + AT);
+      if (t) { t.scrollIntoView({ block: "center" }); t.classList.add("flash"); setTimeout(() => t.classList.remove("flash"), 1800); }
+      else toast("That message is no longer in the chat.", "info", 2500);
+      fillViewport();
+      encP.then(() => { try { refreshLocked(); } catch (_) { /* ignore */ } });
+      return;
+    }
     // Saved copy first when the live page is slow (1.2 s) or can't arrive; the live page is always fetched and then reconciles what was shown.
     const pageQ = query(messagesRef, orderByKey(), limitToLast(PAGE));
     const realP = get(pageQ);

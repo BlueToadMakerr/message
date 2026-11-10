@@ -9,6 +9,7 @@ import { customDbUrl } from "./dburl.js";
 import { openImage } from "./viewer.js";
 import { audioPlayer, videoPlayer } from "./player.js";
 import { saverOn } from "./datasaver.js";
+import { ocGet, ocSet } from "./offline.js";
 
 const URL_RE = /https?:\/\/[^\s<>"']+/gi;
 const MAX_PER_MESSAGE = 2;
@@ -71,27 +72,47 @@ async function loadMeta(url, priv) {
   }
 }
 
+// Previews are also kept on this device (Offline data, key "lp:<link>"), so a link is looked up once, not on every visit:
+// the saved copy is used at once; if it is over a week old (and Data Saver is off) it is refreshed quietly in the background.
+const LOCAL_FRESH = WEEK;
+export async function savedPreview(url) { try { const r = await ocGet("lp:" + url); return r && r.v && hasContent(r.v.d) ? r.v : null; } catch (_) { return null; } }
+function remember(url, data) { if (data) ocSet("lp:" + url, { d: data, t: Date.now() }).catch(() => {}); }
 function fetchMeta(url, priv) {
   const k = (priv ? "p:" : "") + url;
   if (!cache.has(k)) {
     cache.set(k, (async () => {
       const hit = (() => { try { return sessionStorage.getItem("qm-lp:" + k); } catch (_) { return null; } })();
       if (hit) return { data: JSON.parse(hit), retry: false };
+      const keep = !priv && !usingCustomDb();                  // links from encrypted chats and other databases are never written to disk
+      if (keep) {
+        const saved = await savedPreview(url);
+        if (saved) {
+          if (Date.now() - saved.t > LOCAL_FRESH && !saverOn() && navigator.onLine !== false) loadMeta(url, priv).then(r => { if (r.data) remember(url, r.data); }).catch(() => {});
+          return { data: saved.d, retry: false };
+        }
+      }
       const r = await loadMeta(url, priv);
       if (r.retry) cache.delete(k);                            // don't remember a failure
-      else if (r.data) { try { sessionStorage.setItem("qm-lp:" + k, JSON.stringify(r.data)); } catch (_) { /* full */ } }
+      else if (r.data) { try { sessionStorage.setItem("qm-lp:" + k, JSON.stringify(r.data)); } catch (_) { /* full */ } if (keep) remember(url, r.data); }
       return r;
     })());
   }
   return cache.get(k);
 }
 
+// While Data Saver is on, a preview that is already saved on this device is shown from the saved copy, but its pictures wait for a tap.
+let holdImages = false;
+function setSrc(i, url) {
+  if (!holdImages) { i.src = url; return; }
+  i.dataset.s = url; i.classList.add("lp-held"); i.alt = "Tap to load picture"; i.title = "Tap to load picture";
+  i.addEventListener("click", e => { if (!i.dataset.s) return; e.stopImmediatePropagation(); i.src = i.dataset.s; delete i.dataset.s; i.classList.remove("lp-held"); }, { capture: true });
+}
 const el = (tag, cls, text) => { const e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; };
 
 function playerCard(url, thumb, title, iframeSrc, host, creator) {
   const c = el("div", "lp-card lp-video");
   const stage = el("button", "lp-stage"); stage.type = "button"; stage.setAttribute("aria-label", "Play video");
-  if (thumb) { const i = new Image(); i.src = thumb; i.alt = ""; i.loading = "lazy"; i.referrerPolicy = "no-referrer"; stage.append(i); }
+  if (thumb) { const i = new Image(); i.alt = ""; i.loading = "lazy"; i.referrerPolicy = "no-referrer"; setSrc(i, thumb); stage.append(i); }
   stage.append(el("span", "lp-play", "▶"));
   stage.addEventListener("click", () => {
     const f = document.createElement("iframe");
@@ -233,8 +254,8 @@ function richCard(url, m, onLayout) {
   if (m.video) c.append(videoPlayer(m.video.url, { poster: m.image, onLayout }));
   else if (m.embed) c.append(playerCard(url, m.image, m.title, m.embed, m.site || host, null).firstChild);
   else if (m.image) {
-    const i = new Image(); i.src = m.image; i.alt = m.imageAlt || ""; if (m.imageAlt) i.title = m.imageAlt;
-    i.loading = "lazy"; i.referrerPolicy = "no-referrer"; i.className = "lp-thumb";
+    const i = new Image(); i.alt = m.imageAlt || ""; if (m.imageAlt) i.title = m.imageAlt;
+    i.loading = "lazy"; i.referrerPolicy = "no-referrer"; i.className = "lp-thumb"; setSrc(i, m.image);
     i.addEventListener("load", () => onLayout && onLayout(i)); i.addEventListener("error", () => i.remove());
     i.addEventListener("click", () => openImage(m.image, { alt: m.imageAlt || "" }));
     c.append(i);
@@ -243,7 +264,7 @@ function richCard(url, m, onLayout) {
   const meta = el("a", "lp-meta"); meta.href = url; meta.target = "_blank"; meta.rel = "noopener noreferrer";
   meta.addEventListener("click", e => { if (m.android) { e.preventDefault(); openLink(url, m.android); } });
   const site = el("span", "lp-site");
-  if (m.icon) { const f = new Image(); f.src = m.icon; f.alt = ""; f.className = "lp-fav"; f.referrerPolicy = "no-referrer"; f.addEventListener("error", () => f.remove()); site.append(f); }
+  if (m.icon) { const f = new Image(); f.alt = ""; f.className = "lp-fav"; if (!holdImages) f.src = m.icon; f.referrerPolicy = "no-referrer"; f.addEventListener("error", () => f.remove()); site.append(f); }
   site.append(document.createTextNode(m.site || host));
   meta.append(site);
   if (m.title) meta.append(el("strong", "lp-title", m.title));
@@ -259,7 +280,7 @@ function richCard(url, m, onLayout) {
   return c;
 }
 
-async function build(url, onLayout, priv) {
+async function build(url, onLayout, priv, hold) {
   const ext = extOf(url);
   if (["png", "jpg", "jpeg", "gif", "webp", "avif", "bmp"].includes(ext)) {
     const i = new Image(); i.className = "lp-img"; i.loading = "lazy"; i.referrerPolicy = "no-referrer"; i.alt = "";
@@ -271,6 +292,9 @@ async function build(url, onLayout, priv) {
   if (["mp3", "wav", "m4a", "aac", "flac", "opus", "ogg"].includes(ext)) return { node: audioPlayer(url) };
   const yt = youtubeId(url);
   const { data: meta, retry } = await fetchMeta(url, priv);
+  holdImages = !!hold; try { return buildCard(url, meta, retry, yt, onLayout); } finally { holdImages = false; }
+}
+function buildCard(url, meta, retry, yt, onLayout) {
   if (yt) {
     const card = playerCard(url, `https://i.ytimg.com/vi/${yt}/hqdefault.jpg`, meta?.title, `https://www.youtube-nocookie.com/embed/${encodeURIComponent(yt)}?autoplay=1&rel=0`, "YouTube", meta?.creator);
     return { node: card, retry };
@@ -290,17 +314,17 @@ export function attachPreviews(bubble, text, { onLayout, enc } = {}) {
   bubble.append(box);
   urls.forEach(u => {
     let shown = null, tries = 0;
-    const run = () => build(u, onLayout, !!enc).then(({ node, retry }) => {
+    const run = hold => build(u, onLayout, !!enc, hold).then(({ node, retry }) => {
       if (!previewsOn() || bubble.isConnected === false) return;
       if (node && !shown) { shown = node; box.append(node); onLayout && onLayout(box); }
-      if (retry && ++tries <= 8) waitForNetwork(run);          // couldn't reach the server: look again once the connection is back
+      if (retry && ++tries <= 8) waitForNetwork(() => run(false));          // couldn't reach the server: look again once the connection is back
     }).catch(() => {});
     // Data Saver: a preview downloads a page (and its picture), so it waits for a tap
+    // ...unless the preview is already saved on this device: then it shows from the saved copy (its pictures still wait for a tap)
     if (saverOn()) {
-      const g = el("button", "media-lazy saver-gate"); g.type = "button"; g.textContent = "\ud83d\udd17 Tap to load link preview (Data Saver)";
-      g.onclick = () => { g.remove(); run(); };
-      box.append(g);
-    } else run();
+      const gate = () => { const g = el("button", "media-lazy saver-gate"); g.type = "button"; g.textContent = "\ud83d\udd17 Tap to load link preview (Data Saver)"; g.onclick = () => { g.remove(); run(false); }; box.append(g); };
+      if (enc || usingCustomDb()) gate(); else savedPreview(u).then(h => h ? run(true) : gate()).catch(gate);
+    } else run(false);
   });
 }
 
