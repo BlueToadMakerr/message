@@ -120,6 +120,7 @@ class MainActivity : Activity() {
             ins = intArrayOf(Math.round(top / d), Math.round(bDp / d), Math.round(left / d), Math.round(right / d))
             insets
         }
+        SiteCache.init(applicationContext)
         web.settings.apply {
             javaScriptEnabled = true; setSupportZoom(false); builtInZoomControls = false; displayZoomControls = false; domStorageEnabled = true
             @Suppress("DEPRECATION") databaseEnabled = true
@@ -143,6 +144,8 @@ class MainActivity : Activity() {
                 return true
             }
             override fun onPageFinished(v: WebView, url: String?) { loaded = true }
+            // The app has no service worker: SiteCache keeps every page/script/style it fetches and serves it when the host can't be reached.
+            override fun shouldInterceptRequest(v: WebView, r: WebResourceRequest): WebResourceResponse? = SiteCache.serve(r, Uri.parse(Config.SITE_URL).host)
             // Network errors show the same offline page the website uses (assets/offline.html), with the net:: code.
             override fun onReceivedError(v: WebView, r: WebResourceRequest, e: WebResourceError) {
                 if (r.url.scheme == "file") return
@@ -685,6 +688,8 @@ class MainActivity : Activity() {
         /** The video being popped out: Android's PiP window takes its shape (updated as the video's size changes). */
         @JavascriptInterface fun setPipRatio(w: Int, h: Int) = runOnUiThread { pipRatio = if (w > 0 && h > 0) Rational(w.coerceIn(1, 4000), h.coerceIn(1, 4000)) else Rational(16, 9); updatePip() }
 
+        @JavascriptInterface fun siteCachePrune(since: Long): Int = SiteCache.prune(since)
+        @JavascriptInterface fun siteCacheCount(): Int = SiteCache.count()
         @JavascriptInterface fun dataSaverState(): String = DataSaver.state()
         @JavascriptInterface fun setDataSaverMode(mode: String) { DataSaver.mode = mode }
         @JavascriptInterface fun notifyEnabled() = Store(this@MainActivity).notify

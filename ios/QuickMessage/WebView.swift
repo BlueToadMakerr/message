@@ -59,6 +59,7 @@ struct WebContainer: UIViewRepresentable {
 
     final class Coordinator: NSObject, WKNavigationDelegate, WKUIDelegate, WKScriptMessageHandler, ASWebAuthenticationPresentationContextProviding {
         weak var web: WKWebView?
+        private var triedCache: URL?
         private var authSession: ASWebAuthenticationSession?
 
         // ---- camera / microphone: the site asks, iOS shows its own permission prompt once
@@ -107,6 +108,13 @@ struct WebContainer: UIViewRepresentable {
         func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
             let code = (error as NSError).code
             if code == NSURLErrorCancelled { return }
+            // WKWebView can't be given a service worker here, so fall back to the copy iOS itself kept of this page (once), before giving up
+            if let failed = (error as NSError).userInfo[NSURLErrorFailingURLErrorKey] as? URL, failed != triedCache, failed.host == Config.siteURL.host {
+                triedCache = failed
+                webView.load(URLRequest(url: failed, cachePolicy: .returnCacheDataDontLoad))
+                return
+            }
+            triedCache = nil
             let html = "<meta name='viewport' content='width=device-width,initial-scale=1'><body style='font-family:-apple-system;text-align:center;padding:4rem 1.5rem;color:#888'><h2>Can't reach QuickMessage</h2><p>\(error.localizedDescription)</p><p><a href='\(Config.siteURL.absoluteString)index.html' style='font-size:1.2rem'>Try again</a></p>"
             webView.loadHTMLString(html, baseURL: nil)
         }

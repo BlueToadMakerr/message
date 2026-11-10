@@ -2,6 +2,15 @@
 
 Newest first. Older rounds (1–43) are kept below exactly as they were written.
 
+## 1.62.0 — Saved pages in the apps (offline), any page with any ?query
+
+- **Android app (and chat bubbles):** the app has no service worker, so it now keeps its own copy of the site (`SiteCache.kt`): every page, script, style and picture it fetches is saved on the phone, one copy per file, ignoring the `?query` — so `message.html?chatId=…` of ANY chat opens offline once `message.html` has been fetched. Network first (the host is asked every time); the saved copy is used when the host can't be reached, answers 5xx or sends a "checking your browser" page. Data Saver uses saved files without asking the host. The database, PHP helpers, `version.json` and downloads are never saved.
+- A little after start (15 s, normal connection, Data Saver off) the app also fetches the main pages and their scripts once, so they work offline even if never opened.
+- **Refresh site / Full refresh** fetches everything again (never from the saved copy) and then drops every saved file that wasn't refreshed, so old pages don't linger.
+- The website's service worker already keeps one copy per page regardless of `?query`; the page list that "Refresh site" fetches now also includes bots, plugins, status and the two docs pages.
+- **iPhone app:** iOS doesn't allow this kind of interception in the app, so it falls back to the copy iOS itself kept of that exact page when it can't connect (not every `?query`).
+- Needs a new Android build (and iOS build); the website part works as soon as the files are uploaded.
+
 ## 1.61.0 — Saved link previews, every message searchable, jump to a result without loading everything
 
 - **Link previews are saved on this device** (Offline data). A link is looked up once: later visits show the saved copy with no database lookup and no request to the site, and a copy over a week old is refreshed quietly in the background. With **Data Saver** on, a saved preview shows by itself (its picture waits for a tap); a link never seen before still waits for a tap. Links in encrypted chats are never saved to disk.

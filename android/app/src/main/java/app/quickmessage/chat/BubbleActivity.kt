@@ -37,6 +37,7 @@ class BubbleActivity : Activity() {
             javaScriptEnabled = true; setSupportZoom(false); builtInZoomControls = false; displayZoomControls = false; domStorageEnabled = true; mediaPlaybackRequiresUserGesture = true
             allowFileAccess = false; allowContentAccess = false
         }
+        SiteCache.init(applicationContext)
         web.addJavascriptInterface(Bridge(), "QMApp")
         web.settings.setSupportMultipleWindows(true)
         val allowed = Config.SITE_URL + "message.html"
@@ -51,6 +52,7 @@ class BubbleActivity : Activity() {
                 }
                 return true
             }
+            override fun shouldInterceptRequest(v: WebView, r: WebResourceRequest): WebResourceResponse? = SiteCache.serve(r, Uri.parse(Config.SITE_URL).host)
             // No connection: the same offline page as the main app (with a "Try again" button), not Android's "Webpage not available".
             override fun onReceivedError(v: WebView, r: WebResourceRequest, e: WebResourceError) {
                 if (!r.isForMainFrame || r.url.scheme == "file") return

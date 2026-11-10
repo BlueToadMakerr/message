@@ -1,7 +1,7 @@
 // "Refresh site": makes the browser fetch the newest copy of every page, script and stylesheet, then reloads.
 // A normal reload only re-checks the page itself; scripts and styles that were loaded earlier can stay in the browser's HTTP cache.
 // So this re-downloads (cache: "reload") everything the app uses: what's already loaded in this tab and its frames, plus whatever those scripts import.
-const SEEDS = ["index.html", "message.html", "account.html", "call.html", "style.css", "call.css", "js/themeboot.js", "firebase-messaging-sw.js"];
+const SEEDS = ["index.html", "message.html", "account.html", "call.html", "bots.html", "plugins.html", "status.html", "bot-docs.html", "plugin-docs.html", "offline.html", "style.css", "call.css", "js/themeboot.js", "firebase-messaging-sw.js"];
 const IMPORT = /(?:from\s*|import\s*\(\s*|import\s+)["'](\.{1,2}\/[^"']+\.js)["']/g;
 
 export function loadedUrls(win, out, depth = 0) {
@@ -11,7 +11,8 @@ export function loadedUrls(win, out, depth = 0) {
 }
 
 /** @returns {Promise<number>} how many files were refreshed. */
-export async function refreshSite({ unregister = false, onProgress = () => {} } = {}) {
+export async function refreshSite({ unregister = false, onProgress = () => {}, warm = false } = {}) {
+  const startedAt = Date.now() - 2000;
   const todo = new Set(), done = new Set();
   loadedUrls(window.top || window, todo);
   for (const s of SEEDS) todo.add(new URL(s, location.href).href.split("?")[0]);
@@ -21,13 +22,16 @@ export async function refreshSite({ unregister = false, onProgress = () => {} } 
     batch.forEach(u => { todo.delete(u); done.add(u); });
     await Promise.all(batch.map(async u => {
       try {
-        const r = await fetch(u, { cache: "reload", credentials: "same-origin" });
+        const r = await fetch(u, { cache: warm ? "default" : "reload", credentials: "same-origin" });
         if (!r.ok) return;
         n++; onProgress(n);
         if (/\.js(\?|$)/.test(u)) { const text = await r.text(); for (const m of text.matchAll(IMPORT)) { const next = new URL(m[1], u).href.split("?")[0]; if (!done.has(next)) todo.add(next); } }
       } catch (_) { /* offline or missing: skip */ }
     }));
   }
+  if (warm) return n;
+  // The apps keep their own saved copy of the site (no service worker): once the files are fetched again, whatever was not refreshed is dropped
+  try { if (n > 0 && window.QMApp && QMApp.siteCachePrune) QMApp.siteCachePrune(startedAt); } catch (_) { /* older app build */ }
   // Other caches go, but never QuickMessage's own: stored media, the saved copy of the site and the offline page stay.
   try { if ("caches" in window) for (const k of await caches.keys()) if (!k.startsWith("qm-")) await caches.delete(k); } catch (_) { /* ignore */ }
   try {
@@ -40,4 +44,19 @@ export async function refreshSite({ unregister = false, onProgress = () => {} } 
 export async function fullRefresh() {
   try { await Promise.race([refreshSite(), new Promise(r => setTimeout(r, 20000))]); } catch (_) { /* reload anyway */ }
   try { (window.top || window).location.reload(); } catch (_) { location.reload(); }
+}
+
+/** The apps have no service worker, so once per session (a little after start, on a normal connection) the main pages and their scripts are fetched
+ *  so they are kept for offline use even if they were never opened. The app saves each file as it arrives (SiteCache.kt). */
+export function warmAppCache() {
+  if (!window.QMApp || !QMApp.siteCacheCount) return;
+  setTimeout(async () => {
+    try {
+      if (navigator.onLine === false) return;
+      const { saverOn } = await import("./datasaver.js");
+      if (saverOn()) return;
+      if (QMApp.siteCacheCount() >= 60) return;
+      await refreshSite({ warm: true });
+    } catch (_) { /* best effort */ }
+  }, 15000);
 }

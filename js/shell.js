@@ -12,7 +12,8 @@ import { iosUploads, iosUploadFailed } from "./ios-notify.js";     // iPhone app
 import { plugins as pluginHost } from "./plugins.js";    // Developer-mode plugins (sandboxed): see plugin-docs.html
 import { watchSiteVersion, SITE_VERSION } from "./version.js";
 import { watchSavedCopy, copyStatus, setSafeMode } from "./sitecopy.js";
-import { fullRefresh } from "./refresh.js";
+import { fullRefresh, warmAppCache } from "./refresh.js";
+warmAppCache();
 import "./viewer.js";                 // registers window.__qmOpenImage: images from every frame open full-screen here
 
 const $ = id => document.getElementById(id);
