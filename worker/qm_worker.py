@@ -17,7 +17,7 @@ from urllib.parse import urlparse, parse_qs
 
 import botapi
 
-VERSION = "1.2.1"
+VERSION = "1.2.2"
 DEFAULT_DB = "https://quickmessage-ac953-default-rtdb.firebaseio.com"
 _PCH = "-0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ_abcdefghijklmnopqrstuvwxyz"
 _pl, _plock = {"last": 0, "rand": [0] * 12}, threading.Lock()
@@ -285,7 +285,7 @@ class Worker:
         title = f"{name} mentioned you" if mentioned else name
         build = lambda: {"notification": {"title": title, "body": text}, "tag": f"chat_{chat}", "collapse": f"chat_{chat}", "image": img, "web_ttl": 86400, "require": False, "link": link,
                          "apns": {"apns-collapse-id": f"chat_{chat}", "apns-priority": "10"}, "data": {"link": link, "chatId": chat, **({"image": img} if img else {})}}
-        acc, fail, eligible, err = self.push_to(uid, build, {"type": "msg", "chatId": chat, "msgId": mid, "from": frm})
+        acc, fail, eligible, err = self.push_to(uid, build, {"type": "msg", "chatId": chat, "msgId": mid, "fromUid": frm})
         if acc > 0: self.log_push(chat, mid, uid, "sent", f"{fail} of {eligible} devices failed: {err}" if fail else None, acc, eligible)
         elif eligible == 0: self.log_push(chat, mid, uid, "no_token", "No device of theirs is set up for notifications.", 0, 0)
         else: self.log_push(chat, mid, uid, "failed", err or "The push service refused every device.", 0, eligible)
@@ -311,7 +311,7 @@ class Worker:
             link = f"{self.app_url}call.html?chatId={quote(chat)}&session={quote(ring['ringId'])}"
             build = lambda: {"notification": {"title": title, "body": text}, "tag": f"call_{chat}", "ttl": 60, "web_ttl": 60, "require": True, "link": link,
                              "apns": {"apns-priority": "10", "apns-expiration": str(int(time.time()) + 60)}, "data": {"call": "1", "chatId": chat, "sessionId": ring["ringId"], "link": link}}
-            app_data = None if selfring else {"type": "ring", "chatId": chat, "ringId": str(ring["ringId"]), "from": str(frm), "createdAt": str(ring.get("createdAt") or int(time.time() * 1000))}
+            app_data = None if selfring else {"type": "ring", "chatId": chat, "ringId": str(ring["ringId"]), "fromUid": str(frm), "createdAt": str(ring.get("createdAt") or int(time.time() * 1000))}
             acc, fail, eligible, err = self.push_to_ring(uid, build, app_data)
             if acc > 0: answer("sent")
             elif eligible == 0: answer("no_token")

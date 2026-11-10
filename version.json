@@ -1,1 +1,1 @@
-{ "version": "1.60.0", "apiVersion": 1, "released": "2026-11-09", "notes": "Lighter chat search." }
+{ "version": "1.60.1", "apiVersion": 1, "released": "2026-11-09", "notes": "Android push fix (worker 1.2.2)." }

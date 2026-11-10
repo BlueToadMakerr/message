@@ -2,6 +2,10 @@
 
 Newest first. Older rounds (1–43) are kept below exactly as they were written.
 
+## 1.60.1 — Android push fix (worker 1.2.2)
+
+- **Restart the worker (1.2.2).** Android pushes failed with `InvalidArgumentError: Invalid data payload key: from`: Firebase reserves the name `from` in a push's data. The worker now sends the sender as `fromUid` (nothing in the apps read the old key).
+
 ## 1.60.0 — Lighter chat search
 
 - Searching never reads the database just for typing: it searches what is already loaded.
