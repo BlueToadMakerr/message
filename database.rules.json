@@ -217,7 +217,8 @@
             "name":      { ".validate": "newData.isString() && newData.val().length <= 300" },
             "size":      { ".validate": "newData.isNumber()" },
             "mime":      { ".validate": "newData.isString() && newData.val().length <= 120" },
-            "kind":      { ".validate": "newData.val() === 'image' || newData.val() === 'video' || newData.val() === 'audio' || newData.val() === 'file'" },
+            "kind":      { ".validate": "newData.val() === 'image' || newData.val() === 'video' || newData.val() === 'audio' || newData.val() === 'file' || newData.val() === 'code'" },
+            "lang":      { ".validate": "newData.isString() && newData.val().length <= 10" },
             "expiresAt": { ".validate": "newData.isNumber()" },
             "event":     { ".validate": "newData.isString() && newData.val().length <= 20" },
             "target":    { ".validate": "newData.isString() && newData.val().length <= 128" },
@@ -253,6 +254,29 @@
         "keys": {
           ".write": "auth != null && root.child('privateChats').child($chatId).child('participants').child(auth.uid).exists()",
           "$uid": { ".validate": "newData.hasChildren(['by', 'iv', 'ct', 'fp']) && newData.child('ct').val().length <= 600" }
+        },
+
+        // Pins: shared by the whole chat. Any member can pin or unpin (at most what the page allows: 50). by = who pinned.
+        "pins": {
+          ".read": "auth != null && root.child('privateChats').child($chatId).child('participants').child(auth.uid).exists()",
+          "$msgId": {
+            ".write": "auth != null && root.child('privateChats').child($chatId).child('participants').child(auth.uid).exists()",
+            ".validate": "!newData.exists() || (newData.child('by').val() === auth.uid && newData.child('ts').isNumber())",
+            "by": { ".validate": "newData.isString()" },
+            "ts": { ".validate": "newData.isNumber()" },
+            "$other": { ".validate": false }
+          }
+        },
+
+        // Mute: each member keeps their own "mutes" (m = messages, c = calls, each an epoch-ms time until which no notification is sent; a huge number = until turned off)
+        "mutes": {
+          "$uid": {
+            ".read": "auth != null && ($uid === auth.uid || root.child('privateChats').child($chatId).child('participants').child(auth.uid).exists())",
+            ".write": "auth != null && $uid === auth.uid && root.child('privateChats').child($chatId).child('participants').child(auth.uid).exists()",
+            "m": { ".validate": "newData.isNumber() && newData.val() >= 0 && newData.val() <= 99999999999999999" },
+            "c": { ".validate": "newData.isNumber() && newData.val() >= 0 && newData.val() <= 99999999999999999" },
+            "$other": { ".validate": false }
+          }
         },
 
         // Read receipts: you can write your own; any member can clear someone's when removing them

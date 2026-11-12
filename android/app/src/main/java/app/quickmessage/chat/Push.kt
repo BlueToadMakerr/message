@@ -53,6 +53,24 @@ object Push {
         }.start()
     }
 
+    /** A plain notification built only from the push's own data (no database, no service): used when the service can't start or the database can't be reached. */
+    fun fallback(ctx: Context, d: Map<String, String>) {
+        try {
+            val chat = d["chatId"].orEmpty(); if (chat.isEmpty()) return
+            val nm = ctx.getSystemService(android.content.Context.NOTIFICATION_SERVICE) as android.app.NotificationManager
+            if (android.os.Build.VERSION.SDK_INT >= 26) nm.createNotificationChannel(android.app.NotificationChannel("messages", "Messages", android.app.NotificationManager.IMPORTANCE_HIGH))
+            val open = Intent(ctx, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP).putExtra(MainActivity.EXTRA_CHAT, chat)
+            val pi = android.app.PendingIntent.getActivity(ctx, chat.hashCode(), open, android.app.PendingIntent.FLAG_UPDATE_CURRENT or android.app.PendingIntent.FLAG_IMMUTABLE)
+            @Suppress("DEPRECATION")
+            val b = if (android.os.Build.VERSION.SDK_INT >= 26) android.app.Notification.Builder(ctx, "messages") else android.app.Notification.Builder(ctx)
+            val title = d["title"].orEmpty().ifBlank { "QuickMessage" }; val body = d["body"].orEmpty().ifBlank { "New message" }
+            b.setSmallIcon(android.R.drawable.stat_notify_chat).setContentTitle(title).setContentText(body).setStyle(android.app.Notification.BigTextStyle().bigText(body))
+                .setContentIntent(pi).setAutoCancel(true).setCategory(android.app.Notification.CATEGORY_MESSAGE).setWhen(System.currentTimeMillis())
+            nm.notify(chat.hashCode(), b.build())          // same id as the full notification, which replaces this one when the service gets to run
+            Diag.add(ctx, "msg", chat, "fallback notification shown")
+        } catch (e: Exception) { Diag.add(ctx, "msg", d["chatId"].orEmpty(), "fallback failed: ${e.javaClass.simpleName}") }
+    }
+
     /** Sign-out: stop pushes for this account. Needs a valid session, so call it before [Store.forget]. */
     fun unregister(ctx: Context) {
         val st = Store(ctx.applicationContext)
@@ -71,8 +89,34 @@ class PushService : FirebaseMessagingService() {
     override fun onMessageReceived(m: RemoteMessage) {
         val d = m.data
         val st = Store(applicationContext)
-        if (!st.signedIn || !st.notify || d["type"].isNullOrEmpty()) return
-        // Hand over to the service (allowed from the background because this is a high priority push). If the system refuses, do the work right here.
-        try { NotifyService.push(applicationContext, HashMap(d)) } catch (_: Exception) { /* the system refused to start the service; the next push or opening the app catches up */ }
+        // What actually arrived (shown in Settings → Calls & notifications → "Recent pushes on this device"): how late it was, and whether the system
+        // had already demoted it from high to normal priority (a demoted push is delivered late and may not be allowed to start the service).
+        val late = if (m.sentTime > 0) ((System.currentTimeMillis() - m.sentTime) / 1000).toString() + "s late" else "?"
+        Diag.add(applicationContext, d["type"] ?: "?", d["chatId"] ?: "", "received · $late · priority ${m.priority}/${m.originalPriority}")
+        if (!st.signedIn || !st.notify || d["type"].isNullOrEmpty()) { Diag.add(applicationContext, d["type"] ?: "?", d["chatId"] ?: "", "ignored (signed out or notifications off)"); return }
+        // Hand over to the service (allowed from the background because this is a high priority push).
+        // If the system refuses, show the notification right here from what the push carries; opening the app catches up on the rest.
+        try { NotifyService.push(applicationContext, HashMap(d)) }
+        catch (e: Exception) {
+            Diag.add(applicationContext, d["type"] ?: "?", d["chatId"] ?: "", "service refused: ${e.javaClass.simpleName} → showing it directly")
+            if (d["type"] == "msg") Push.fallback(applicationContext, d)
+        }
     }
+}
+
+/** A short log of what push did on this device (the last 20 events), read by the Settings page to explain missing or late notifications. */
+object Diag {
+    private const val KEY = "pdiag"
+    @Synchronized fun add(ctx: Context, type: String, chat: String, what: String) {
+        try {
+            val sp = ctx.getSharedPreferences("quickmessage", Context.MODE_PRIVATE)
+            val arr = org.json.JSONArray(sp.getString(KEY, "[]"))
+            val out = org.json.JSONArray()
+            val start = maxOf(0, arr.length() - 19)
+            for (i in start until arr.length()) out.put(arr.get(i))
+            out.put(JSONObject().put("t", System.currentTimeMillis()).put("type", type).put("chat", chat.take(12)).put("what", what))
+            sp.edit().putString(KEY, out.toString()).apply()
+        } catch (_: Exception) { /* diagnostics only */ }
+    }
+    fun json(ctx: Context): String = ctx.getSharedPreferences("quickmessage", Context.MODE_PRIVATE).getString(KEY, "[]") ?: "[]"
 }

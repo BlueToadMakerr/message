@@ -2,6 +2,30 @@
 
 Newest first. Older rounds (1–43) are kept below exactly as they were written.
 
+## 1.65.0 — Files above the message box, text and code files with a viewer
+
+- **Republish `database.rules.json`** (message `kind` may now be `code`, new `lang` field).
+- **Attachment tray:** the paperclip now lets you pick several photos/files at once. They wait in a tray above the message box (thumbnail, name, size, ✕ to remove, a note if one will go to the file host). Write a message if you like and press Send: every file goes out as its own message and the text as its own message, all at the same moment. Nothing is grouped and nothing changes in the database layout. Files can also be sent with no text. A reply you're writing stays with the text message. The camera and pasted images still ask first.
+- **Text and code files (up to 400 KB)** are sent inside the message itself as a data link, not uploaded anywhere, and work in encrypted chats (encrypted like photos). The message shows a card with the first lines in colour; tap it for the built-in viewer: line numbers, colours for JS/TS, Python, C-family/Java/Kotlin/Go/Rust/PHP, shell, SQL, HTML/XML, CSS, JSON, YAML/TOML/INI and Markdown, Copy and Download. Bigger text files go to the file host like before.
+- The welcome guide page "Find, pin and mute" already describes these.
+
+## 1.64.0 — Pins, one search for everything, welcome guide, notification fix
+
+- **Republish `database.rules.json`** (new `pins` rule).
+- **Pins:** message menu → Pin / Unpin. A pin is shared by the whole chat (up to 50): the newest shows in a bar at the top of the chat (tap it to jump there), pinned messages get a 📌 and an accent edge.
+- **Search is now a menu:** the magnifier opens one search with tabs All / Messages / People / Pins / Photos / Videos / Audio / Files. Typing in All searches the people in the chat, pins, media and files, and messages, grouped under headings. People: tap one to mention them in the message box. Pins: tap to jump. Same gentle history loading as before.
+- **Welcome guide:** a new page "Find, pin and mute" (search, pins, mute, sending several files) before the encryption page.
+- **Android:** marking a notification as read (the button, or opening it from the app) no longer loses the group name, picture, shared photo, bubble or quick reply. It now keeps the notification that is showing and only removes its "Mark as read" button; the rebuild path also remembers the group name now.
+
+## 1.63.0 — Android notification reliability, photos, caller name, mute (worker 1.3.0)
+
+- **Restart the worker (1.3.0) and republish `database.rules.json`** (new `mutes` rule).
+- **Notifications that were late or missing on Android:** (1) a push now carries the title and text, so if the phone can't reach the database right when it wakes, it retries (4 times) and then still shows the notification from the push itself; (2) if Android refuses to start the notification service (it does that for pushes it lowered from high to normal priority), the notification is shown directly instead of being dropped (this was silent before); (3) a failed attempt no longer counts as "handled", so a retry works; (4) a failed name lookup is no longer remembered as "Someone".
+- **Settings → Calls & notifications → "Recent pushes on this phone"** (Android app): every push the phone received, how many seconds late, its priority (high/normal, which shows when Android demoted it) and what happened. If notifications are still late, this shows why.
+- **Photos in notifications:** uploaded pictures (file messages) now show in the notification too, not only inline photos.
+- **Calls:** the caller was shown as "Someone" because the app looked for the wrong field in the push; it now reads the caller's id and name (shown as `Caller · Group name`).
+- **Mute (Chat options → Mute notifications):** choose messages, calls or both, for 1 hour / 8 hours / 1 day / 1 week / until you turn it off / a custom time. Stored in the database, so the notification server and every device honor it. A caller whose target muted calls is told so.
+
 ## 1.62.0 — Saved pages in the apps (offline), any page with any ?query
 
 - **Android app (and chat bubbles):** the app has no service worker, so it now keeps its own copy of the site (`SiteCache.kt`): every page, script, style and picture it fetches is saved on the phone, one copy per file, ignoring the `?query` — so `message.html?chatId=…` of ANY chat opens offline once `message.html` has been fetched. Network first (the host is asked every time); the saved copy is used when the host can't be reached, answers 5xx or sends a "checking your browser" page. Data Saver uses saved files without asking the host. The database, PHP helpers, `version.json` and downloads are never saved.

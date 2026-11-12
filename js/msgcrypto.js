@@ -6,7 +6,8 @@ export async function sealPayload(chatId, p) {
   const out = { fromUid: p.fromUid, timestamp: p.timestamp, enc: true };
   if (p.type === "file") {
     out.type = "file";
-    out.text = await encText(chatId, JSON.stringify({ name: p.name, url: p.url, size: p.size, mime: p.mime, kind: p.kind, ...(p.wave ? { wave: p.wave, duration: p.duration } : {}) }));
+    out.text = await encText(chatId, JSON.stringify({ name: p.name, url: p.url, size: p.size, mime: p.mime, kind: p.kind, ...(p.wave ? { wave: p.wave, duration: p.duration } : {}), ...(p.lang ? { lang: p.lang } : {}) }));
+    if (typeof p.content === "string" && p.content) out.content = await encText(chatId, p.content);      // a text/code file sent inside the message
     if (typeof p.expiresAt === "number") out.expiresAt = p.expiresAt;       // not secret; the cleanup logic needs it
   } else if (p.type === "image" || p.type === "video" || p.type === "audio") {
     out.type = p.type;
@@ -29,7 +30,9 @@ export async function openMessage(chatId, m) {
     if (m.replyTo && isCipher(m.replyTo.text)) m = { ...m, replyTo: { ...m.replyTo, text: await decText(chatId, m.replyTo.text) } };
     if (m.type === "file") {
       const meta = JSON.parse(await decText(chatId, m.text));
-      return { ...m, ...meta, text: meta.name, _enc: true };
+      const o = { ...m, ...meta, text: meta.name, _enc: true };
+      if (m.content) o.content = await decText(chatId, m.content);
+      return o;
     }
     if (m.type === "image" || m.type === "video" || m.type === "audio") {
       const o = { ...m, content: await decText(chatId, m.content ?? m.text), _enc: true };

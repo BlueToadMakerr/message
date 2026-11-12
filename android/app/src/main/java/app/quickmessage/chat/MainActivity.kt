@@ -688,6 +688,7 @@ class MainActivity : Activity() {
         /** The video being popped out: Android's PiP window takes its shape (updated as the video's size changes). */
         @JavascriptInterface fun setPipRatio(w: Int, h: Int) = runOnUiThread { pipRatio = if (w > 0 && h > 0) Rational(w.coerceIn(1, 4000), h.coerceIn(1, 4000)) else Rational(16, 9); updatePip() }
 
+        @JavascriptInterface fun pushDiag(): String = Diag.json(applicationContext)
         @JavascriptInterface fun siteCachePrune(since: Long): Int = SiteCache.prune(since)
         @JavascriptInterface fun siteCacheCount(): Int = SiteCache.count()
         @JavascriptInterface fun dataSaverState(): String = DataSaver.state()

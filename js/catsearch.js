@@ -1,7 +1,7 @@
 // Search inside one chat: message text plus files (photos, videos, audio, other files), over the messages that are loaded on this device.
 // "Search older messages" pulls further pages in. Encrypted messages are searched after decryption, on this device only.
 import { fmtBytes } from "./litter.js";
-const ICON = { image: "\ud83d\udcf7", video: "\ud83c\udfa5", audio: "\ud83c\udfb5", file: "\ud83d\udcc4", text: "\ud83d\udcac" };
+const ICON = { person: "\ud83d\udc64", pin: "\ud83d\udccc", image: "\ud83d\udcf7", video: "\ud83c\udfa5", audio: "\ud83c\udfb5", file: "\ud83d\udcc4", text: "\ud83d\udcac" };
 export const kindOfMsg = m => m.type === "image" || m.type === "video" || m.type === "audio" ? m.type : m.type === "file" ? "file" : "text";
 const slim = (key, m) => ({ key, k: kindOfMsg(m), ts: m.timestamp || 0, from: m.fromUid || "", text: String(m.text || "").slice(0, 400), name: String(m.name || ""), size: m.size || 0 });
 /** Search over slim records. */
@@ -18,8 +18,9 @@ export function searchRecords(recs, q, kind) {
  *  plain text is never written to disk) and searched from there for free. Older, never-seen history is fetched only when the result
  *  list is scrolled to its end (one page of PAGE messages at a time, never more than one request at once, no pictures). */
 const PAGE = 250, SHARD = 2000;
-export function initChatSearch({ $, msgData, nameOf, jumpTo, fetchOlder, oldestLoaded, atStart, store, chatId }) {
+export function initChatSearch({ $, msgData, nameOf, jumpTo, fetchOlder, oldestLoaded, atStart, store, chatId, members = () => [], pins = () => [], resolvePin = async () => null, onPerson = () => {} }) {
   const dlg = $("searchDialog"), input = $("searchInput"), list = $("searchResults"), note = $("searchNote"), stopBtn = $("searchOlder");
+  const pinRecs = new Map();     // pinned message key -> slim record (null = the message is gone)
   let kind = "all", idx = new Map(), oldest = null, done = false, busy = false, stop = false, armed = false, loaded = null, dirty = false, saveT = 0, armT = 0;
   const records = () => { const m = new Map(idx); for (const [k, v] of msgData) if (v && v.type !== "event") m.set(k, slim(k, v)); return [...m.values()]; };
   const complete = () => done || atStart();
@@ -48,27 +49,55 @@ export function initChatSearch({ $, msgData, nameOf, jumpTo, fetchOlder, oldestL
   const drop = key => { if (idx.delete(key)) later(); };
   addEventListener("pagehide", save);
 
+  const when = ts => ts ? new Date(ts).toLocaleString([], { month: "short", day: "numeric", year: "numeric", hour: "numeric", minute: "2-digit" }) : "";
+  const row = (icon, title, sub, onClick) => {
+    const b = document.createElement("button"); b.type = "button"; b.className = "cs-item";
+    const ic = document.createElement("span"); ic.className = "cs-ic"; ic.textContent = icon;
+    const body = document.createElement("span"); body.className = "cs-body";
+    const t = document.createElement("span"); t.className = "cs-t"; t.textContent = title;
+    const s = document.createElement("span"); s.className = "cs-s"; s.textContent = sub;
+    body.append(t, s); b.append(ic, body); b.onclick = onClick; return b;
+  };
+  const recRow = r => row(ICON[r.k], r.k === "text" ? r.text.slice(0, 140) : (r.name || r.text || { image: "Photo", video: "Video", audio: "Voice message" }[r.k] || "File"),
+    [nameOf(r.from), when(r.ts), r.size ? fmtBytes(r.size) : ""].filter(Boolean).join(" \u00b7 "), () => { dlg.close(); jumpTo(r.key); });
+  async function resolveAll() {                       // pinned messages are fetched once each (at most 50), then searched like anything else
+    await 0;                                          // never repaint from inside a paint
+    let any = false;
+    for (const p of pins().slice(0, 50)) if (!pinRecs.has(p.key)) { any = true; const m = msgData.get(p.key); pinRecs.set(p.key, m ? slim(p.key, m) : await resolvePin(p.key).catch(() => null)); }
+    if (any) paintIf();
+  }
   const paint = () => {
-    const q = input.value.trim(), res = searchRecords(records(), q, kind);
+    const q = input.value.trim(), needle = q.toLowerCase(), all = kind === "all";
     list.replaceChildren();
     const msg = t => { const e = document.createElement("div"); e.className = "muted cs-empty"; e.textContent = t; list.append(e); };
-    if (!q && kind === "all") msg("Type to search messages, or pick Photos, Videos, Audio or Files to browse them.");
-    else if (!res.length) msg(complete() ? "Nothing found." : "Nothing found yet.");
-    for (const r of res.slice(0, 300)) {
-      const b = document.createElement("button"); b.type = "button"; b.className = "cs-item";
-      const ic = document.createElement("span"); ic.className = "cs-ic"; ic.textContent = ICON[r.k];
-      const body = document.createElement("span"); body.className = "cs-body";
-      const t = document.createElement("span"); t.className = "cs-t";
-      t.textContent = r.k === "text" ? r.text.slice(0, 140) : (r.name || r.text || { image: "Photo", video: "Video", audio: "Voice message" }[r.k] || "File");
-      const s = document.createElement("span"); s.className = "cs-s";
-      s.textContent = [nameOf(r.from), r.ts ? new Date(r.ts).toLocaleString([], { month: "short", day: "numeric", year: "numeric", hour: "numeric", minute: "2-digit" }) : "", r.size ? fmtBytes(r.size) : ""].filter(Boolean).join(" \u00b7 ");
-      body.append(t, s); b.append(ic, body);
-      b.onclick = () => { dlg.close(); jumpTo(r.key); };
-      list.append(b);
+    const head = t => { const e = document.createElement("div"); e.className = "cs-h"; e.textContent = t; list.append(e); };
+    if (all && !q) { msg("Type to search people, pins, files and messages, or pick a tab to browse them."); stopBtn.hidden = true; note.textContent = ""; return; }
+    let shown = 0;
+    // people
+    if (all || kind === "people") {
+      const ppl = members().filter(m => !q || m.name.toLowerCase().includes(needle));
+      if (ppl.length) { if (all) head("People"); shown += ppl.length; for (const m of ppl.slice(0, all ? 5 : 100)) list.append(row(ICON.person, m.name, m.sub || "Tap to mention them", () => { dlg.close(); onPerson(m.uid, m.name); })); }
     }
-    if (res.length > 300) msg("Showing the newest 300 results. Narrow the search to see more.");
-    if ((q || kind !== "all") && !complete()) { const e = document.createElement("div"); e.className = "cs-more muted"; e.id = "csMore"; e.textContent = busy ? "Searching older messages\u2026" : "Scroll down to search older messages"; list.append(e); watchMore(e); }
-    note.textContent = complete() ? `Whole chat searched (${records().length} messages)` : `${records().length} messages searched so far`;
+    // pins
+    if (all || kind === "pins") {
+      resolveAll();
+      const ps = pins().slice().sort((a, b) => b.ts - a.ts).map(p => ({ p, r: pinRecs.get(p.key) })).filter(x => x.r && (!q || (x.r.text + " " + x.r.name).toLowerCase().includes(needle)));
+      if (ps.length) { if (all) head("Pins"); shown += ps.length; for (const { p, r } of ps.slice(0, all ? 5 : 100)) list.append(row(ICON.pin, r.k === "text" ? r.text.slice(0, 140) : (r.name || ICON[r.k]), "Pinned by " + nameOf(p.by) + " \u00b7 " + when(p.ts), () => { dlg.close(); jumpTo(p.key); })); }
+      else if (kind === "pins") msg(pins().length ? (pinRecs.size < pins().length ? "Loading pins\u2026" : "No pin matches.") : "Nothing is pinned yet. Open a message's menu and choose Pin.");
+    }
+    // media and messages
+    if (kind !== "people" && kind !== "pins") {
+      const res = searchRecords(records(), q, all ? "all" : kind);
+      const media = res.filter(r => r.k !== "text"), texts = res.filter(r => r.k === "text");
+      if (all) {
+        if (media.length) { head("Media and files"); shown += media.length; media.slice(0, 6).forEach(r => list.append(recRow(r))); if (media.length > 6) msg(media.length - 6 + " more: open the Photos, Videos, Audio or Files tab."); }
+        if (texts.length) { head("Messages"); shown += texts.length; texts.slice(0, 300).forEach(r => list.append(recRow(r))); }
+      } else { shown += res.length; res.slice(0, 300).forEach(r => list.append(recRow(r))); }
+      if (!shown) msg(complete() ? "Nothing found." : "Nothing found yet.");
+      if (res.length > 300) msg("Showing the newest 300 results. Narrow the search to see more.");
+      if (!complete()) { const e = document.createElement("div"); e.className = "cs-more muted"; e.id = "csMore"; e.textContent = busy ? "Searching older messages\u2026" : "Scroll down to search older messages"; list.append(e); watchMore(e); }
+      note.textContent = complete() ? `Whole chat searched (${records().length} messages)` : `${records().length} messages searched so far`;
+    } else { if (!shown && kind === "people") msg("No one matches."); note.textContent = ""; }
     stopBtn.hidden = !busy;
   };
   // ---- the list is scrolled to its end (or the person stopped typing and nothing is shown): fetch one older page, then wait to be asked again

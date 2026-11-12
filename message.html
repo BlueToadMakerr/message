@@ -26,6 +26,8 @@
     <button id="chatOptionsBtn" class="icon-btn" type="button" aria-label="Chat options" data-icon="users"></button>
   </header>
 
+  <div id="pinBar" class="pinbar" hidden><span aria-hidden="true">\ud83d\udccc</span><span class="pt" id="pinText"></span><span class="muted" id="pinCount"></span></div>
+
   <div id="messages" class="messages" role="log" aria-live="polite">
     <div id="historyStatus"></div>
     <div id="typingRow" class="typing-row hidden">
@@ -44,8 +46,9 @@
     <span>⚠️ Your messages will stay unencrypted until someone else gives you this chat's key.</span>
     <button id="whyKeyBtn" type="button" class="btn small">Why?</button>
   </div>
+  <div id="tray" class="tray" hidden aria-label="Files to send"></div>
   <form id="composer" class="composer" autocomplete="off">
-    <button id="attachBtn" class="icon-btn" type="button" aria-label="Send a photo or video" data-icon="image"></button>
+    <button id="attachBtn" class="icon-btn" type="button" aria-label="Add photos or files" data-icon="image"></button>
     <textarea id="msgInput" rows="1" placeholder="Message" maxlength="4000" aria-label="Message"></textarea>
     <button id="sendBtn" class="send-btn" type="submit" aria-label="Send" data-icon="send" data-size="18"></button>
   </form>
@@ -56,10 +59,10 @@
 <!-- Chat options -->
 <dialog id="searchDialog" class="modal cs-dialog">
   <div class="modal-body">
-    <div class="modal-head"><h2>Search this chat</h2><button type="button" class="icon-btn" id="searchClose" aria-label="Close" data-icon="close"></button></div>
-    <input id="searchInput" class="field" type="search" placeholder="Search messages, file names…" autocomplete="off" enterkeyhint="search">
+    <div class="modal-head"><h2>Search</h2><button type="button" class="icon-btn" id="searchClose" aria-label="Close" data-icon="close"></button></div>
+    <input id="searchInput" class="field" type="search" placeholder="Search people, pins, files, messages…" autocomplete="off" enterkeyhint="search">
     <div class="cs-chips" id="searchChips" role="tablist">
-      <button type="button" class="chip on" data-k="all">All</button><button type="button" class="chip" data-k="text">Messages</button><button type="button" class="chip" data-k="image">Photos</button><button type="button" class="chip" data-k="video">Videos</button><button type="button" class="chip" data-k="audio">Audio</button><button type="button" class="chip" data-k="file">Files</button>
+      <button type="button" class="chip on" data-k="all">All</button><button type="button" class="chip" data-k="text">Messages</button><button type="button" class="chip" data-k="people">People</button><button type="button" class="chip" data-k="pins">Pins</button><button type="button" class="chip" data-k="image">Photos</button><button type="button" class="chip" data-k="video">Videos</button><button type="button" class="chip" data-k="audio">Audio</button><button type="button" class="chip" data-k="file">Files</button>
     </div>
     <div id="searchResults" class="cs-results"></div>
     <div class="cs-foot"><span id="searchNote" class="muted"></span><button type="button" class="btn small" id="searchOlder" hidden>Stop</button></div>
@@ -98,6 +101,21 @@
       <div id="encKeyRow" class="enc-key" hidden></div>
     </div>
 
+    <div class="mute-box" id="muteBox">
+      <div class="section-title">Mute notifications</div>
+      <div id="muteState" class="muted" style="font-size:.88rem"></div>
+      <div class="row" style="gap:.5rem;flex-wrap:wrap;margin-top:.4rem">
+        <select id="muteWhat" class="field" aria-label="What to mute"><option value="both">Messages and calls</option><option value="m">Messages only</option><option value="c">Calls only</option></select>
+        <select id="muteFor" class="field" aria-label="For how long"><option value="3600000">1 hour</option><option value="28800000">8 hours</option><option value="86400000">1 day</option><option value="604800000">1 week</option><option value="forever">Until I turn it off</option><option value="custom">Custom…</option></select>
+      </div>
+      <div class="row" id="muteCustom" style="gap:.5rem;margin-top:.4rem" hidden>
+        <input id="muteAmount" class="field" type="number" min="1" max="9999" value="2" style="max-width:6rem" aria-label="Amount">
+        <select id="muteUnit" class="field" aria-label="Unit"><option value="60000">minutes</option><option value="3600000" selected>hours</option><option value="86400000">days</option></select>
+      </div>
+      <div class="row" style="gap:.5rem;margin-top:.5rem"><button id="muteBtn" class="btn primary" type="button">Mute</button><button id="unmuteBtn" class="btn" type="button" hidden>Turn mute off</button></div>
+      <small class="muted">Stops notifications from this chat on all your devices.</small>
+    </div>
+
     <div class="section-title">Participants</div>
     <div id="participantsList"></div>
 
@@ -116,7 +134,7 @@
 <dialog id="attachDialog" class="modal">
   <div class="modal-body">
     <div class="modal-head">
-      <h2>Send a photo or file</h2>
+      <h2>Add photos or files</h2>
       <button type="button" class="icon-btn" id="attachClose" aria-label="Close" data-icon="close"></button>
     </div>
     <div class="row">
@@ -124,14 +142,14 @@
       <button id="pickCameraBtn" class="btn grow" type="button">Camera</button>
       <button id="pickVoiceBtn" class="btn grow" type="button">Record audio</button>
     </div>
-    <input id="fileInput" type="file" class="hidden">
+    <input id="fileInput" type="file" class="hidden" multiple>
     <input id="cameraInput" type="file" accept="image/*,video/*" capture="environment" class="hidden">
     <div class="divider">or paste a link</div>
     <div class="row">
       <input id="mediaUrl" class="field" type="url" placeholder="https://… image or video" autocomplete="off">
       <button id="sendLinkBtn" class="btn primary" type="button">Send</button>
     </div>
-    <p class="hint">Small photos and videos are sent directly. Anything bigger — and any other kind of file — is uploaded to a free file hosting service and expires after a while (choose the services and how long in Account → File hosting). You'll be asked to confirm before a file is sent.</p>
+    <p class="hint">Small photos and videos are sent directly. Anything bigger — and any other kind of file — is uploaded to a free file hosting service and expires after a while (choose the services and how long in Account → File hosting). Files you choose wait above the message box, so you can add more, write a message, and send everything together. Text and code files up to 400 KB travel inside the chat and open in a built-in viewer.</p>
   </div>
 </dialog>
 

@@ -184,6 +184,21 @@ function pEncrypt(ctx) {
   return { node: w };
 }
 
+function pFind() {
+  const w = h("div", "tour-page");
+  const ic = h("div", "tour-ico"); ic.innerHTML = icon("search", 30);
+  w.append(ic, h("h2", "", "Find, pin and mute"));
+  const list = h("div", "tfind");
+  for (const [t, d] of [
+    ["Search", "In a chat, tap the magnifier. One box searches the people in the chat, its pins, every photo, video, audio and file, and the messages. Use the tabs (People, Pins, Photos…) to browse one kind. Older history is only fetched when you scroll to the end of the results, so it stays light on data."],
+    ["Pins", "Open a message's menu and choose Pin. It is pinned for everyone in the chat: it shows at the top of the chat and in the Pins tab. Choose Unpin to remove it."],
+    ["Mute", "Chat options → Mute notifications. Pick messages, calls or both, and for how long (an hour, a day, a week, until you turn it off, or your own time). It holds on all your devices."],
+    ["Files", "Tap the paperclip to add several photos or files above the message box, write a message, and send everything at once. Text and code files open in a built-in viewer with colours."]
+  ]) { const r = h("div", "tfind-row"); r.append(h("strong", "", t), h("p", "", d)); list.append(r); }
+  w.append(list);
+  return { node: w };
+}
+
 function pEnd() {
   const w = h("div", "tour-page");
   const ic = h("div", "tour-ico"); ic.innerHTML = icon("phone", 30);
@@ -196,7 +211,7 @@ function pEnd() {
 }
 
 const PAGES = [
-  { fn: pWelcome }, { fn: pWhere, demo: true }, { fn: pChat, demo: true }, { fn: pProfile, demo: true, needsUser: true }, { fn: pPrivacy, demo: true, needsUser: true }, { fn: pEncrypt, demo: true }, { fn: pEnd }
+  { fn: pWelcome }, { fn: pWhere, demo: true }, { fn: pChat, demo: true }, { fn: pProfile, demo: true, needsUser: true }, { fn: pPrivacy, demo: true, needsUser: true }, { fn: pFind }, { fn: pEncrypt, demo: true }, { fn: pEnd }
 ];
 
 /** Opens the tour. opts.uid: marks it seen and lets the profile / privacy demos save; opts.openAccount(): the buttons that jump to Account. */

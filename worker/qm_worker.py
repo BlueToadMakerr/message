@@ -17,7 +17,7 @@ from urllib.parse import urlparse, parse_qs
 
 import botapi
 
-VERSION = "1.2.2"
+VERSION = "1.3.0"
 DEFAULT_DB = "https://quickmessage-ac953-default-rtdb.firebaseio.com"
 _PCH = "-0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ_abcdefghijklmnopqrstuvwxyz"
 _pl, _plock = {"last": 0, "rand": [0] * 12}, threading.Lock()
@@ -269,6 +269,9 @@ class Worker:
                 except Exception as e:
                     self.stats["webhookFailed"] += 1; log("webhook failed", uid, str(e)[:100])
             return
+        mu = be.get(f"privateChats/{chat}/mutes/{uid}") or {}
+        if isinstance(mu, dict) and (mu.get("m") or 0) > time.time() * 1000:        # they muted messages from this chat (for every device)
+            return self.log_push(chat, mid, uid, "skipped", "They muted messages from this chat, so no notification was sent.")
         if be.get(f"privateChats/{chat}/messageRead/{uid}") == mid:                 # already looking at it
             return self.log_push(chat, mid, uid, "skipped", "They had already read it (or had the chat open), so no notification was needed.")
         last = be.get(f"privateChats/{chat}/lastMessage") or {}
@@ -285,7 +288,8 @@ class Worker:
         title = f"{name} mentioned you" if mentioned else name
         build = lambda: {"notification": {"title": title, "body": text}, "tag": f"chat_{chat}", "collapse": f"chat_{chat}", "image": img, "web_ttl": 86400, "require": False, "link": link,
                          "apns": {"apns-collapse-id": f"chat_{chat}", "apns-priority": "10"}, "data": {"link": link, "chatId": chat, **({"image": img} if img else {})}}
-        acc, fail, eligible, err = self.push_to(uid, build, {"type": "msg", "chatId": chat, "msgId": mid, "fromUid": frm})
+        # title/body ride along so the phone can still show the notification if it can't reach the database when the push arrives
+        acc, fail, eligible, err = self.push_to(uid, build, {"type": "msg", "chatId": chat, "msgId": mid, "fromUid": frm, "title": title[:80], "body": text[:140], "img": img or ""})
         if acc > 0: self.log_push(chat, mid, uid, "sent", f"{fail} of {eligible} devices failed: {err}" if fail else None, acc, eligible)
         elif eligible == 0: self.log_push(chat, mid, uid, "no_token", "No device of theirs is set up for notifications.", 0, 0)
         else: self.log_push(chat, mid, uid, "failed", err or "The push service refused every device.", 0, eligible)
@@ -302,6 +306,8 @@ class Worker:
             frm = ring.get("fromUid")
             participants = be.get(f"privateChats/{chat}/participants") or {}
             if not frm or not participants.get(frm) or not participants.get(uid): return answer("failed", "Not a member of this chat.")
+            mu = be.get(f"privateChats/{chat}/mutes/{uid}") or {}
+            if frm != uid and isinstance(mu, dict) and (mu.get("c") or 0) > time.time() * 1000: return answer("muted", "They muted calls from this chat.")
             self.stats["rings"] += 1
             selfring = frm == uid
             name = be.get(f"accsettings/{frm}/settings/displayName") or "QuickMessage"
@@ -311,7 +317,7 @@ class Worker:
             link = f"{self.app_url}call.html?chatId={quote(chat)}&session={quote(ring['ringId'])}"
             build = lambda: {"notification": {"title": title, "body": text}, "tag": f"call_{chat}", "ttl": 60, "web_ttl": 60, "require": True, "link": link,
                              "apns": {"apns-priority": "10", "apns-expiration": str(int(time.time()) + 60)}, "data": {"call": "1", "chatId": chat, "sessionId": ring["ringId"], "link": link}}
-            app_data = None if selfring else {"type": "ring", "chatId": chat, "ringId": str(ring["ringId"]), "fromUid": str(frm), "createdAt": str(ring.get("createdAt") or int(time.time() * 1000))}
+            app_data = None if selfring else {"type": "ring", "chatId": chat, "ringId": str(ring["ringId"]), "fromUid": str(frm), "name": str(name)[:60], "createdAt": str(ring.get("createdAt") or int(time.time() * 1000))}
             acc, fail, eligible, err = self.push_to_ring(uid, build, app_data)
             if acc > 0: answer("sent")
             elif eligible == 0: answer("no_token")

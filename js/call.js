@@ -1134,14 +1134,15 @@ async function ringUser(uid) {
       let off = () => {}, t = setTimeout(() => { off(); res("timeout"); }, 15000);
       off = onValue(ref(db, `calls/${chatId}/ringing/${uid}`), s => {
         const r = s.val() || {};
-        if (r.notifyStatus === "sent" || r.notifyStatus === "no_token" || r.notifyStatus === "failed") {
+        if (r.notifyStatus === "sent" || r.notifyStatus === "no_token" || r.notifyStatus === "failed" || r.notifyStatus === "muted") {
           why = r.notifyError || ""; clearTimeout(t); off(); res(r.notifyStatus);
         }
       });
     });
-    say(status === "sent" ? "Notification sent" : status === "no_token" ? "No notification device" : "Notification failed");
+    say(status === "sent" ? "Notification sent" : status === "no_token" ? "No notification device" : status === "muted" ? "Calls muted" : "Notification failed");
     if (status === "sent") toast("Ringing " + (uid === S.me ? "your other devices" : profileOf(uid).displayName), "success");
     else if (status === "no_token") toast("They haven't enabled notifications on any device — they'll only see the ring if the call page is open.", "info", 5000);
+    else if (status === "muted") toast(profileOf(uid).displayName + " muted calls from this chat, so their phone won't ring.", "info", 5000);
     else if (status === "timeout") toast("The notification server didn't answer, so they may not be notified. It may be offline (see Status).", "error", 6000);
     else toast("The notification couldn't be sent" + (why ? ": " + why : "."), "error", 7000);
   } catch (err) {

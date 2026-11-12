@@ -63,3 +63,23 @@ if ($("offlineCard")) {
   $("offlineClear").onclick = async () => { await ocClear(); toast("Offline data cleared.", "success"); setTimeout(paintOffline, 300); };
   paintOffline();
 }
+
+// ---- Android only: what push did on this phone lately (explains late or missing notifications) ----
+(function pushDiagCard() {
+  if (!window.QMApp || !QMApp.pushDiag) return;
+  const anchor = document.getElementById("audioCard"); if (!anchor) return;
+  const card = document.createElement("section"); card.className = "card"; card.id = "pushDiagCard";
+  card.innerHTML = '<h2>Recent pushes on this phone</h2><p class="muted" style="font-size:.88rem">Each notification the phone was told about, how late it arrived and what happened. "priority high/normal" means Android lowered a push\'s priority, which makes it late. Useful when a notification is late or missing.</p><div id="pdList" class="pd-list"></div><div class="row" style="margin-top:.5rem"><button type="button" class="btn small" id="pdRefresh">Refresh</button></div>';
+  anchor.after(card);
+  const paint = () => {
+    let rows = []; try { rows = JSON.parse(QMApp.pushDiag()) } catch (_) { /* none */ }
+    const box = card.querySelector("#pdList"); box.replaceChildren();
+    if (!rows.length) { const e = document.createElement("div"); e.className = "muted"; e.textContent = "Nothing yet. Pushes show here when they arrive."; box.append(e); return; }
+    for (const r of rows.slice().reverse()) {
+      const d = document.createElement("div"); d.className = "pd-row";
+      d.textContent = new Date(r.t).toLocaleTimeString([], { hour: "numeric", minute: "2-digit", second: "2-digit" }) + " · " + r.type + (r.chat ? " " + r.chat : "") + " · " + r.what;
+      box.append(d);
+    }
+  };
+  card.querySelector("#pdRefresh").onclick = paint; paint();
+})();

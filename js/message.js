@@ -26,6 +26,7 @@ import * as E2E from "./crypto.js";
 import { sealPayload, sealPreview, openMessage } from "./msgcrypto.js";
 import { attachPreviews, urlsIn, inspectUrl, fetchPreviewNow } from "./linkpreview.js";
 import { openImage } from "./viewer.js";
+import { openCode, isTextFile, langOf, textOfData, colorLine, MAX_TEXT_BYTES } from "./codeview.js";
 import { downloadMedia } from "./download.js";
 import { audioPlayer, videoPlayer, waveFromFile } from "./player.js";
 import { devOn, devButton, showDev, envInfo, devCard, devGrid, devPill, devWho } from "./dev.js";
@@ -212,6 +213,20 @@ async function updateHeader() {
   renderSub();
 }
 
+// A text / code file sent inside the message: a card with the first lines coloured, tap to open the viewer.
+function fillCode(bubble, msg) {
+  const lang = msg.lang || langOf(msg.name);
+  let body = "";
+  try { body = textOfData(msg.content); } catch (_) { bubble.textContent = "Couldn't read that file."; return; }
+  const c = document.createElement("button"); c.type = "button"; c.className = "file-card code-card";
+  c.innerHTML = `<span class="file-ic">${icon("file", 22)}</span><span class="file-meta"><span class="file-name"></span><span class="file-size"></span><span class="code-snip"></span></span>`;
+  c.querySelector(".file-name").textContent = msg.name || "Text file";
+  c.querySelector(".file-size").textContent = [typeof msg.size === "number" ? fmtBytes(msg.size) : "", lang, msg._enc ? "🔒" : "", "Tap to open"].filter(Boolean).join(" · ");
+  c.querySelector(".code-snip").innerHTML = body.split("\n").slice(0, 4).map(l => `<span>${colorLine(l.replace(/\r$/, "").slice(0, 80), lang) || " "}</span>`).join("");
+  c.addEventListener("click", () => openCode({ name: msg.name, text: body, lang }));
+  bubble.append(c);
+}
+
 // ---------- message rendering ----------
 // Litterbox files: shown inline when possible, greyed out once they've expired (the message itself stays).
 const AUTO_DECRYPT_MAX = 40 * 1024 * 1024;
@@ -226,6 +241,7 @@ async function fetchPlain(msg) {
   return new Blob([await E2E.decBytes(chatId, buf)], { type: msg.mime || "application/octet-stream" });
 }
 function fillFile(bubble, msg) {
+  if (msg.kind === "code" && typeof msg.content === "string" && msg.content) { fillCode(bubble, msg); return; }
   const expired = typeof msg.expiresAt === "number" && Date.now() > msg.expiresAt;
   let url = isLitterUrl(msg.url) ? msg.url : null;
   if (msg._enc) {
@@ -923,14 +939,20 @@ searchIdx = initChatSearch({
     const rows = []; snap.forEach(x => { rows.push(x); if (x.val() && x.val().enc) sawEnc = true; });
     return Promise.all(rows.map(async x => [x.key, await hydrate(x.val())]));
   },
-  jumpTo: key => {
+  members: () => peopleNow().map(p => ({ uid: p.uid, name: p.name, sub: "Tap to mention them" })),
+  pins: () => pinList(), resolvePin: k => resolvePin(k),
+  onPerson: (uid, name) => { const i = $("msgInput"); i.value = (i.value && !/\s$/.test(i.value) ? i.value + " " : i.value) + "@" + name + " "; i.focus(); i.dispatchEvent(new Event("input")); },
+  jumpTo: searchJump
+});
+function searchJump(key) {
+  {
     const t = document.getElementById("msg-" + key);
     if (t) { t.scrollIntoView({ block: "center", behavior: "smooth" }); t.classList.add("flash"); setTimeout(() => t.classList.remove("flash"), 1600); return; }
     // not on screen: open just that area of the history (the chat page reloads on it; scrolling up or down loads more)
     toast("Opening that part of the chat…", "info", 2000);
     const u = new URL(location.href); u.searchParams.set("at", key); location.replace(u);
   }
-});
+}
 
 function clearReply() { replyingTo = null; replyBar.classList.add("hidden"); }
 $("rbClose").onclick = clearReply;
@@ -976,7 +998,8 @@ sendBtn.addEventListener("mousedown", e => e.preventDefault()); // keep keyboard
 composer.addEventListener("submit", e => {
   e.preventDefault();
   const text = msgInput.value.trim();
-  if (!text) return;
+  if (!text && !trayFiles.length) return;
+  if (!text) { flushTray(); msgInput.focus(); return; }
   // "/name args": a plugin may have registered that command (Developer mode); if one did, it handles it and nothing is sent
   if (text[0] === "/" && window.top !== window) {
     let used = false; try { used = !!(window.top.QM && window.top.QM.plugins && window.top.QM.plugins.command && window.top.QM.plugins.command(text, chatId)); } catch (_) { used = false; }
@@ -988,6 +1011,7 @@ composer.addEventListener("submit", e => {
   autosize();
   clearTimeout(typingTimer);
   setTyping(false);
+  flushTray();                                       // files and the message leave together
   startJob({ type: "text", text, mentions: mn.uids, everyone: mn.everyone });
   msgInput.focus();
 });
@@ -1314,6 +1338,7 @@ function showMenu(key, btn) {
     add("Copy", "copy", () => copyText(msg.text ?? msg.content ?? ""));
     if (msg.fromUid === me) add("Edit", "more", () => editMessage(key));
   }
+  if (!msg._locked) add(pinsMap[key] ? "Unpin" : "Pin", "pin", () => togglePin(key));
   if (msg.fromUid === me) add("Delete", "close", () => deleteMessage(key), true);
   if (msg._enc) add("What's this?", "info", () => explainEncrypted(msg));
   try {                                   // choices added by plugins (Developer mode)
@@ -1405,14 +1430,58 @@ $("attachBtn").onclick = () => { $("mediaUrl").value = ""; attachDialog.showModa
 $("attachClose").onclick = () => attachDialog.close();
 $("pickFileBtn").onclick = () => $("fileInput").click();
 $("pickCameraBtn").onclick = () => { attachDialog.close(); openCamera(); };
-for (const id of ["fileInput", "cameraInput"]) {
-  $(id).addEventListener("change", e => {
-    const file = e.target.files[0];
-    e.target.value = "";
-    if (!file) return;
-    attachDialog.close();
-    confirmFile(file).then(ok => { if (ok) sendFile(file); });
-  });
+// Camera shots still ask first; files chosen from the device wait in the tray above the message box and go out together with the text.
+$("cameraInput").addEventListener("change", e => {
+  const file = e.target.files[0];
+  e.target.value = "";
+  if (!file) return;
+  attachDialog.close();
+  confirmFile(file).then(ok => { if (ok) sendFile(file); });
+});
+$("fileInput").addEventListener("change", e => {
+  const files = [...e.target.files];
+  e.target.value = "";
+  attachDialog.close();
+  addToTray(files);
+});
+
+const tray = $("tray"), trayFiles = [];
+const TRAY_MAX = 10;
+function addToTray(files) {
+  for (const f of files) {
+    if (trayFiles.length >= TRAY_MAX) { toast(`Up to ${TRAY_MAX} files at a time.`, "info"); break; }
+    trayFiles.push({ file: f, url: /^(image|video)\//.test(f.type || "") ? URL.createObjectURL(f) : null });
+  }
+  paintTray();
+  msgInput.focus();
+}
+function paintTray() {
+  tray.hidden = !trayFiles.length;
+  tray.replaceChildren(...trayFiles.map((it, i) => {
+    const f = it.file, t = f.type || "", chip = document.createElement("div"); chip.className = "tray-chip";
+    let thumb;
+    if (it.url && t.startsWith("image/")) { thumb = new Image(); thumb.alt = ""; thumb.src = it.url; }
+    else if (it.url) { thumb = document.createElement("video"); thumb.muted = true; thumb.preload = "metadata"; thumb.src = it.url + "#t=0.1"; }
+    else { thumb = document.createElement("span"); thumb.className = "tray-ic"; thumb.innerHTML = icon("file", 20); }
+    const meta = document.createElement("span"); meta.className = "tray-meta";
+    const inline = t.startsWith("image/") || ((t.startsWith("video/") || t.startsWith("audio/")) && f.size <= MAX_VIDEO_BYTES) || inlineText(f);
+    const nm = document.createElement("b"); nm.textContent = f.name || "File";
+    const sz = document.createElement("small"); sz.textContent = fmtBytes(f.size) + (inline ? "" : " · uploads to file host");
+    meta.append(nm, sz);
+    const x = document.createElement("button"); x.type = "button"; x.className = "tray-x"; x.setAttribute("aria-label", "Remove " + (f.name || "file")); x.innerHTML = icon("close", 14);
+    x.onclick = () => { if (it.url) URL.revokeObjectURL(it.url); trayFiles.splice(trayFiles.indexOf(it), 1); paintTray(); };
+    chip.append(thumb, meta, x);
+    return chip;
+  }));
+}
+/** Send everything in the tray (each file is its own message; none are grouped). Returns how many went out. */
+function flushTray() {
+  const items = trayFiles.splice(0), keep = replyingTo;
+  replyingTo = null;                                  // a reply belongs to the message, not to the files sent beside it
+  for (const it of items) { if (it.url) setTimeout(() => URL.revokeObjectURL(it.url), 60000); sendFile(it.file); }
+  replyingTo = keep;
+  paintTray();
+  return items.length;
 }
 
 // "Send this file?": every file picked from the device is shown (name, size, preview, where it goes) before anything is uploaded.
@@ -1530,6 +1599,7 @@ async function litterSpec(job, why) {
 }
 
 // Every file becomes a job: it shows a grey preview straight away, and the work of resizing/uploading happens inside it.
+const inlineText = f => isTextFile(f) && f.size <= MAX_TEXT_BYTES;
 function sendFile(file) {
   const t = file.type || "";
   const prepare = async job => {
@@ -1542,11 +1612,16 @@ function sendFile(file) {
       return file.size > MAX_VIDEO_BYTES ? litterSpec(job, TOO_BIG) : { type: "video", content: await readAsDataURL(file) };
     }
     if (t.startsWith("audio/") && file.size <= MAX_AUDIO_BYTES) return { type: "audio", content: await readAsDataURL(file), ...(await waveFromFile(file) || {}) };
+    if (inlineText(file)) {                       // text / code: travels inside the message (a data link), opened by the built-in viewer
+      const dataUrl = await readAsDataURL(new Blob([await file.arrayBuffer()], { type: "text/plain;charset=utf-8" }));
+      return { type: "file", extra: { name: file.name || "file.txt", size: file.size, mime: "text/plain", kind: "code", lang: langOf(file.name), content: dataUrl } };
+    }
     return litterSpec(job, OTHER);
   };
   // Until prepare() decides, give the placeholder the right look: images/videos preview, anything else is a file card.
   const guess = t.startsWith("image/") ? "image" : t.startsWith("video/") ? "video" : t.startsWith("audio/") && file.size <= MAX_AUDIO_BYTES ? "audio" : "file";
-  startJob({ type: guess, extra: guess === "file" ? { name: file.name || "File", kind: kindOf(t) } : undefined }, { file, prepare });
+  const code = guess === "file" && inlineText(file);
+  return startJob({ type: guess, extra: guess === "file" ? { name: file.name || "File", kind: code ? "code" : kindOf(t) } : undefined }, { file, prepare });
 }
 
 // Paste an image straight from the clipboard (with a confirmation preview). Works from the browser's paste, and from the
@@ -1679,6 +1754,74 @@ $("savePhotoBtn").onclick = async () => {
   try { await set(ref(db, `${chatPath}/chatData/photo`), v); toast(v ? "Group photo saved." : "Group photo removed.", "success"); }
   catch (err) { console.error(err); toast("Couldn't save the photo.", "error"); }
 };
+
+// ---------- pins (shared by the whole chat: privateChats/<chat>/pins/<messageKey> = { by, ts }) ----------
+let pinsMap = {};
+const pinList = () => Object.entries(pinsMap).map(([key, v]) => ({ key, by: v && v.by || "", ts: v && v.ts || 0 }));
+const pinCache = new Map();           // key -> slim record of a pinned message that isn't loaded
+async function resolvePin(key) {
+  const raw = await get(ref(db, `privateChats/${chatId}/messages/${key}`)).then(s => s.val());
+  if (!raw || raw.type === "event") return null;
+  const m = await hydrate(raw);
+  if (raw.enc) sawEnc = true;
+  return { key, k: m.type === "image" || m.type === "video" || m.type === "audio" || m.type === "file" ? m.type : "text", ts: m.timestamp || 0, from: m.fromUid || "", text: String(m.text || "").slice(0, 400), name: String(m.name || ""), size: m.size || 0 };
+}
+async function togglePin(key) {
+  try {
+    if (pinsMap[key]) { await remove(ref(db, `privateChats/${chatId}/pins/${key}`)); toast("Unpinned", "success", 1500); return; }
+    if (Object.keys(pinsMap).length >= 50) return toast("A chat can have 50 pins. Unpin one first.", "error");
+    await set(ref(db, `privateChats/${chatId}/pins/${key}`), { by: me, ts: Date.now() }); toast("Pinned for everyone in this chat", "success", 2000);
+  } catch (_) { toast("Couldn't change the pin. The database rules may need republishing.", "error"); }
+}
+function decoratePins() {
+  for (const el of messagesDiv.querySelectorAll(".msg")) {
+    const on = !!pinsMap[el.dataset.key];
+    el.classList.toggle("pinned", on);
+    const meta = el.querySelector(".msg-foot");
+    const has = el.querySelector(".pin-badge");
+    if (on && !has && meta) { const b = document.createElement("span"); b.className = "pin-badge"; b.textContent = "\ud83d\udccc"; b.title = "Pinned"; meta.append(b); }
+    else if (!on && has) has.remove();
+  }
+}
+async function paintPinBar() {
+  const list = pinList().sort((a, b) => b.ts - a.ts), bar = $("pinBar");
+  if (!list.length) { bar.hidden = true; return; }
+  const top = list[0]; let r = null;
+  const m = msgData.get(top.key);
+  if (m) r = { text: m.text, name: m.name, k: m.type }; else { try { r = pinCache.get(top.key) || await resolvePin(top.key); if (r) pinCache.set(top.key, r); } catch (_) { /* offline */ } }
+  const label = r ? (r.text || r.name || ({ image: "Photo", video: "Video", audio: "Voice message", file: "File" }[r.k] || "Pinned message")) : "Pinned message";
+  $("pinText").textContent = label; $("pinCount").textContent = list.length > 1 ? list.length + " pins" : "";
+  bar.hidden = false; bar.dataset.key = top.key;
+}
+$("pinBar").onclick = () => { const k = $("pinBar").dataset.key; if (k) searchJump(k); };
+new MutationObserver(() => decoratePins()).observe(messagesDiv, { childList: true });
+function startPins() { onValue(ref(db, `privateChats/${chatId}/pins`), s => { pinsMap = s.val() || {}; decoratePins(); paintPinBar(); }, () => {}); }
+
+// ---------- mute (stored in the database so every device and the notification server honor it) ----------
+const FOREVER = 9e15;
+let myMute = {};
+const muteRef = () => ref(db, `privateChats/${chatId}/mutes/${me}`);
+function paintMute() {
+  const now = Date.now(), m = (myMute.m || 0) > now, c = (myMute.c || 0) > now;
+  const until = t => t >= FOREVER / 2 ? "until you turn it off" : "until " + new Date(t).toLocaleString([], { weekday: "short", hour: "numeric", minute: "2-digit", month: "short", day: "numeric" });
+  const parts = [];
+  if (m && c && myMute.m === myMute.c) parts.push("Messages and calls muted " + until(myMute.m));
+  else { if (m) parts.push("Messages muted " + until(myMute.m)); if (c) parts.push("Calls muted " + until(myMute.c)); }
+  $("muteState").textContent = parts.join(" \u00b7 ") || "Not muted.";
+  $("unmuteBtn").hidden = !(m || c);
+  document.body.classList.toggle("chat-muted", m || c);
+}
+function startMute() { onValue(muteRef(), s => { myMute = s.val() || {}; paintMute(); }, () => {}); setInterval(paintMute, 60000); }
+$("muteFor").onchange = () => { $("muteCustom").hidden = $("muteFor").value !== "custom"; };
+$("muteBtn").onclick = async () => {
+  const f = $("muteFor").value;
+  const ms = f === "forever" ? FOREVER : f === "custom" ? Math.round((+$("muteAmount").value || 0) * +$("muteUnit").value) : +f;
+  if (!(ms > 0)) return toast("Pick how long to mute.", "error");
+  const until = ms >= FOREVER ? FOREVER : Date.now() + ms, w = $("muteWhat").value, next = { ...myMute };
+  if (w !== "c") next.m = until; if (w !== "m") next.c = until;
+  try { await set(muteRef(), next); toast("Muted", "success", 2000); } catch (_) { toast("Couldn't save the mute. The database rules may need republishing.", "error"); }
+};
+$("unmuteBtn").onclick = async () => { try { await set(muteRef(), null); toast("Mute is off", "success", 2000); } catch (_) { toast("Couldn't turn the mute off.", "error"); } };
 
 $("saveChatNameBtn").onclick = async () => {
   try {
@@ -1941,7 +2084,7 @@ function leaveChat(message) {
 onAuthStateChanged(auth, async user => {
   if (!user) { toHome(); return; }
   if (me) return; // already initialised
-  me = user.uid;
+  me = user.uid; startMute(); startPins();
   getProfile(me).then(p => { ownName = p.displayName || ""; }).catch(() => {});
   ensureProfile(user).catch(() => {});
 

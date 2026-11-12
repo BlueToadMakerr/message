@@ -213,6 +213,7 @@ class NotifyService : Service() {
         chatSq[chatId] = Avatars.load(url, label, 432, round = false)
         chatLabel[chatId] = label
         chatGroup[chatId] = !(others.size == 1 && title.isBlank())
+        if (title.isNotBlank()) titles[chatId] = title                 // a freshly woken service doesn't know the group's name until now: without this the rebuilt notification lost it
     }
 
     override fun onBind(i: Intent?): IBinder? = null
@@ -344,8 +345,12 @@ class NotifyService : Service() {
         return PendingIntent.getActivity(this, req, i, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
     }
 
-    private fun nameOf(uid: String): String = names.getOrPut(uid) {
-        try { (fb.get("accsettings/$uid/settings/displayName") as? String)?.takeIf { it.isNotBlank() } ?: "Someone" } catch (_: Exception) { "Someone" }
+    /** A person's display name. A failed lookup shows "Someone" this once but is NOT remembered (it used to be, so one hiccup meant "Someone" for good). */
+    private fun nameOf(uid: String): String {
+        names[uid]?.let { return it }
+        val n = try { (fb.get("accsettings/$uid/settings/displayName") as? String)?.takeIf { it.isNotBlank() } } catch (_: Exception) { null }
+        if (n != null) names[uid] = n
+        return n ?: "Someone"
     }
 
     private fun nap(ms: Long): Boolean = try { Thread.sleep(ms); true } catch (_: InterruptedException) { false }
@@ -415,7 +420,7 @@ class NotifyService : Service() {
         if (id.isEmpty() || baselines[chatId] == id) return
         val old = baselines.put(chatId, id)
         if (first && old == null) return
-        message(chatId, m)
+        try { message(chatId, m) } catch (e: Exception) { if (old == null) baselines.remove(chatId) else baselines[chatId] = old; throw e }      // a failed attempt must not count as handled
     }
 
     // Safety net next to the live stream (plain requests, not connections): every so often look at each chat's newest message, so a
@@ -444,6 +449,7 @@ class NotifyService : Service() {
         if (id.isEmpty() || from == me || !seenRings.add(id)) return
         if (System.currentTimeMillis() - r.optLong("createdAt", 0) > 90_000) return     // an old ring left behind
         if (MainActivity.visible) return                                                // the page shows its own call overlay
+        if (mutedNow(chatId, "c")) return
         val who = nameOf(from)
         try { ensurePerson(from); ensureChatLook(chatId, "") } catch (_: Exception) {}
         val rid = ("ring$chatId").hashCode()
@@ -513,14 +519,27 @@ class NotifyService : Service() {
         work {
             when (type) {
                 "ring" -> {
-                    val ringId = i.getStringExtra("d_ringId").orEmpty(); val from = i.getStringExtra("d_from").orEmpty()
+                    val ringId = i.getStringExtra("d_ringId").orEmpty(); val from = (i.getStringExtra("d_fromUid") ?: i.getStringExtra("d_from")).orEmpty()
+                    i.getStringExtra("d_name")?.takeIf { it.isNotBlank() && from.isNotEmpty() }?.let { names.putIfAbsent(from, it) }      // the caller's name travels with the push: never "Someone"
                     val created = i.getStringExtra("d_createdAt")?.toLongOrNull() ?: System.currentTimeMillis()
                     // the push is the ring: no need to read it from the database first
                     ring(chat, JSONObject().put("ringId", ringId).put("fromUid", from).put("createdAt", created))
                 }
                 "msg" -> {
-                    val last = fb.get("privateChats/$chat/lastMessage") as? JSONObject
-                    if (last != null) consider(chat, last, false)
+                    // The database can be unreachable for a moment right after the phone wakes (Doze, network not up yet): try a few times, and if it still
+                    // can't be reached show what the push itself carries rather than nothing.
+                    var ok = false; var lastErr = ""
+                    for (a in 0 until 4) {
+                        try {
+                            val last = fb.get("privateChats/$chat/lastMessage") as? JSONObject
+                            if (last != null) consider(chat, last, false)
+                            ok = true; break
+                        } catch (e: Exception) { lastErr = e.javaClass.simpleName; try { Thread.sleep(1500L * (a + 1)) } catch (_: InterruptedException) {} }
+                    }
+                    if (!ok) {
+                        Diag.add(this, "msg", chat, "retry-failed: $lastErr")
+                        Push.fallback(this, i.extras?.keySet()?.associate { it.removePrefix("d_") to (i.getStringExtra(it) ?: "") } ?: emptyMap())
+                    } else Diag.add(this, "msg", chat, "handled (shown, or already read / muted)")
                 }
             }
         }
@@ -607,11 +626,19 @@ class NotifyService : Service() {
         }
     }
 
+    /** The person muted this chat (messages "m" or calls "c") in its options; stored in the database so it holds on every device. */
+    private fun mutedNow(chatId: String, kind: String): Boolean = try {
+        val me = store.uid ?: return false
+        val mu = fb.get("privateChats/$chatId/mutes/$me") as? JSONObject
+        (mu?.optDouble(kind, 0.0) ?: 0.0) > System.currentTimeMillis()
+    } catch (_: Exception) { false }
+
     private fun message(chatId: String, m: JSONObject) {
         if (!store.notify) return
         val me = store.uid ?: return
         val from = m.optString("fromUid")
         if (from == me || MainActivity.visible) return
+        if (mutedNow(chatId, "m")) return
         var title = ""
         try {
             val chatName = fb.get("privateChats/$chatId/chatData/name") as? String
@@ -635,7 +662,7 @@ class NotifyService : Service() {
         } catch (_: Exception) {}
         val id = m.optString("id")
         // a photo is shown big in the notification (decoded here: from the media node, or decrypted when the chat is encrypted)
-        if (!DataSaver.active() && textOf(chatId, m, preview = true) == "📷 Photo") { val bmp = try { loadImage(chatId, id) } catch (_: Exception) { null }; if (bmp != null) imgBmp[chatId] = bmp else imgBmp.remove(chatId) } else imgBmp.remove(chatId)
+        if (!DataSaver.active() && (m.optString("type") == "image" || m.optString("type") == "file")) { val bmp = try { loadImage(chatId, id) } catch (_: Exception) { null }; if (bmp != null) imgBmp[chatId] = bmp else imgBmp.remove(chatId) } else imgBmp.remove(chatId)
         if (list.none { it.id == id }) list.add(Msg(id, textOf(chatId, m, preview = true), m.optLong("timestamp", System.currentTimeMillis()), from))
         while (list.size > 8) list.removeAt(0)
         postMessages(chatId)
@@ -646,11 +673,14 @@ class NotifyService : Service() {
     private fun loadImage(chatId: String, id: String): android.graphics.Bitmap? {
         val rec = fb.get("privateChats/$chatId/messages/$id") as? JSONObject ?: return null
         var content = rec.optString("content")
-        if (rec.optBoolean("big")) content = (fb.get("privateChats/$chatId/media/$id") as? String) ?: return null
+        val isFileImage = rec.optString("type") == "file" && (rec.optString("kind") == "image" || rec.optString("mime").startsWith("image/")) && !rec.optBoolean("enc")
+        if (rec.optString("type") != "image" && !isFileImage) return null
+        if (isFileImage) content = rec.optString("url").ifBlank { return null }            // an uploaded picture: a link to the file
+        else if (rec.optBoolean("big")) content = (fb.get("privateChats/$chatId/media/$id") as? String) ?: return null
         if (rec.optBoolean("enc")) { val key = Crypt.chatKey(fb, store, chatId) ?: return null; content = Crypt.decrypt(key, chatId, content) ?: return null }
         val bytes: ByteArray = when {
             content.startsWith("data:") -> android.util.Base64.decode(content.substringAfter("base64,"), android.util.Base64.DEFAULT)
-            content.startsWith("https://") -> java.net.URL(content).openStream().use { it.readBytes() }
+            content.startsWith("https://") -> (java.net.URL(content).openConnection() as java.net.HttpURLConnection).apply { connectTimeout = 8000; readTimeout = 12000 }.inputStream.use { it.readBytes() }
             else -> return null
         }
         val o = android.graphics.BitmapFactory.Options().apply { inJustDecodeBounds = true }
@@ -739,6 +769,16 @@ class NotifyService : Service() {
                 if (id.isNotEmpty()) {
                     fb.put("privateChats/$chat/messageRead/$me", JSONObject.quote(id))
                     readIds[chat] = id
+                    // Easiest and loses nothing (group name, picture, big photo, bubble, quick reply): take the notification that is showing and only remove its "Mark as read" button
+                    val active = try { nm().activeNotifications.firstOrNull { it.id == chat.hashCode() } } catch (_: Exception) { null }
+                    if (active != null) {
+                        try {
+                            val n = active.notification
+                            val keep = (n.actions ?: emptyArray()).filter { it.title?.toString() != "Mark as read" }.toTypedArray()
+                            nm().notify(chat.hashCode(), Notification.Builder.recoverBuilder(this, n).setOnlyAlertOnce(true).setActions(*keep).build())
+                            return@Thread
+                        } catch (_: Exception) { /* fall back to rebuilding it */ }
+                    }
                     // this service may have just been woken (push mode) and know nothing about the chat: rebuild what the notification needs
                     if (history[chat] == null) {
                         refreshThread(chat, null)
