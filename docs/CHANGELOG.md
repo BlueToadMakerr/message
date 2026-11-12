@@ -2,6 +2,13 @@
 
 Newest first. Older rounds (1–43) are kept below exactly as they were written.
 
+## 1.66.0 — One menu for search and chat settings, Android notification fixes
+
+- **Search and chat settings are now one menu** (like Discord): the magnifier at the top of a chat opens a menu with two tabs, Search and Settings. Tapping the chat's name opens it on Settings. Settings is split into collapsible sections (Name & photo, Notifications, Encryption, Members) so it is no longer one long list.
+- **Android, photos in notifications:** photos now appear inside the conversation in the notification (each photo message shows its picture), not just the words "📷 Photo". Pictures are saved as small cache files and shown through a private content link (new `NotifImgProvider`; the diagnostics card logs "img" lines if a picture can't be loaded). The old big-picture style, which replaced the whole conversation, is now used only on Android 8–8.1.
+- **Android, mark as read / opening from the app:** the notification is now always rebuilt with everything it needs (group name, group picture, member pictures, photos), instead of reusing what the service happened to remember, which a freshly started service didn't have. That was why the group name and picture turned into the sender's name and the app icon.
+- Welcome guide text updated for the new menu.
+
 ## 1.65.0 — Files above the message box, text and code files with a viewer
 
 - **Republish `database.rules.json`** (message `kind` may now be `code`, new `lang` field).

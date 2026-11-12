@@ -22,8 +22,8 @@
       </div>
     </div>
     <a id="callBtn" class="icon-btn" href="#" aria-label="Start a call" title="Start a call" data-icon="phone"></a>
-    <button id="searchBtn" class="icon-btn" type="button" aria-label="Search this chat" title="Search messages and files" data-icon="search"></button>
-    <button id="chatOptionsBtn" class="icon-btn" type="button" aria-label="Chat options" data-icon="users"></button>
+    <button id="searchBtn" class="icon-btn" type="button" aria-hidden="true" tabindex="-1" hidden data-icon="search"></button>
+    <button id="chatOptionsBtn" class="icon-btn" type="button" aria-label="Search and chat settings" title="Search and chat settings" data-icon="search"></button>
   </header>
 
   <div id="pinBar" class="pinbar" hidden><span aria-hidden="true">\ud83d\udccc</span><span class="pt" id="pinText"></span><span class="muted" id="pinCount"></span></div>
@@ -57,26 +57,20 @@
 <div id="msgMenu" class="hidden" role="menu"></div>
 
 <!-- Chat options -->
-<dialog id="searchDialog" class="modal cs-dialog">
+<dialog id="searchDialog" class="modal cs-dialog" data-pane="search">
   <div class="modal-body">
-    <div class="modal-head"><h2>Search</h2><button type="button" class="icon-btn" id="searchClose" aria-label="Close" data-icon="close"></button></div>
+    <div class="modal-head"><div class="seg hub-tabs" id="hubTabs" role="tablist"><button type="button" class="on" data-p="search" role="tab">Search</button><button type="button" data-p="settings" role="tab">Settings</button></div><button type="button" class="icon-btn" id="searchClose" aria-label="Close" data-icon="close"></button></div>
+    <div class="pane-search">
     <input id="searchInput" class="field" type="search" placeholder="Search people, pins, files, messages…" autocomplete="off" enterkeyhint="search">
     <div class="cs-chips" id="searchChips" role="tablist">
       <button type="button" class="chip on" data-k="all">All</button><button type="button" class="chip" data-k="text">Messages</button><button type="button" class="chip" data-k="people">People</button><button type="button" class="chip" data-k="pins">Pins</button><button type="button" class="chip" data-k="image">Photos</button><button type="button" class="chip" data-k="video">Videos</button><button type="button" class="chip" data-k="audio">Audio</button><button type="button" class="chip" data-k="file">Files</button>
     </div>
     <div id="searchResults" class="cs-results"></div>
     <div class="cs-foot"><span id="searchNote" class="muted"></span><button type="button" class="btn small" id="searchOlder" hidden>Stop</button></div>
-  </div>
-</dialog>
-
-<dialog id="optionsDialog" class="modal">
-  <div class="modal-body">
-    <div class="modal-head">
-      <h2>Chat options</h2>
-      <button type="button" class="icon-btn" id="optionsClose" aria-label="Close" data-icon="close"></button>
     </div>
-
-    <div id="groupPhotoBox" hidden>
+    <div class="pane-settings" id="optionsDialog">
+    <details class="hub-sec"><summary>Name &amp; photo</summary>
+<div id="groupPhotoBox" hidden>
       <label class="lbl" for="chatPhotoInput">Group photo (image URL or upload)</label>
       <div class="row">
         <input id="chatPhotoInput" class="field" inputmode="url" placeholder="https://… (leave empty to remove)" autocomplete="off">
@@ -96,13 +90,10 @@
       </div>
     </div>
 
-    <div class="enc-box">
-      <label class="switch-row"><input type="checkbox" id="encToggle"> <span><strong>End-to-end encryption</strong><br><small id="encStatus">Messages, links and files are encrypted so only people in this chat can read them.</small></span></label>
-      <div id="encKeyRow" class="enc-key" hidden></div>
-    </div>
-
+    </details>
+    <details class="hub-sec"><summary>Notifications</summary>
     <div class="mute-box" id="muteBox">
-      <div class="section-title">Mute notifications</div>
+      
       <div id="muteState" class="muted" style="font-size:.88rem"></div>
       <div class="row" style="gap:.5rem;flex-wrap:wrap;margin-top:.4rem">
         <select id="muteWhat" class="field" aria-label="What to mute"><option value="both">Messages and calls</option><option value="m">Messages only</option><option value="c">Calls only</option></select>
@@ -116,7 +107,16 @@
       <small class="muted">Stops notifications from this chat on all your devices.</small>
     </div>
 
-    <div class="section-title">Participants</div>
+    </details>
+    <details class="hub-sec"><summary>Encryption</summary>
+    <div class="enc-box">
+      <label class="switch-row"><input type="checkbox" id="encToggle"> <span><strong>End-to-end encryption</strong><br><small id="encStatus">Messages, links and files are encrypted so only people in this chat can read them.</small></span></label>
+      <div id="encKeyRow" class="enc-key" hidden></div>
+    </div>
+
+    </details>
+    <details class="hub-sec" open><summary>Members</summary>
+    
     <div id="participantsList"></div>
 
     <div>
@@ -127,8 +127,12 @@
       </div>
       <div class="row" style="margin-top:.5rem"><button id="addBotBtn" class="btn small" type="button">Add one of my bots…</button></div>
     </div>
+    </details>
+    </div>
   </div>
 </dialog>
+
+
 
 <!-- Attach media -->
 <dialog id="attachDialog" class="modal">

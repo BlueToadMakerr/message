@@ -123,6 +123,6 @@ export function initChatSearch({ $, msgData, nameOf, jumpTo, fetchOlder, oldestL
   $("searchChips").addEventListener("click", e => { const c = e.target.closest(".chip"); if (!c) return; kind = c.dataset.k; for (const x of $("searchChips").children) x.classList.toggle("on", x === c); paint(); clearTimeout(armT); armT = setTimeout(arm, 700); });
   stopBtn.onclick = () => { stop = true; armed = false; };
   $("searchClose").onclick = () => dlg.close();
-  $("searchBtn").onclick = async () => { dlg.showModal(); await ready; paint(); setTimeout(() => input.focus(), 50); };
+  $("searchBtn").onclick = async () => { if (!dlg.open) dlg.showModal(); await ready; paint(); setTimeout(() => input.focus(), 50); };
   return { add, drop };
 }

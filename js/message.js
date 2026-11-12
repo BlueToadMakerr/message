@@ -1423,7 +1423,6 @@ async function deleteMessage(key) {
 // ---------- media ----------
 const attachDialog = $("attachDialog");
 wireDialog(attachDialog);
-wireDialog($("optionsDialog"));
 $("lightbox").addEventListener("click", () => $("lightbox").close());
 
 $("attachBtn").onclick = () => { $("mediaUrl").value = ""; attachDialog.showModal(); };
@@ -1655,7 +1654,21 @@ window.__qmPasteImage = (mime, b64, name) => {
 };
 
 // ---------- chat options ----------
-const optionsDialog = $("optionsDialog");
+// One menu for search and chat settings (like Discord): the search dialog has two panes, Search and Settings.
+const hub = $("searchDialog");
+function showPane(p) {
+  hub.dataset.pane = p;
+  for (const b of $("hubTabs").children) b.classList.toggle("on", b.dataset.p === p);
+  if (p === "settings") { $("chatNameInput").value = customName; $("chatPhotoInput").value = customPhoto; renderParticipants(); }
+  else { $("searchBtn").onclick(); }
+}
+const optionsDialog = {
+  get open() { return hub.open && hub.dataset.pane === "settings"; },
+  showModal() { if (!hub.open) hub.showModal(); showPane("settings"); },
+  close() { hub.close(); }
+};
+wireDialog(hub);
+$("hubTabs").addEventListener("click", e => { const b = e.target.closest("button[data-p]"); if (b) showPane(b.dataset.p); });
 let participantsRenderToken = 0;
 
 /** Everything known about one link in a message, plus a button that fetches its preview right now. */
@@ -1738,13 +1751,9 @@ $("chatOptionsBtn").before(devButton("{ }", async () => {
     );
   } });
 }, { title: "Developer info about this chat" }));
-$("chatOptionsBtn").onclick = () => {
-  $("chatNameInput").value = customName;
-  $("chatPhotoInput").value = customPhoto;
-  renderParticipants();
-  optionsDialog.showModal();
-};
-$("optionsClose").onclick = () => optionsDialog.close();
+$("chatOptionsBtn").onclick = () => { if (!hub.open) hub.showModal(); showPane("search"); };
+document.querySelector(".chat-title-wrap").style.cursor = "pointer";
+document.querySelector(".chat-title-wrap").addEventListener("click", () => optionsDialog.showModal());      // tap the chat's name: straight to its settings
 
 wirePhotoUpload($("uploadPhotoBtn"), $("chatPhotoFile"), d => { $("chatPhotoInput").value = d; $("savePhotoBtn").click(); }, m => toast(m, "error"));
 $("savePhotoBtn").onclick = async () => {

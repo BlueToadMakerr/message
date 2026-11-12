@@ -662,7 +662,7 @@ class NotifyService : Service() {
         } catch (_: Exception) {}
         val id = m.optString("id")
         // a photo is shown big in the notification (decoded here: from the media node, or decrypted when the chat is encrypted)
-        if (!DataSaver.active() && (m.optString("type") == "image" || m.optString("type") == "file")) { val bmp = try { loadImage(chatId, id) } catch (_: Exception) { null }; if (bmp != null) imgBmp[chatId] = bmp else imgBmp.remove(chatId) } else imgBmp.remove(chatId)
+        if (Build.VERSION.SDK_INT < 28 && !DataSaver.active() && (m.optString("type") == "image" || m.optString("type") == "file")) { val bmp = try { loadImage(chatId, id) } catch (_: Exception) { null }; if (bmp != null) imgBmp[chatId] = bmp else imgBmp.remove(chatId) } else imgBmp.remove(chatId)
         if (list.none { it.id == id }) list.add(Msg(id, textOf(chatId, m, preview = true), m.optLong("timestamp", System.currentTimeMillis()), from))
         while (list.size > 8) list.removeAt(0)
         postMessages(chatId)
@@ -693,8 +693,41 @@ class NotifyService : Service() {
     /** chat -> id of the newest message already marked as read (the "Mark as read" button is hidden for it). */
     private val readIds = ConcurrentHashMap<String, String>()
 
+    private val imgUri = ConcurrentHashMap<String, android.net.Uri>()     // message id -> the photo as a content:// link the notification can show inline
+    private val imgFail = java.util.Collections.newSetFromMap(ConcurrentHashMap<String, Boolean>())
+
+    /** A photo of the thread saved as a small file, served by [NotifImgProvider]; systemui gets read access to that one link. */
+    private fun photoUri(chatId: String, id: String): android.net.Uri? {
+        if (id.isEmpty() || imgFail.contains(id)) return null
+        return try {
+            val dir = java.io.File(cacheDir, "qmimg").apply { mkdirs() }
+            val f = java.io.File(dir, id.replace(Regex("[^A-Za-z0-9_-]"), "_") + ".jpg")
+            if (!f.exists()) {
+                val bmp = loadImage(chatId, id)
+                if (bmp == null) { imgFail.add(id); Diag.add(this, "img", chatId, "no picture to show for $id"); return null }
+                f.outputStream().use { bmp.compress(android.graphics.Bitmap.CompressFormat.JPEG, 82, it) }
+                dir.listFiles()?.sortedByDescending { it.lastModified() }?.drop(30)?.forEach { it.delete() }
+            }
+            val u = android.net.Uri.parse("content://$packageName.notifimg/${f.name}")
+            try { grantUriPermission("com.android.systemui", u, Intent.FLAG_GRANT_READ_URI_PERMISSION) } catch (_: Exception) {}
+            u
+        } catch (e: Exception) { imgFail.add(id); Diag.add(this, "img", chatId, "failed: ${e.javaClass.simpleName}"); null }
+    }
+
+    /** Everything a notification needs (group name, group picture, member pictures). A freshly started service knows none of it, so every rebuild calls this first. */
+    private fun ensureLook(chatId: String, list: List<Msg>) {
+        try {
+            if (!titles.containsKey(chatId)) titles[chatId] = (fb.get("privateChats/$chatId/chatData/name") as? String).orEmpty()
+            if (!chatBmp.containsKey(chatId) || !chatLabel.containsKey(chatId)) ensureChatLook(chatId, titles[chatId] ?: "")
+            store.uid?.let { ensurePerson(it) }
+            list.mapNotNull { it.from }.distinct().forEach { ensurePerson(it) }
+        } catch (_: Exception) {}
+    }
+
     private fun postMessages(chatId: String, quiet: Boolean = false) {
         val list = history[chatId] ?: return
+        ensureLook(chatId, synchronized(list) { list.toList() })
+        if (!DataSaver.active()) synchronized(list) { list.toList() }.filter { it.text == "📷 Photo" }.takeLast(3).forEach { m -> if (!imgUri.containsKey(m.id)) photoUri(chatId, m.id)?.let { imgUri[m.id] = it } }
         val title = titles[chatId] ?: ""
         val last = synchronized(list) { list.lastOrNull { it.from != null } }
         val lastText = last?.text ?: ""
@@ -709,7 +742,9 @@ class NotifyService : Service() {
             style.setGroupConversation(true)             // shows each sender's picture next to their messages, like Discord (cars read "Name: text")
             synchronized(list) { list.toList() }.forEach { msg ->
                 val p = if (msg.from == null) meP else personOf(msg.from)
-                style.addMessage(msg.text, msg.ts, p)
+                val mo = Notification.MessagingStyle.Message(msg.text, msg.ts, p)
+                imgUri[msg.id]?.let { mo.setData("image/jpeg", it) }          // the picture itself, inside the conversation
+                style.addMessage(mo)
             }
             b.setStyle(style)
         } else {
@@ -717,7 +752,7 @@ class NotifyService : Service() {
             b.setContentTitle(if (title.isNotBlank()) "$who · $title" else who).setContentText(lastText).setStyle(Notification.BigTextStyle().bigText(lastText))
         }
         imgBmp[chatId]?.let { bmp ->
-            if (lastText == "📷 Photo") {
+            if (Build.VERSION.SDK_INT < 28 && lastText == "📷 Photo") {
                 val who = last?.from?.let { nameOf(it) } ?: "New photo"
                 b.setStyle(Notification.BigPictureStyle().bigPicture(bmp).setSummaryText(lastText)).setContentTitle(if (title.isNotBlank()) "$who · $title" else who).setContentText(lastText)
             }
@@ -769,20 +804,9 @@ class NotifyService : Service() {
                 if (id.isNotEmpty()) {
                     fb.put("privateChats/$chat/messageRead/$me", JSONObject.quote(id))
                     readIds[chat] = id
-                    // Easiest and loses nothing (group name, picture, big photo, bubble, quick reply): take the notification that is showing and only remove its "Mark as read" button
-                    val active = try { nm().activeNotifications.firstOrNull { it.id == chat.hashCode() } } catch (_: Exception) { null }
-                    if (active != null) {
-                        try {
-                            val n = active.notification
-                            val keep = (n.actions ?: emptyArray()).filter { it.title?.toString() != "Mark as read" }.toTypedArray()
-                            nm().notify(chat.hashCode(), Notification.Builder.recoverBuilder(this, n).setOnlyAlertOnce(true).setActions(*keep).build())
-                            return@Thread
-                        } catch (_: Exception) { /* fall back to rebuilding it */ }
-                    }
                     // this service may have just been woken (push mode) and know nothing about the chat: rebuild what the notification needs
                     if (history[chat] == null) {
                         refreshThread(chat, null)
-                        try { ensureChatLook(chat, titles[chat] ?: ""); store.uid?.let { ensurePerson(it) }; history[chat]?.let { l -> synchronized(l) { l.mapNotNull { it.from } }.distinct().forEach { ensurePerson(it) } } } catch (_: Exception) {}
                     }
                     postMessages(chat, quiet = true)                  // same notification, without the button
                 }
