@@ -178,6 +178,8 @@ import { saverOn } from "./datasaver.js";
 const netSaver = src => saverOn() && /^https?:/i.test(src);       // Data Saver: don't even read the first bytes until Play is pressed
 const TOP = (() => { try { void window.top.document; return window.top; } catch (_) { return window; } })();
 
+if (TOP === window) import("./pip.js").catch(() => {});      // the built-in floating players live in the top window
+
 /** Audio plays from an element that lives in the top window, so it keeps going when you leave the chat (and in the background). */
 function topAudio(src) {
   const cur = TOP.__qmAudio;
@@ -217,7 +219,7 @@ export function audioPlayer(src, { title = "", name = "", wave: waveData = "", d
   const uiPlaying = () => { if (!a.paused && !raf) raf = requestAnimationFrame(tick); play.innerHTML = icon(a.paused ? "play" : "pause", 20); play.title = a.paused ? "Play" : "Pause"; };
   const on = {
     loadedmetadata: upd, durationchange: upd, timeupdate: upd, ratechange: () => { spd.textContent = rateText(a.playbackRate); },
-    play: () => { if (TOP.__qmAudio && TOP.__qmAudio !== a) { try { TOP.__qmAudio.pause(); } catch (_) { /* ignore */ } } TOP.__qmAudio = a; exclusive(a); mediaSession(a, title); uiPlaying(); },
+    play: () => { if (TOP.__qmAudio && TOP.__qmAudio !== a) { try { TOP.__qmAudio.pause(); } catch (_) { /* ignore */ } } TOP.__qmAudio = a; a.dataset.title = title || name || ""; TOP.__qmCur = { el: a, title: title || name || "Audio message", kind: "audio", src }; exclusive(a); mediaSession(a, title); uiPlaying(); },
     pause: uiPlaying,
     ended: () => { a.currentTime = 0; upd(); },
     error: () => { time.textContent = "Can't play"; },
@@ -247,6 +249,12 @@ export function audioPlayer(src, { title = "", name = "", wave: waveData = "", d
   a.addEventListener("play", () => go(PLAY_LIMIT));      // bigger files: only once someone plays them
   if ("IntersectionObserver" in window) { const io = new IntersectionObserver(es => { if (es.some(e => e.isIntersecting)) { io.disconnect(); go(AUTO_LIMIT); paint(); } }); io.observe(root); } else go(AUTO_LIMIT);
   new ResizeObserver(paint).observe(wave);
+  // whether this message is on screen: the floating mini player (js/pip.js) only shows while it is not
+  try {
+    TOP.__qmInView = TOP.__qmInView || {};
+    if ("IntersectionObserver" in window) new IntersectionObserver(es => { for (const e of es) TOP.__qmInView[src] = e.isIntersecting; }).observe(root);
+    addEventListener("pagehide", () => { try { delete TOP.__qmInView[src]; } catch (_) { /* ignore */ } });
+  } catch (_) { /* ignore */ }
   overflowMenu(root, wave, 90, [
     { el: spd, label: () => "Speed (" + rateText(a.playbackRate || 1) + ")", run: m => speedMenu(m, a, document.body, () => {}) },
     { el: dl, label: () => "Download", run: () => dl.click() },
@@ -352,6 +360,26 @@ export function videoPlayer(src, { poster = "", onLayout, autoplay = false, titl
   let hideT = null;
   function wake() { root.classList.add("show"); clearTimeout(hideT); if (!v.paused) hideT = setTimeout(() => root.classList.remove("show"), 2500); }
   root.addEventListener("pointermove", wake); root.addEventListener("pointerdown", wake); root.addEventListener("focusin", wake);
+  // ---- floating player (js/pip.js): a playing video that scrolls out of view, or whose page closes, carries on in the built-in window;
+  // when the same video is on screen again it takes the playback back
+  const topPip = () => { try { return TOP.__qmPip && TOP.__qmPip.auto() ? TOP.__qmPip : null; } catch (_) { return null; } };
+  const chatOf = (() => { try { return new URL(location.href).searchParams.get("chatId") || ""; } catch (_) { return ""; } })();
+  let handed = false;
+  v.addEventListener("play", () => { TOP.__qmCur = { el: v, title: title || name || "Video", kind: "video", src }; });
+  const give = () => {
+    const p = topPip(); if (!p || v.paused || v.ended || handed) return;
+    const s = JSON.stringify({ src, time: v.currentTime, playing: true, rate: v.playbackRate, volume: v.volume, muted: v.muted, title: title || name || "Video", poster, chat: chatOf });
+    if (p.handoff(s)) { handed = true; v.pause(); }
+  };
+  const adopt = () => {
+    let raw = null; try { raw = TOP.__qmPip && TOP.__qmPip.take(src); } catch (_) { /* ignore */ }
+    if (!raw) return;
+    const s = JSON.parse(raw); handed = false;
+    const go = () => { try { v.currentTime = s.time; v.playbackRate = s.rate; v.volume = s.volume; v.muted = s.muted; } catch (_) { /* ignore */ } if (s.playing) v.play().catch(() => {}); };
+    if (v.readyState >= 1) go(); else v.addEventListener("loadedmetadata", go, { once: true });
+  };
+  if ("IntersectionObserver" in window) new IntersectionObserver(es => { for (const e of es) { if (e.intersectionRatio > 0.15) adopt(); else give(); } }, { threshold: [0, 0.15, 0.4] }).observe(root);
+  addEventListener("pagehide", give);
   if (autoplay) v.play().catch(() => {});
   root.video = v;
   return root;

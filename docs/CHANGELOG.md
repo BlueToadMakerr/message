@@ -2,6 +2,15 @@
 
 Newest first. Older rounds (1–43) are kept below exactly as they were written.
 
+## 1.71.0 — Floating players, video in the background, Android media controls
+
+- **Built-in floating player for video** (new `js/pip.js`): a playing video that scrolls out of view, or whose chat you leave, carries on in a small draggable window (play/pause, ±10 s, seek, mute, "go to chat", close). When the same video is on screen again it takes the playback back and the window goes away. The window's picture-in-picture button still uses the browser's / Android's own PiP.
+- **Calls too**: minimising a call now floats it in the same kind of window (mute, leave, expand) instead of hiding it; the call keeps running either way.
+- **Mini audio player** (built-in only, no native PiP): a slim bar with play/pause, ±10 s and seek that shows when an audio message you started is not on screen, so you can control it from anywhere.
+- **Minimise to a tab**: every floating window / the mini player can be minimised to a small tab on the screen edge (media keeps playing); tap the tab to bring it back.
+- **Android media controls**: audio and video now show a media notification (play/pause, ±10 s, seek on the lock screen, headset buttons) via the new `MediaControls.kt`. The web Media Session (iPhone, desktop) is set for video as well as audio. Only one thing plays at a time.
+- **Account → Floating players** turns the floating windows off (this device).
+
 ## 1.70.0 — Media tab, no white flash, pushes list in dev mode
 
 - **Chat menu → new Media tab**: every photo, video and audio of the chat in one place, as a grid (videos show their first frame; thumbnails load only when scrolled to), with All / Photos / Videos / Audio filters. Scrolling to the end looks further back in the chat, like search.

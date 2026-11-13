@@ -15,7 +15,8 @@ import { watchSiteVersion, SITE_VERSION } from "./version.js";
 import { watchSavedCopy, copyStatus, setSafeMode } from "./sitecopy.js";
 import { fullRefresh, warmAppCache } from "./refresh.js";
 warmAppCache();
-import "./viewer.js";                 // registers window.__qmOpenImage: images from every frame open full-screen here
+import "./viewer.js";
+import "./pip.js";                    // built-in floating video / call / audio players (window.__qmPip)                 // registers window.__qmOpenImage: images from every frame open full-screen here
 
 const $ = id => document.getElementById(id);
 const split = matchMedia("(min-width: 900px)");
@@ -383,6 +384,7 @@ function showCall() {
   const { layer } = els();
   layer.hidden = false;
   layer.classList.remove("min");
+  try { window.__qmPip && window.__qmPip.callFloat(false); } catch (_) { /* ignore */ }
   st.call.visible = true;
   renderBar();
 }
@@ -409,6 +411,7 @@ function closeCallFrame() {
   const { layer, callFrame } = els();
   delete callFrame.dataset.chat;
   navFrame(callFrame, "about:blank");
+  try { window.__qmPip && window.__qmPip.callFloat(false); } catch (_) { /* ignore */ }
   layer.hidden = true;
   layer.classList.remove("min");
   st.call = { chatId: null, joined: false, visible: false, muted: false, canMic: true, startLocal: null, title: "" };
@@ -420,6 +423,11 @@ function hideCall() {
   if (!st.call.joined) { closeCallFrame(); return; }
   layer.classList.add("min");
   st.call.visible = false;
+  // floating call window (built-in picture-in-picture) instead of a hidden call, unless turned off in Account
+  try {
+    window.__qmPip && window.__qmPip.callFloat(true, { layer, title: st.call.title || "Call", mic: () => callWin()?.toggleMute(), leave: () => leaveCall(), expand: () => openCall(st.call.chatId),
+      time: () => (st.call.startLocal ? fmtDuration(Date.now() - st.call.startLocal) : "") });
+  } catch (_) { /* ignore */ }
   renderBar();
 }
 

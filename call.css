@@ -296,15 +296,15 @@ html:has(.call-body), .call-body { height: 100%; }
 @media (max-width: 600px) { .chat-panel { top: var(--top-h); bottom: calc(var(--dock-h) + 8px); max-height: none; } }
 
 /* Android picture-in-picture: just the video */
-.qm-pip .grid { overflow: hidden; padding: 2px; gap: 2px; }
-.qm-pip .tile { border-radius: 6px; }
-.qm-pip .tile .t-btn, .qm-pip .tile .t-vol, .qm-pip .tile .t-status { display: none !important; }
-.qm-pip .tile .t-name { font-size: .62rem; transform: scale(.85); transform-origin: left bottom; }
-.qm-pip .dock, .qm-pip .top, .qm-pip .self-float, .qm-pip #toasts, .qm-pip .people { display: none !important; }
+:is(.qm-pip, .bpip-in) .grid { overflow: hidden; padding: 2px; gap: 2px; }
+:is(.qm-pip, .bpip-in) .tile { border-radius: 6px; }
+:is(.qm-pip, .bpip-in) .tile .t-btn, :is(.qm-pip, .bpip-in) .tile .t-vol, :is(.qm-pip, .bpip-in) .tile .t-status { display: none !important; }
+:is(.qm-pip, .bpip-in) .tile .t-name { font-size: .62rem; transform: scale(.85); transform-origin: left bottom; }
+:is(.qm-pip, .bpip-in) .dock, :is(.qm-pip, .bpip-in) .top, :is(.qm-pip, .bpip-in) .self-float, :is(.qm-pip, .bpip-in) #toasts, :is(.qm-pip, .bpip-in) .people { display: none !important; }
 
 /* Android PiP of a single person's video: only that tile, filling the window */
-.qm-pip.pip-tile .tile:not(.pip-target) { display: none !important; }
-.qm-pip.pip-tile .tile.pip-target { position: fixed !important; inset: 0 !important; width: 100% !important; height: 100% !important; max-width: none !important; border-radius: 0 !important; z-index: 40; }
+:is(.qm-pip, .bpip-in).pip-tile .tile:not(.pip-target) { display: none !important; }
+:is(.qm-pip, .bpip-in).pip-tile .tile.pip-target { position: fixed !important; inset: 0 !important; width: 100% !important; height: 100% !important; max-width: none !important; border-radius: 0 !important; z-index: 40; }
 
 /* a person's video that has been popped out into its own window: the tile says so and offers to bring it back */
 .t-popped { position: absolute; inset: 0; z-index: 4; display: grid; place-items: center; text-align: center; background: rgb(14 16 24 / .94); color: #e6e8f2; }
@@ -316,8 +316,8 @@ html:has(.call-body), .call-body { height: 100%; }
 @container (max-height: 130px) { .t-popped-sub, .t-popped-ic { display: none; } }
 .tile.popped .t-btn:not(.t-pop), .tile.popped .t-vol { display: none; }
 /* Android PiP window: video only, with a small name chip */
-.qm-pip .tile.pip-target .t-btn, .qm-pip .tile.pip-target .t-vol, .qm-pip .tile.pip-target .t-status, .qm-pip .tile.pip-target .t-popped { display: none !important; }
-.qm-pip .tile.pip-target .t-name { transform: scale(.85); transform-origin: left bottom; }
+:is(.qm-pip, .bpip-in) .tile.pip-target .t-btn, :is(.qm-pip, .bpip-in) .tile.pip-target .t-vol, :is(.qm-pip, .bpip-in) .tile.pip-target .t-status, :is(.qm-pip, .bpip-in) .tile.pip-target .t-popped { display: none !important; }
+:is(.qm-pip, .bpip-in) .tile.pip-target .t-name { transform: scale(.85); transform-origin: left bottom; }
 
 .person-row .stat.declined { color: #f87171; font-weight: 600; }
 .ctl[hidden] { display: none !important; }

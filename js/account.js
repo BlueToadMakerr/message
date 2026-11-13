@@ -561,3 +561,11 @@ markReady();   // tells the app shell this frame booted (see frame watchdog in s
 $("audioHost")?.append(audioSettingsNode());
 
 $("devRateHost")?.append(rateSelect(), spanSelect());
+
+// Floating players (js/pip.js) on / off, per device
+(() => {
+  const t = document.getElementById("pipToggle"); if (!t) return;
+  let on = true; try { on = localStorage.getItem("qm-pip") !== "off"; } catch (_) { /* ignore */ }
+  t.checked = on;
+  t.addEventListener("change", () => { try { t.checked ? localStorage.removeItem("qm-pip") : localStorage.setItem("qm-pip", "off"); } catch (_) { /* ignore */ } });
+})();

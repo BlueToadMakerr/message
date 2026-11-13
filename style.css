@@ -1134,3 +1134,34 @@ html.dev-on .dev-only { display: block !important; }
 .hub-sec[open] > summary { border-bottom: 1px solid var(--border); margin-bottom: .6rem; }
 .hub-sec[open] { padding-bottom: .75rem; }
 .btn[hidden]{display:none!important}
+
+/* ---------- built-in floating players (js/pip.js): video, call, mini audio, edge tabs ---------- */
+.qmpip { position: fixed; z-index: 2000; width: 280px; border-radius: 14px; overflow: hidden; background: #000; color: #fff; box-shadow: 0 8px 28px rgb(0 0 0 / .45); display: flex; flex-direction: column; touch-action: none; }
+.qmpip[hidden], .qmpip-audio[hidden], .qmpip-tab[hidden] { display: none !important; }
+.qmpip.hold { visibility: hidden; }
+.qmpip-head { display: flex; align-items: center; gap: 2px; padding: 2px 4px 2px 10px; background: rgb(20 22 28 / .92); cursor: grab; user-select: none; }
+.qmpip-title { flex: 1; min-width: 0; font-size: .78rem; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.qmpip-b { width: 30px; height: 30px; border: 0; border-radius: 8px; background: transparent; color: inherit; display: inline-grid; place-items: center; cursor: pointer; flex: none; font: inherit; font-size: .72rem; font-weight: 700; }
+.qmpip-b:hover { background: rgb(255 255 255 / .16); }
+.qmpip-b.danger { color: #ff7b86; }
+.qmpip-b[hidden] { display: none; }
+.qmpip-body { position: relative; background: #000; min-height: 80px; }
+.qmpip-body video { width: 100%; height: 100%; object-fit: contain; display: block; }
+.qmpip-bar { display: flex; align-items: center; gap: 2px; padding: 2px 6px; background: rgb(20 22 28 / .92); }
+.qmpip-time { font-size: .68rem; opacity: .85; font-variant-numeric: tabular-nums; white-space: nowrap; margin: 0 4px; }
+.qmpip-seek { flex: 1; min-width: 30px; accent-color: var(--accent, #6d8dff); height: 24px; }
+.qmpip-call { background: transparent; box-shadow: none; }
+.qmpip-call .qmpip-body { background: transparent; }
+.qmpip-call .qmpip-head, .qmpip-call .qmpip-bar { background: rgb(20 22 28 / .94); }
+.call-layer.bpip { z-index: 1999; border-radius: 0; visibility: visible; pointer-events: none; overflow: hidden; }
+.call-layer.bpip iframe { pointer-events: none; }
+.qmpip-tab { position: fixed; right: 0; z-index: 2000; width: 34px; height: 44px; border: 0; border-radius: 12px 0 0 12px; background: rgb(20 22 28 / .92); color: #fff; display: grid; place-items: center; cursor: pointer; box-shadow: 0 2px 10px rgb(0 0 0 / .4); }
+.qmpip-audio { position: fixed; z-index: 2000; left: 50%; transform: translateX(-50%); bottom: calc(var(--sab, 0px) + 14px); width: min(94vw, 420px); border-radius: 16px; background: rgb(20 22 28 / .96); color: #fff; box-shadow: 0 8px 28px rgb(0 0 0 / .45); padding: 4px 8px 6px; }
+.qmpip-arow { display: flex; align-items: center; gap: 2px; }
+.qmpip-atitle { flex: 1; min-width: 0; font-size: .8rem; font-weight: 600; padding-left: 6px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* Android's own picture-in-picture for the floating video: only that video is left in the window */
+html.qm-bpip-native body > *:not(#qmPipvideo) { display: none !important; }
+html.qm-bpip-native, html.qm-bpip-native body { overflow: hidden; background: #000; }
+html.qm-bpip-native #qmPipvideo { inset: 0 !important; left: 0 !important; top: 0 !important; width: 100vw !important; height: 100vh !important; border-radius: 0; z-index: 2147483000; }
+html.qm-bpip-native #qmPipvideo .qmpip-head, html.qm-bpip-native #qmPipvideo .qmpip-bar { display: none; }
+html.qm-bpip-native #qmPipvideo .qmpip-body { height: 100vh !important; }

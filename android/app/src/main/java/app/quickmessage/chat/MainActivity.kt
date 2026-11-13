@@ -527,6 +527,9 @@ class MainActivity : Activity() {
             if (Build.VERSION.SDK_INT >= 27) { setShowWhenLocked(false); setTurnScreenOn(false) }
             finishAndRemoveTask()
         }
+        /** The page's audio / video state for the media notification (title, playing, position and length in ms, video or audio). */
+        @JavascriptInterface fun mediaState(title: String, playing: Boolean, posMs: Long, durMs: Long, video: Boolean) = runOnUiThread { MediaControls.update(this@MainActivity, title.take(80), playing, posMs.coerceAtLeast(0), durMs.coerceAtLeast(0), video) }
+        @JavascriptInterface fun mediaClear() = runOnUiThread { MediaControls.clear(this@MainActivity) }
         @JavascriptInterface fun enterPip() = runOnUiThread { pipRatio = Rational(16, 9); enterPipNow() }
         /** A chat video goes to picture-in-picture with its own controls. */
         @JavascriptInterface fun enterVideoPip(w: Int, h: Int, playing: Boolean) = runOnUiThread { pipVideo = true; pipPlaying = playing; if (w > 0 && h > 0) pipRatio = Rational(w.coerceIn(1, 4000), h.coerceIn(1, 4000)); enterPipNow() }

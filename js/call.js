@@ -743,7 +743,7 @@ function layout() {
   tiles.forEach(t => t.setPinned(t.key === S.pinnedKey));
   if (!tiles.length || W <= 0 || H <= 0) return;
 
-  const spot = document.documentElement.classList.contains("qm-pip") ? null : spotKey(tiles);   // PiP: always the plain grid so everyone fits
+  const spot = (document.documentElement.classList.contains("qm-pip") || document.documentElement.classList.contains("bpip-in")) ? null : spotKey(tiles);   // PiP: always the plain grid so everyone fits
   if (spot) {
     const z = spotlightSizes(tiles.length, W, H, gap);
     el.grid.classList.add(z.dir === "column" ? "spot-col" : "spot-row");
@@ -755,7 +755,7 @@ function layout() {
       t.el.style.order = main ? "-1" : String(++idx);
     }
   } else {
-    const inPip = document.documentElement.classList.contains("qm-pip");
+    const inPip = (document.documentElement.classList.contains("qm-pip") || document.documentElement.classList.contains("bpip-in"));
     const g = gridSizes(tiles.length, W, H, gap, inPip ? 0 : 120);   // in the small PiP window every tile shrinks until all fit — no scrolling
     el.grid.classList.toggle("scroll", g.overflow);
     tiles.forEach((t, i) => { t.el.style.width = g.w + "px"; t.el.style.height = g.h + "px"; t.el.style.order = String(i); });
