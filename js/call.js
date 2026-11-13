@@ -1,6 +1,7 @@
 // Group call page. Orchestrates: local media → room (Firebase sessions/inbox) → one PeerLink per remote
 // *session* → tiles/layout. Each device/tab is its own session, so one account on two devices is two
 // participants in the mesh (clearly labelled), never one clobbering the other.
+import { track, secsBucket } from "./analytics.js";
 import { askScreenSettings } from "./call/sharedialog.js";
 import { clearScreenOverride } from "./screenprefs.js";
 import { audioSettingsNode, applyOutput, applyNativeAudio } from "./call/devices.js";
@@ -225,6 +226,8 @@ async function join() {
       camStream: media.camStream.id, screenStream: null
     });
 
+    S.joinedAt = Date.now();
+    track("call_joined", { video: !!media.camOn, audio: !!media.micOn });
     clearRing(chatId, S.me);                      // stop other devices of mine from ringing
     startChat();
     startDuration();
@@ -257,6 +260,7 @@ function announceMediaProblems() {
 
 async function leave(showLobbyAfter = true) {
   if (!S.joined && !S.joining) return;
+  if (S.joinedAt) track("call_left", { length: secsBucket((Date.now() - S.joinedAt) / 1000) });
   await teardown();
   // Hanging up returns to this chat's room (not the home page).
   if (showLobbyAfter) { if (QM) QM.callEnded(chatId); else location.replace(CHAT_URL); }

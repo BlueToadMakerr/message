@@ -91,6 +91,9 @@ class PushService : FirebaseMessagingService() {
         val st = Store(applicationContext)
         // What actually arrived (shown in Settings → Calls & notifications → "Recent pushes on this device"): how late it was, and whether the system
         // had already demoted it from high to normal priority (a demoted push is delivered late and may not be allowed to start the service).
+        AppAnalytics.init(applicationContext)
+        val lateS = if (m.sentTime > 0) (System.currentTimeMillis() - m.sentTime) / 1000 else -1
+        AppAnalytics.log(applicationContext, "push_received", "type" to (d["type"] ?: "?"), "priority" to "${m.priority}/${m.originalPriority}", "late" to when { lateS < 0 -> "?"; lateS < 5 -> "<5s"; lateS < 30 -> "<30s"; lateS < 300 -> "<5m"; else -> "5m+" })
         val late = if (m.sentTime > 0) ((System.currentTimeMillis() - m.sentTime) / 1000).toString() + "s late" else "?"
         Diag.add(applicationContext, d["type"] ?: "?", d["chatId"] ?: "", "received · $late · priority ${m.priority}/${m.originalPriority}")
         if (!st.signedIn || !st.notify || d["type"].isNullOrEmpty()) { Diag.add(applicationContext, d["type"] ?: "?", d["chatId"] ?: "", "ignored (signed out or notifications off)"); return }
@@ -116,6 +119,7 @@ object Diag {
             for (i in start until arr.length()) out.put(arr.get(i))
             out.put(JSONObject().put("t", System.currentTimeMillis()).put("type", type).put("chat", chat.take(12)).put("what", what))
             sp.edit().putString(KEY, out.toString()).apply()
+            AppAnalytics.log(ctx, "push_event", "type" to type)
         } catch (_: Exception) { /* diagnostics only */ }
     }
     fun json(ctx: Context): String = ctx.getSharedPreferences("quickmessage", Context.MODE_PRIVATE).getString(KEY, "[]") ?: "[]"

@@ -34,6 +34,10 @@
         android:allowBackup="false"
         android:usesCleartextTraffic="true"
         android:theme="@android:style/Theme.Material.Light.NoActionBar">
+        <!-- usage statistics stay off until the signed-in account says on (AppAnalytics.kt); no advertising id -->
+        <meta-data android:name="firebase_analytics_collection_enabled" android:value="false" />
+        <meta-data android:name="google_analytics_adid_collection_enabled" android:value="false" />
+        <meta-data android:name="google_analytics_default_allow_ad_personalization_signals" android:value="false" />
         <!-- Android Auto: message notifications (read aloud, reply and mark-as-read by voice) -->
         <meta-data android:name="com.google.android.gms.car.application" android:resource="@xml/automotive_app_desc" />
         <!-- Calls are registered with Android's Telecom framework so the car / headsets can show, answer, hang up and mute them -->

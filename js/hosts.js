@@ -4,6 +4,7 @@
 // browsers to read their answers directly); it only talks to the addresses listed in upload.php.
 import { uploadToLitterbox, uploadViaRelay, uploadDirectHost, fmtBytes, kindOf } from "./litter.js";
 import { PRIVATE, privateBase } from "./mode.js";
+import { track, sizeBucket } from "./analytics.js";
 
 const H = 3600, D = 86400, MB = 1024 * 1024, GB = 1024 * MB, PERM = 3650 * D;     // PERM: "never expires" (10 years as a number)
 
@@ -161,6 +162,7 @@ export async function uploadToHosts(file, { onProgress, signal, relayMax = 0, ch
           try { r = await uploadDirectHost(h.id, file, ttl, onProgress, signal); }
           catch (e) { if (e.http || e.aborted || h.noRelay || !(file.size <= relayMax)) throw e; r = await uploadViaRelay(h.id, file, ttl, onProgress, signal); }
         } else r = await uploadViaRelay(h.id, file, ttl, onProgress, signal);
+        track("file_upload", { host: h.id, ok: true, size: sizeBucket(file.size), tries: i + 1 });
         return { ...r, host: h.id };
       } catch (e) {
         if (e.aborted) throw e;
@@ -172,5 +174,6 @@ export async function uploadToHosts(file, { onProgress, signal, relayMax = 0, ch
     }
     if (i + 1 < list.length) onSwitch && onSwitch(h, list[i + 1], lastErr);
   }
+  track("file_upload", { host: "all", ok: false, size: sizeBucket(file.size), reason: String((lastErr && (lastErr.http || lastErr.message)) || "").slice(0, 60) });
   throw lastErr || new Error("Upload failed");
 }

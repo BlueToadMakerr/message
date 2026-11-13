@@ -1,6 +1,7 @@
 // First-login welcome tour. Short, visual and hands-on: a dummy app and chat to try things in, and real controls for the things you can change
 // (name, picture, colours, privacy: these really save). "Skip tour" closes everything; "Skip this demo" jumps to the next page.
 // It appears once for a brand-new account (per device) and can be opened again from Account → Welcome tour.
+import { track, analyticsOn, setAnalyticsEnabled } from "./analytics.js";
 import { icon, avatarEl, toast } from "./ui.js";
 import { db } from "./firebase.js";
 import { ref, update } from "./sdk.js";
@@ -164,6 +165,24 @@ function pPrivacy(ctx) {
   return { node: w };
 }
 
+function pAnalytics(ctx) {
+  const w = h("div", "tour-page");
+  w.append(h("h2", "", "Help improve QuickMessage"),
+    para("QuickMessage can send anonymous usage statistics to Google Analytics (on this app's own Firebase project) so errors get found and fixed and the developer can see what is worth improving. It is on by default, and you decide:"));
+  const ul = h("ul", "tour-list");
+  for (const t of ["What is sent: which screens you open, how often features are used (sending, calling, searching, pinning, file uploads…), kinds of errors and which file they came from, the app and site version, and your platform (web, Android or iPhone app).",
+    "Never sent: your messages, names, email address, friend code, chat or account ids, file names or links, or who you talk to.",
+    "Why: to see errors before people report them, which versions are in use, and which features nobody finds or uses.",
+    "It is saved on your account: turning it off here (or later in Account → Privacy) turns it off on every device you use. It is also off if your browser sends Do Not Track."]) ul.append(h("li", "", t));
+  const status = h("div", "tour-tip", "");
+  const l = h("label", "switch-row"), c = h("input"); c.type = "checkbox"; c.checked = analyticsOn() !== false;
+  c.onchange = async () => { try { await setAnalyticsEnabled(c.checked); status.textContent = c.checked ? "✓ Usage statistics on." : "✓ Usage statistics off on all your devices."; } catch (_) { status.textContent = "Couldn't save that right now. You can change it in Account → Privacy."; } };
+  const sp = h("span"); sp.append(h("strong", "", "Share anonymous usage statistics"), h("br"), h("small", "muted", "Account setting, all devices"));
+  l.append(c, sp);
+  w.append(ul, l, status);
+  return { node: w };
+}
+
 function pEncrypt(ctx) {
   const w = h("div", "tour-page");
   w.append(h("h2", "", "Message encryption"), para("Each chat can be end-to-end encrypted. See what that means:"));
@@ -213,7 +232,7 @@ function pEnd() {
 }
 
 const PAGES = [
-  { fn: pWelcome }, { fn: pWhere, demo: true }, { fn: pChat, demo: true }, { fn: pProfile, demo: true, needsUser: true }, { fn: pPrivacy, demo: true, needsUser: true }, { fn: pFind }, { fn: pEncrypt, demo: true }, { fn: pEnd }
+  { fn: pWelcome }, { fn: pWhere, demo: true }, { fn: pChat, demo: true }, { fn: pProfile, demo: true, needsUser: true }, { fn: pPrivacy, demo: true, needsUser: true }, { fn: pAnalytics, needsUser: true }, { fn: pFind }, { fn: pEncrypt, demo: true }, { fn: pEnd }
 ];
 
 /** Opens the tour. opts.uid: marks it seen and lets the profile / privacy demos save; opts.openAccount(): the buttons that jump to Account. */
@@ -224,10 +243,11 @@ export function showTour(opts = {}) {
     d.className = "modal tour";
     d.setAttribute("aria-label", "Welcome tour");
     let i = 0, ctx = null;
-    const finish = why => { try { ctx && ctx.onLeave && ctx.onLeave(); } catch (_) { /* ignore */ } if (opts.uid) mark(opts.uid); d.close(why); };
+    const finish = why => { track("tour_done", { how: why, pages: pages.length }); try { ctx && ctx.onLeave && ctx.onLeave(); } catch (_) { /* ignore */ } if (opts.uid) mark(opts.uid); d.close(why); };
     const go = n => { try { ctx && ctx.onLeave && ctx.onLeave(); } catch (_) { /* ignore */ } i = n; paint(); };
     const paint = () => {
       const p = pages[i], last = i === pages.length - 1;
+      track("tour_page", { n: i + 1, page: p.fn.name.replace(/^p/, "").toLowerCase() });
       ctx = { uid: opts.uid, openAccount: opts.openAccount, finish, onLeave: null };
       d.replaceChildren();
       const body = h("div", "modal-body tour-body");

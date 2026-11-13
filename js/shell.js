@@ -1,6 +1,7 @@
 // App shell (index.html): chat list on the left; the open chat/account page in an <iframe> on the right (desktop) or
 // full-screen over the list (mobile); and ONE persistent call <iframe> that survives switching chats, with a
 // Discord-style "in call" bar while the call is minimised. Embedded pages reach this through `parent.QM` (see embed.js).
+import { track } from "./analytics.js";
 import { watchIncomingCalls, hideIncoming } from "./incoming.js";
 import { fmtDuration } from "./call-banner.js";
 import { icon, avatarEl, localToast, confirmDialog, alertDialog } from "./ui.js";
@@ -110,6 +111,7 @@ function showFrameError(frame, on, info = {}) {
 /** A page broke while it started (js/bars.js): no waiting, no retries. The first time in 10 minutes the app refreshes itself completely; after that the error screen stays. */
 function frameFatal(frame, msg) {
   if (!frame) return;
+  track("app_fatal", { kind: "script", detail: msg, page: String(frame.src || frame.dataset.src || "").split("?")[0].split("/").pop() });
   const w = watch.get(frame); if (w) { clearTimeout(w.timer); w.tries = MAX_TRIES; }
   let last = 0; try { last = +(sessionStorage.getItem("qm-autofix") || 0); } catch (_) { /* ignore */ }
   if (navigator.onLine !== false && Date.now() - last > 600000) {
@@ -120,6 +122,7 @@ function frameFatal(frame, msg) {
 }
 /** The Android app reports a pane whose page the network refused (instead of the browser's own error page showing inside it). */
 function frameFailed(url, code) {
+  track("page_load_failed", { code: String(code || "").slice(0, 40), page: String(url || "").split("?")[0].split("/").pop() });
   const base = String(url || "").replace(/([?&])_r=\d+/, "").replace(/[?&]$/, "");
   const strip = u => String(u || "").replace(/([?&])_r=\d+/, "").replace(/[?&]$/, "");
   for (const f of document.querySelectorAll("iframe")) {

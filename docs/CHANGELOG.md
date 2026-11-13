@@ -2,6 +2,13 @@
 
 Newest first. Older rounds (1–43) are kept below exactly as they were written.
 
+## 1.69.0 — Usage statistics (analytics), account based
+
+- **Republish `database.rules.json`** (new boolean `accsettings/{uid}/settings/analytics`, the account's choice).
+- **Google Analytics for Firebase on the website and the Android app** (the project's own measurementId): screens, how often features are used, error kinds and files, site / app versions, platform. **On by default, account based**: the welcome tour has a new page explaining exactly what is and isn't collected with a switch, and Account → Privacy has the same switch. Turning it off on one device turns it off on all of them (live). Nothing is collected while signed out, in private-server / own-database mode, or with Do Not Track; no ad features, no advertising id; never messages, names, emails, friend codes, ids or file names. Full list: `docs/ANALYTICS.md`.
+- Android app: native events for push (how late each push arrived and whether the system demoted its priority, which makes the notification delay visible), crashes by class and file; collection is off in the manifest until the account says on. Needs the Firebase Analytics SDK (added to the Gradle build; the GitHub build already supplies `google-services.json`).
+- To see the parameters in GA reports, register them as custom definitions (see `docs/ANALYTICS.md`).
+
 ## 1.68.0 — Notification age, more direct file hosts, source link
 
 - **Android notifications show the age of the newest message** in them (the time next to the app name), not the moment the notification was built or refreshed, so "46m" really means the last message was 46 minutes ago, and marking as read or opening the app no longer makes it say "now". (Web notifications still show their arrival time.)

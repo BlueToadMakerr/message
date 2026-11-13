@@ -191,3 +191,6 @@ function standaloneError(msg) {
   o.querySelector(".b").onclick = () => location.reload();
   (document.body || document.documentElement).append(o);
 }
+
+// usage statistics (account based, see analytics.js): screens + errors on every page
+import("./analytics.js").catch(() => {});

@@ -16,6 +16,7 @@
           "displayName": { ".validate": "newData.isString() && newData.val().length > 0 && newData.val().length <= 100" },
           "pfp":         { ".validate": "newData.isString() && newData.val().length <= 30000" },
           "emailAdd":    { ".validate": "newData.isBoolean()" },
+          "analytics":   { ".validate": "newData.isBoolean()" },
           "theme":       { ".validate": "newData.val() === 'system' || newData.val() === 'light' || newData.val() === 'dark'" },
           "$other":      { ".validate": false }
         }

@@ -26,6 +26,7 @@ import * as E2E from "./crypto.js";
 import { sealPayload, sealPreview, openMessage } from "./msgcrypto.js";
 import { attachPreviews, urlsIn, inspectUrl, fetchPreviewNow } from "./linkpreview.js";
 import { openImage } from "./viewer.js";
+import { track, bucket, sizeBucket } from "./analytics.js";
 import { openCode, isTextFile, langOf, textOfData, colorLine, MAX_TEXT_BYTES } from "./codeview.js";
 import { downloadMedia } from "./download.js";
 import { audioPlayer, videoPlayer, waveFromFile } from "./player.js";
@@ -223,7 +224,7 @@ function fillCode(bubble, msg) {
   c.querySelector(".file-name").textContent = msg.name || "Text file";
   c.querySelector(".file-size").textContent = [typeof msg.size === "number" ? fmtBytes(msg.size) : "", lang, msg._enc ? "🔒" : "", "Tap to open"].filter(Boolean).join(" · ");
   c.querySelector(".code-snip").innerHTML = body.split("\n").slice(0, 4).map(l => `<span>${colorLine(l.replace(/\r$/, "").slice(0, 80), lang) || " "}</span>`).join("");
-  c.addEventListener("click", () => openCode({ name: msg.name, text: body, lang }));
+  c.addEventListener("click", () => { track("code_viewer_open", { lang }); openCode({ name: msg.name, text: body, lang }); });
   bubble.append(c);
 }
 
@@ -1115,6 +1116,7 @@ const buildPayload = (spec, timestamp) => ({
 function startJob(spec, opts = {}) {
   if (!requireVerified("send messages")) return null;
   spec = { ...spec };
+  track("message_sent", { type: spec.type === "file" ? (spec.extra && spec.extra.kind === "code" ? "code" : "file") : (spec.type || "text"), reply: !!replyingTo, encrypted: !!chatEncrypted, group: participants.length > 2 });
   if (replyingTo) { spec.reply = replyingTo; clearReply(); }
   const job = { id: ++jobSeq, spec, file: opts.file || null, prepare: opts.prepare || null, state: "sending", progress: null, error: null,
     ref: null, ts: 0, localUrl: opts.file ? URL.createObjectURL(opts.file) : null, ctrl: null, cancelled: false, litter: false };
@@ -1347,13 +1349,13 @@ function showMenu(key, btn) {
     menuEl.append(b);
   };
   add("Info", "info", () => showInfo(key, msg));
-  if (!msg._locked) add("Reply", "send", () => setReply(key));
+  if (!msg._locked) add("Reply", "send", () => { track("message_action", { action: "reply" }); setReply(key); });
   if (isText(msg)) {
     add("Copy", "copy", () => copyText(msg.text ?? msg.content ?? ""));
     if (msg.fromUid === me) add("Edit", "more", () => editMessage(key));
   }
   if (!msg._locked) add(pinsMap[key] ? "Unpin" : "Pin", "pin", () => togglePin(key));
-  if (msg.fromUid === me) add("Delete", "close", () => deleteMessage(key), true);
+  if (msg.fromUid === me) add("Delete", "close", () => { track("message_action", { action: "delete" }); deleteMessage(key); }, true);
   if (msg._enc) add("What's this?", "info", () => explainEncrypted(msg));
   try {                                   // choices added by plugins (Developer mode)
     const q = window.top !== window && window.top.QM;
@@ -1490,6 +1492,7 @@ function paintTray() {
 /** Send everything in the tray (each file is its own message; none are grouped). Returns how many went out. */
 function flushTray() {
   const items = trayFiles.splice(0), keep = replyingTo;
+  track("tray_send", { files: bucket(items.length) });
   replyingTo = null;                                  // a reply belongs to the message, not to the files sent beside it
   for (const it of items) { if (it.url) setTimeout(() => URL.revokeObjectURL(it.url), 60000); sendFile(it.file); }
   replyingTo = keep;
@@ -1683,7 +1686,7 @@ const optionsDialog = {
   close() { hub.close(); }
 };
 wireDialog(hub);
-$("hubTabs").addEventListener("click", e => { const b = e.target.closest("button[data-p]"); if (b) showPane(b.dataset.p); });
+$("hubTabs").addEventListener("click", e => { const b = e.target.closest("button[data-p]"); if (b) { track("chat_menu_tab", { tab: b.dataset.p }); showPane(b.dataset.p); } });
 let participantsRenderToken = 0;
 
 /** Everything known about one link in a message, plus a button that fetches its preview right now. */
@@ -1791,6 +1794,7 @@ async function resolvePin(key) {
   return { key, k: m.type === "image" || m.type === "video" || m.type === "audio" || m.type === "file" ? m.type : "text", ts: m.timestamp || 0, from: m.fromUid || "", text: String(m.text || "").slice(0, 400), name: String(m.name || ""), size: m.size || 0 };
 }
 async function togglePin(key) {
+  track("pin_toggled", { on: !pinsMap[key] });
   try {
     if (pinsMap[key]) { await remove(ref(db, `privateChats/${chatId}/pins/${key}`)); toast("Unpinned", "success", 1500); return; }
     if (Object.keys(pinsMap).length >= 50) return toast("A chat can have 50 pins. Unpin one first.", "error");
@@ -1854,6 +1858,7 @@ $("muteBtn").onclick = async () => {
   if (!(ms > 0)) return toast("Pick how long to mute.", "error");
   const until = ms >= FOREVER ? FOREVER : Date.now() + ms, w = $("muteWhat").value, next = { ...myMute };
   if (w !== "c") next.m = until; if (w !== "m") next.c = until;
+  track("mute_set", { what: w, length: f === "forever" ? "forever" : f === "custom" ? "custom" : "preset" });
   try { await set(muteRef(), next); toast("Muted", "success", 2000); } catch (_) { toast("Couldn't save the mute. The database rules may need republishing.", "error"); }
 };
 $("unmuteBtn").onclick = async () => { try { await set(muteRef(), null); toast("Mute is off", "success", 2000); } catch (_) { toast("Couldn't turn the mute off.", "error"); } };
@@ -2072,6 +2077,7 @@ function paintEnc() {
 }
 $("encToggle")?.addEventListener("change", async e => {
   const on = e.target.checked;
+  track("encryption_toggled", { on });
   try {
     if (!requireVerified("change chat settings")) { e.target.checked = !on; return; }
     if (on) {

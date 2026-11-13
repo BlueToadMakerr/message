@@ -42,4 +42,5 @@ android {
 dependencies {
     // The app is a WebView around the website plus a little native code. The only library is Firebase Cloud Messaging (push).
     implementation("com.google.firebase:firebase-messaging:24.1.0")
+    implementation("com.google.firebase:firebase-analytics:22.1.2")      // usage statistics, account based (AppAnalytics.kt)
 }

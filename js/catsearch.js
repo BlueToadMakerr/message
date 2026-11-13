@@ -138,7 +138,8 @@ export function initChatSearch({ $, msgData, nameOf, jumpTo, fetchOlder, oldestL
     } catch (_) { note.textContent = "Couldn't reach the server. Scroll again to retry."; }
     busy = false; dirty = true; save(); paint();          // a scan step is saved at once (leaving the page can cut a delayed save short)
   }
-  input.addEventListener("input", () => { paint(); clearTimeout(armT); if (input.value.trim()) armT = setTimeout(arm, 700); });   // stopped typing and still nothing to show: allow one page
+  let tracked = false;
+  input.addEventListener("input", () => { if (!tracked && input.value.trim().length > 1) { tracked = true; import("./analytics.js").then(m => m.track("search_used", { tab: (document.querySelector("#searchChips .on") || {}).dataset?.k || "all" })).catch(() => {}); } paint(); clearTimeout(armT); if (input.value.trim()) armT = setTimeout(arm, 700); });   // stopped typing and still nothing to show: allow one page
   $("searchChips").addEventListener("click", e => { const c = e.target.closest(".chip"); if (!c) return; kind = c.dataset.k; for (const x of $("searchChips").children) x.classList.toggle("on", x === c); paint(); clearTimeout(armT); if (input.value.trim()) armT = setTimeout(arm, 700); });
   stopBtn.onclick = () => { stop = true; armed = false; };
   $("searchClose").onclick = () => dlg.close();

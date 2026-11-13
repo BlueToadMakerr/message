@@ -121,6 +121,7 @@ class MainActivity : Activity() {
             insets
         }
         SiteCache.init(applicationContext)
+        AppAnalytics.init(applicationContext)
         web.settings.apply {
             javaScriptEnabled = true; setSupportZoom(false); builtInZoomControls = false; displayZoomControls = false; domStorageEnabled = true
             @Suppress("DEPRECATION") databaseEnabled = true
@@ -689,6 +690,7 @@ class MainActivity : Activity() {
         @JavascriptInterface fun setPipRatio(w: Int, h: Int) = runOnUiThread { pipRatio = if (w > 0 && h > 0) Rational(w.coerceIn(1, 4000), h.coerceIn(1, 4000)) else Rational(16, 9); updatePip() }
 
         @JavascriptInterface fun pushDiag(): String = Diag.json(applicationContext)
+        @JavascriptInterface fun setAnalytics(on: Boolean) = AppAnalytics.setEnabled(applicationContext, on)
         @JavascriptInterface fun siteCachePrune(since: Long): Int = SiteCache.prune(since)
         @JavascriptInterface fun siteCacheCount(): Int = SiteCache.count()
         @JavascriptInterface fun dataSaverState(): String = DataSaver.state()

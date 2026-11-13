@@ -28,6 +28,7 @@ import "./settings-tabs.js";
 import { wirePhotoUpload } from "./photo.js";
 import { refreshVerified, resendVerification } from "./verify.js";
 import { showTour } from "./onboarding.js";
+import { track, analyticsOn, onAnalyticsChange, setAnalyticsEnabled, analyticsAvailable } from "./analytics.js";
 import { SITE_VERSION, API_VERSION, checkSiteVersion, lastCheck } from "./version.js";
 import { HOSTS, getHostSettings, setHostSettings, resetHostSettings, EXPIRY_CHOICES, maxTtl, fmtTtl, fmtLimit } from "./hosts.js";
 
@@ -204,6 +205,19 @@ $("suggestSend").onclick = () => {
   toast("Opening your email app… If nothing opens, use Copy text and send it to " + SUGGEST_TO, "info", 5000);
 };
 import("./version.js").then(m => { $("aboutVersion").textContent = "You are using version " + m.SITE_VERSION + "."; }).catch(() => {});
+{   // usage statistics: one account setting for all devices
+  const t = $("analyticsToggle");
+  if (!analyticsAvailable()) { t.checked = false; t.disabled = true; t.parentNode.querySelector("small").textContent = "Not used here: this device uses a private server / own database, or your browser sends Do Not Track, so nothing is collected."; }
+  else {
+    t.checked = analyticsOn() !== false;
+    onAnalyticsChange(v => { t.checked = v; });
+    t.addEventListener("change", async () => {
+      try { await setAnalyticsEnabled(t.checked); toast(t.checked ? "Usage statistics on." : "Usage statistics off on all your devices.", "success", 2500); }
+      catch (_) { t.checked = !t.checked; toast("Couldn't save that.", "error"); }
+    });
+  }
+  document.addEventListener("change", e => { const id = e.target && e.target.id; if (id && id !== "analyticsToggle" && /(Toggle|Select)$/.test(id)) track("setting_changed", { setting: id }); });
+}
 $("suggestCopy").onclick = async () => {
   const text = $("suggestText").value.trim();
   if (!text) return toast("Write your idea first.", "info", 2000);

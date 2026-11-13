@@ -1,3 +1,4 @@
+import { track, trackAfterSignIn } from "./analytics.js";
 import { nativeGoogleSignIn } from "./native.js";
 import "./update.js";                      // apps: "update available" bar
 import { iosApp, iosState, onIosState, iosSetEnabled, iosStatus, iosShow } from "./ios-notify.js";
@@ -70,7 +71,7 @@ window.__qmGoogleSignIn = async (idToken, err) => {
 };
 $("googleBtn").onclick = async () => {
   if (nativeGoogleSignIn()) return;
-  try { await signInWithPopup(auth, new GoogleAuthProvider()); }
+  try { await signInWithPopup(auth, new GoogleAuthProvider()); trackAfterSignIn("login", { method: "google" }); }
   catch (err) { const m = authErrorMessage(err); if (m) toast(m, "error"); }
 };
 
@@ -78,7 +79,7 @@ $("authForm").addEventListener("submit", async e => {
   e.preventDefault();
   const btn = $("loginBtn");
   btn.disabled = true;
-  try { await signInWithEmailAndPassword(auth, emailInput.value.trim(), passwordInput.value); }
+  try { await signInWithEmailAndPassword(auth, emailInput.value.trim(), passwordInput.value); trackAfterSignIn("login", { method: "email" }); }
   catch (err) { const m = authErrorMessage(err); if (m) toast(m, "error"); }
   finally { btn.disabled = false; }
 });
@@ -88,6 +89,7 @@ $("signupBtn").onclick = async () => {
   btn.disabled = true;
   try {
     const cred = await createUserWithEmailAndPassword(auth, emailInput.value.trim(), passwordInput.value);
+    trackAfterSignIn("sign_up", { method: "email" });
     resendVerification().then(() => toast("We sent a verification link to your email.", "success", 5000)).catch(() => {});
   }
   catch (err) { const m = authErrorMessage(err); if (m) toast(m, "error"); }
@@ -610,6 +612,7 @@ async function setupNotifications(uid) {
           if (perm !== "granted") { toast(perm === "denied" ? "Notifications are blocked in your browser settings." : "Notifications stay off. Press the bell again to turn them on.", "info", 5000); return; }
         }
         await register();
+        track("notifications_enabled", { platform: window.QMApp ? "app" : "web" });
         toast("Notifications enabled on this device.", "success");
       }
     } catch (err) {

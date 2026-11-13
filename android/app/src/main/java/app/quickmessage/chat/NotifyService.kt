@@ -279,7 +279,7 @@ class NotifyService : Service() {
         }.start()
     }
 
-    override fun onCreate() { super.onCreate(); instance = this }
+    override fun onCreate() { super.onCreate(); instance = this; AppAnalytics.init(applicationContext) }
     override fun onDestroy() { releaseWake(); running = false; if (instance === this) instance = null; super.onDestroy() }
 
     @Suppress("DEPRECATION")

@@ -60,3 +60,5 @@ Made with AI. Third-party services used by the default setup: Firebase, public S
 
 ## Suggestions and contact
 Ideas and bug reports: open an issue at https://github.com/BlueToadMakerr/message/issues or email bluetmaker@gmail.com (both are also linked in Account → Suggest a feature).
+
+Usage statistics (account based, on by default, can be switched off in the welcome tour / Account → Privacy): see docs/ANALYTICS.md.
