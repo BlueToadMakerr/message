@@ -17,7 +17,7 @@ from urllib.parse import urlparse, parse_qs
 
 import botapi
 
-VERSION = "1.3.0"
+VERSION = "1.4.0"
 DEFAULT_DB = "https://quickmessage-ac953-default-rtdb.firebaseio.com"
 _PCH = "-0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ_abcdefghijklmnopqrstuvwxyz"
 _pl, _plock = {"last": 0, "rand": [0] * 12}, threading.Lock()
@@ -159,6 +159,13 @@ class Worker:
         if not th: return
         self.be.update({f"botEvents/{bot}/{th}/{self.be.new_key()}": {"ts": int(time.time() * 1000), "body": json.dumps(botapi.event_payload(self.be, bot, chat, mid, msg), separators=(",", ":"))}})
         self.stats["events_sent"] = self.stats.get("events_sent", 0) + 1
+
+    def emit_call(self, bot, chat, frm, ring_id):
+        """Someone is calling a bot -> botEvents {event:"call", bot, chat, from, fromName, ringId}."""
+        th = botapi.feed_hash(self.be, bot)
+        if not th: return
+        body = {"event": "call", "bot": bot, "chat": chat, "from": frm, "fromName": botapi.name_of(self.be, frm), "ringId": ring_id}
+        self.be.update({f"botEvents/{bot}/{th}/{self.be.new_key()}": {"ts": int(time.time() * 1000), "body": json.dumps(body, separators=(",", ":"))}})
 
     def sweep(self):
         """Tidy up: answers nobody picked up (5 min), events (1 hour), requests that never got answered (1 hour)."""
@@ -306,6 +313,9 @@ class Worker:
             frm = ring.get("fromUid")
             participants = be.get(f"privateChats/{chat}/participants") or {}
             if not frm or not participants.get(frm) or not participants.get(uid): return answer("failed", "Not a member of this chat.")
+            if botapi.BOT_RE.match(uid):                                      # a bot: tell it through its event feed (it joins with callJoin)
+                self.emit_call(uid, chat, frm, ring.get("ringId"))
+                return answer("sent")
             mu = be.get(f"privateChats/{chat}/mutes/{uid}") or {}
             if frm != uid and isinstance(mu, dict) and (mu.get("c") or 0) > time.time() * 1000: return answer("muted", "They muted calls from this chat.")
             self.stats["rings"] += 1
@@ -380,7 +390,8 @@ class Worker:
             if time.time() - self.listener_started > 20 * 60:                 # the stream can go stale after a long time: reconnect (seen-pings are remembered)
                 try: self.start_listener()
                 except Exception as e: self.err("listener", e)
-            time.sleep(30)
+            for _ in range(3):                                                # every 10 seconds: keep bots' call sessions alive
+                time.sleep(10); self.safe(botapi.call_tick, self.be)
 
 
 # ---------------------------------------------------------------- HTTP: bot API + local status

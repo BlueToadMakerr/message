@@ -52,6 +52,7 @@ $hosts = [
   'catbox'    => ['url' => 'https://catbox.moe/user/api.php', 'times' => [3650 * $D]],          // never expires
   'zerox'     => ['url' => 'https://0x0.st', 'range' => [1 * $H, 365 * $D], 'bysize' => true],
   'tempfile'  => ['url' => 'https://tempfile.org/api/upload/local', 'range' => [1 * $H, 48 * $H]],
+  'uguu'      => ['url' => 'https://uguu.se/upload', 'times' => [3 * $H]],
 ];
 $hostId = (string)($_POST['host'] ?? 'litterbox');
 if (!isset($hosts[$hostId])) fail(400, 'Unknown file host.');
@@ -74,6 +75,8 @@ switch ($hostId) {
     $post = ['f' => $cf, 'expire' => (string)intdiv($ttl, 60), 'autodestroy' => '0', 'shorturl' => '0']; break;
   case 'tmpfile':
     $post = ['file' => $cf]; break;
+  case 'uguu':
+    $post = ['files[]' => $cf]; break;
   case 'catbox':
     $post = ['reqtype' => 'fileupload', 'fileToUpload' => $cf]; break;
   case 'zerox':
@@ -102,7 +105,7 @@ if (is_array($j)) {
 } elseif (preg_match('/^DL:\s*(https:\/\/\S+)/mi', $out, $m)) $url = $m[1];       // oshi.at
 elseif (preg_match('#https://\S+#', $out, $m)) $url = $m[0];                    // Litterbox: the whole answer is the link
 $url = rtrim($url, " \t\r\n\"'<>.,;");
-$domains = ['litter.catbox.moe', 'files.catbox.moe', 'oshi.at', 'tmpfile.link', 'file.io', 'www.file.io', '0x0.st', 'tempfile.org'];
+$domains = ['litter.catbox.moe', 'files.catbox.moe', 'oshi.at', 'tmpfile.link', 'file.io', 'www.file.io', '0x0.st', 'tempfile.org', 'h.uguu.se', 'a.uguu.se', 'd.uguu.se'];
 $host = strtolower((string)parse_url($url, PHP_URL_HOST));
 if ($url === '' || strpos($url, 'https://') !== 0 || !in_array($host, $domains, true) || strlen($url) > 300) fail(502, 'The file host did not return a usable link: ' . substr($out, 0, 160));
 if (($_POST['json'] ?? '') === '1') { header('Content-Type: application/json'); echo json_encode(['url' => $url, 'expiresIn' => $ttl, 'host' => $hostId]); }

@@ -5,7 +5,7 @@
 //  - The browser is asked to keep the storage ("persistent"), and if the disk is full the cache makes room for itself instead of failing.
 const NAME = "qm-media-v1", LIMIT_KEY = "qm-media-mb";
 export const LIMITS = [25, 100, 200, 500, 1000];                       // MB
-export const DEFAULT_MB = 200;
+export const DEFAULT_MB = 1000;                                       // the biggest choice: the cache starts at its maximum (and still never takes more than 60% of the free space)
 const url = (chat, key) => `https://qm.invalid/${encodeURIComponent(chat)}/${encodeURIComponent(key)}`;
 const parse = u => { const p = u.replace("https://qm.invalid/", "").split("/"); return [decodeURIComponent(p[0] || ""), decodeURIComponent(p[1] || "")]; };
 let cacheP = null;

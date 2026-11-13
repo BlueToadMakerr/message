@@ -22,11 +22,8 @@
       </div>
     </div>
     <a id="callBtn" class="icon-btn" href="#" aria-label="Start a call" title="Start a call" data-icon="phone"></a>
-    <button id="searchBtn" class="icon-btn" type="button" aria-hidden="true" tabindex="-1" hidden data-icon="search"></button>
-    <button id="chatOptionsBtn" class="icon-btn" type="button" aria-label="Search and chat settings" title="Search and chat settings" data-icon="search"></button>
+    <button id="chatOptionsBtn" class="icon-btn" type="button" aria-label="Chat menu: settings, search, pins" title="Chat menu" data-icon="users"></button>
   </header>
-
-  <div id="pinBar" class="pinbar" hidden><span aria-hidden="true">\ud83d\udccc</span><span class="pt" id="pinText"></span><span class="muted" id="pinCount"></span></div>
 
   <div id="messages" class="messages" role="log" aria-live="polite">
     <div id="historyStatus"></div>
@@ -57,9 +54,10 @@
 <div id="msgMenu" class="hidden" role="menu"></div>
 
 <!-- Chat options -->
-<dialog id="searchDialog" class="modal cs-dialog" data-pane="search">
+<dialog id="searchDialog" class="modal cs-dialog" data-pane="settings">
   <div class="modal-body">
-    <div class="modal-head"><div class="seg hub-tabs" id="hubTabs" role="tablist"><button type="button" class="on" data-p="search" role="tab">Search</button><button type="button" data-p="settings" role="tab">Settings</button></div><button type="button" class="icon-btn" id="searchClose" aria-label="Close" data-icon="close"></button></div>
+    <div class="modal-head"><h2 class="hub-title">Chat</h2><button type="button" class="icon-btn" id="searchClose" aria-label="Close" data-icon="close"></button></div>
+    <div class="cs-chips hub-tabs" id="hubTabs" role="tablist"><button type="button" class="chip on" data-p="settings" role="tab">Settings</button><button type="button" class="chip" data-p="search" role="tab">Search</button><button type="button" class="chip" data-p="pins" role="tab">Pins</button></div>
     <div class="pane-search">
     <input id="searchInput" class="field" type="search" placeholder="Search people, pins, files, messages…" autocomplete="off" enterkeyhint="search">
     <div class="cs-chips" id="searchChips" role="tablist">
@@ -68,6 +66,7 @@
     <div id="searchResults" class="cs-results"></div>
     <div class="cs-foot"><span id="searchNote" class="muted"></span><button type="button" class="btn small" id="searchOlder" hidden>Stop</button></div>
     </div>
+    <div class="pane-pins"><div id="pinsList" class="cs-results"></div></div>
     <div class="pane-settings" id="optionsDialog">
     <details class="hub-sec"><summary>Name &amp; photo</summary>
 <div id="groupPhotoBox" hidden>

@@ -247,5 +247,33 @@ try: bt.send("c9", "x"); t("client error", False)
 except qmbot.QMError as e: t("client error carries status", e.status == 403)
 last = bt.latest_event_key(); msg("e2", text="newer"); w.handle_entry("bot_abcdefghij12", "ping", "c1", {**ping, "id": "e2"})
 evs = bt.events(last); t("client events since a key", len(evs) == 1 and evs[0][1]["message"]["text"] == "newer" and bt.events(evs[0][0]) == [])
+
+# ---- bots in calls
+f.t["calls"] = {}
+j = bt.call_join("c1", audio=True, video=True); sid = j["sid"]
+s_ = f.get(f"calls/c1/sessions/{sid}"); t("call join writes a session as the bot", s_["uid"] == "bot_abcdefghij12" and s_["audio"] is True and s_["video"] is True and s_["bot"] is True and f.get("calls/c1/startedAt"))
+f.set("calls/c1/sessions/humansess01", {"uid": "alice", "audio": True, "video": False, "joinedAt": now(), "lastSeen": now()})
+t("sessions lists the others, not me", [x["uid"] for x in bt.call_sessions("c1")] == ["alice"] and bt.call_sessions("c1")[0]["name"] == "Alice")
+bt.call_signal("c1", sid, "alice", "humansess01", "desc", {"type": "offer", "sdp": "v=0"}, epoch=2)
+box = f.get("calls/c1/inbox/alice/humansess01"); t("signal lands in the person's inbox", len(box) == 1 and list(box.values())[0]["from"] == sid and list(box.values())[0]["epoch"] == 2)
+f.set(f"calls/c1/inbox/bot_abcdefghij12/{sid}/-s1", {"from": "humansess01", "t": "desc", "epoch": 1, "d": {"type": "answer", "sdp": "x"}})
+got = bt.call_signals("c1", sid); t("signals are read once", len(got) == 1 and got[0]["from"] == "humansess01" and bt.call_signals("c1", sid) == [])
+bt.call_state("c1", sid, video=False); t("state patch", f.get(f"calls/c1/sessions/{sid}/video") is False)
+try: bt.call_signal("c1", sid, "alice", "nosuchsession1", "desc", {}); t("signal to a missing session refused", False)
+except qmbot.QMError as e: t("signal to a missing session refused", e.status == 404)
+try: bt.call_signals("c1", "othersession001"); t("foreign session refused", False)
+except qmbot.QMError as e: t("foreign session refused", e.status == 404)
+botapi._CALLS[("c1", sid)]["lease"] = time.time() - 100
+t("lease runs out: the session is removed", botapi.call_tick(f) == 0 and f.get(f"calls/c1/sessions/{sid}") is None)
+j2 = bt.call_join("c1"); t("tick keeps a live one", botapi.call_tick(f) == 1 and f.get(f"calls/c1/sessions/{j2['sid']}/lastSeen"))
+bt.call_leave("c1", j2["sid"]); t("leave removes it", f.get(f"calls/c1/sessions/{j2['sid']}") is None)
+f.set("privateChats/c1/chatData/encrypted", True)
+try: bt.call_join("c1"); t("encrypted chat refused", False)
+except qmbot.QMError as e: t("encrypted chat refused", e.status == 403)
+f.set("privateChats/c1/chatData/encrypted", None)
+f.set("calls/c1/ringing/bot_abcdefghij12", {"ringId": "r9", "fromUid": "alice", "chatId": "c1", "createdAt": now()})
+w.on_ring("bot_abcdefghij12", "c1", {"ringId": "r9", "fromUid": "alice", "chatId": "c1", "createdAt": now()})
+evs2 = bt.events(bt.latest_event_key() and "") ; calls_ = [json.loads(v["body"]) for v in (f.get("botEvents/bot_abcdefghij12/" + botapi.sha256(token)) or {}).values() if '"call"' in v["body"]]
+t("ringing a bot is an event, answered 'sent'", calls_ and calls_[-1]["event"] == "call" and calls_[-1]["fromName"] == "Alice" and f.get("calls/c1/ringing/bot_abcdefghij12/notifyStatus") == "sent")
 print(f"{ok}/{ok + bad}")
 raise SystemExit(0 if not bad else 1)

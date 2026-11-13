@@ -46,6 +46,22 @@ HOSTS.tempfile = {
   urlRe: /^https:\/\/tempfile\.org\/[\w\-]+\/?$/i,
   rules: ["Up to 100 MB per file, no account needed.", "You can choose 1 to 48 hours; files are deleted after that.", "About 200 uploads per hour per address.", "The link opens a download page rather than the file itself, so pictures and videos won't preview inside the chat.", "Needs this site's server as a go-between, so the file must fit the server's upload limit."]
 };
+// Hosts the browser talks to directly (no server of ours in between; the service has to allow that). If one can't be reached, the next switched-on host is tried.
+HOSTS.uguu = {
+  id: "uguu", name: "Uguu", site: "https://uguu.se", maxBytes: 128 * MB, expiries: [3 * H], direct: true, noRelay: false,
+  urlRe: /^https:\/\/(?:h|a|d)\.uguu\.se\/[\w.\-]+$/i,
+  rules: ["Up to 128 MB per file, no account needed. Works straight from the browser.", "Files are deleted after about 3 hours (not adjustable).", "Anyone with the link can open it. No illegal content or malware.", "Not verified from the browser here: if it can't be reached, the next host is used."]
+};
+HOSTS.tmpfiles = {
+  id: "tmpfiles", name: "tmpfiles.org", site: "https://tmpfiles.org", maxBytes: 100 * MB, expiries: [1 * H], direct: true, noRelay: true,
+  urlRe: /^https:\/\/tmpfiles\.org\/dl\/[\w.\-\/%~+]+$/i,
+  rules: ["Up to 100 MB per file, no account needed. Works straight from the browser.", "Files are deleted after about 1 hour (not adjustable): good for quick shares only.", "QuickMessage uses the direct download link, so pictures and videos can preview in the chat.", "Not verified from the browser here: if it can't be reached, the next host is used."]
+};
+HOSTS.filebin = {
+  id: "filebin", name: "Filebin", site: "https://filebin.net", maxBytes: 100 * MB, expiries: [7 * D], direct: true, noRelay: true,
+  urlRe: /^https:\/\/filebin\.net\/[\w\-]+\/[\w.\-]+$/i,
+  rules: ["No account needed; files are sent straight from the browser to a random private \"bin\" (QuickMessage limits files to 100 MB).", "Bins are deleted after about 7 days (not adjustable).", "Anyone who has the link can open the file. No illegal content or malware.", "Not verified from the browser here: if it can't be reached, the next host is used."]
+};
 export const HOST_IDS = Object.keys(HOSTS);
 /** Is this a link to one of our file hosts? (what a message may point to) */
 export const isHostedUrl = u => typeof u === "string" && u.length <= 300 && HOST_IDS.some(id => HOSTS[id].urlRe.test(u));
@@ -72,7 +88,7 @@ export function fmtTtl(sec) {
 // ------------------------------------------------------------------ settings (this device)
 const KEY = "qm-hosts";
 export const EXPIRY_CHOICES = [[0, "As long as each service allows"], [1 * H, "1 hour"], [12 * H, "12 hours"], [D, "1 day"], [3 * D, "3 days"], [7 * D, "7 days"], [14 * D, "14 days"], [30 * D, "30 days"], [90 * D, "90 days"]];
-const DEFAULTS = () => ({ mode: "priority", order: HOST_IDS.slice(), enabled: { litterbox: true, oshi: true, tmpfile: true, fileio: false, catbox: false, zerox: false, tempfile: false }, ttl: 0 });
+const DEFAULTS = () => ({ mode: "priority", order: HOST_IDS.slice(), enabled: { litterbox: true, oshi: true, tmpfile: true, fileio: false, catbox: false, zerox: false, tempfile: false, uguu: false, tmpfiles: false, filebin: false }, ttl: 0 });
 export function getHostSettings() {
   let s = null;
   try { s = JSON.parse(localStorage.getItem(KEY) || "null"); } catch (_) { s = null; }
@@ -143,7 +159,7 @@ export async function uploadToHosts(file, { onProgress, signal, relayMax = 0, ch
         else if (h.direct) {
           // straight from the browser; only if that can't connect at all (blocked / CORS) the server relay is the way round, when the file fits through it
           try { r = await uploadDirectHost(h.id, file, ttl, onProgress, signal); }
-          catch (e) { if (e.http || e.aborted || !(file.size <= relayMax)) throw e; r = await uploadViaRelay(h.id, file, ttl, onProgress, signal); }
+          catch (e) { if (e.http || e.aborted || h.noRelay || !(file.size <= relayMax)) throw e; r = await uploadViaRelay(h.id, file, ttl, onProgress, signal); }
         } else r = await uploadViaRelay(h.id, file, ttl, onProgress, signal);
         return { ...r, host: h.id };
       } catch (e) {

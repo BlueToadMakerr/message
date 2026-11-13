@@ -2,6 +2,20 @@
 
 Newest first. Older rounds (1–43) are kept below exactly as they were written.
 
+## 1.68.0 — Notification age, more direct file hosts, source link
+
+- **Android notifications show the age of the newest message** in them (the time next to the app name), not the moment the notification was built or refreshed, so "46m" really means the last message was 46 minutes ago, and marking as read or opening the app no longer makes it say "now". (Web notifications still show their arrival time.)
+- **Three more file hosts that work straight from the browser, no server of ours in between** (all off by default; switch them on in Account → File hosting): **Uguu** (128 MB, ~3 hours), **tmpfiles.org** (100 MB, ~1 hour; QuickMessage uses its direct download link so photos/videos preview) and **Filebin** (100 MB, ~7 days). They could not be tried against the real services from here, only against simulated answers; if a host can't be reached, QuickMessage moves on to the next switched-on one (Uguu can also go through the upload helper). Re-upload `upload.php` if you want the helper to know Uguu.
+- **Source code link:** Account → About QuickMessage (shows the version) links to the GitHub repository and the change log; the welcome tour's last page links to it too.
+
+## 1.67.0 — Chat menu with Settings / Search / Pins, bots in calls, search fixes
+
+- **Chat menu:** one button (the people icon, like before) opens a menu with three separate tabs: **Settings** (opens first), **Search** and **Pins**. Tapping the chat's name opens it too. Pins are now a tab instead of the banner at the top; pinned messages keep their 📌 and the Pins tab in Search still finds them. Spacing fixed (the search type chips no longer touch the box).
+- **Search:** nothing is listed while the box is empty (no more browsing the whole chat), and older history is only scanned after you type. It only says "Whole chat searched" when the chat's very first message really is among the searched ones (before, a page that came back short could be taken for the start). Photos and videos in the results show a small picture (a video: its first frame), loaded only when the row scrolls into view. Typing "photo", "video", "audio" or "file" finds those kinds.
+- **Bots in calls (worker 1.4.0):** a bot can join a call with voice and video. New bot routes `callJoin`, `callSessions`, `callSignals`, `callSignal`, `callState`, `callLeave`; ringing a bot arrives in its event feed as a `call` event; the worker keeps the bot's session alive. `docs/bots/qmcall.py` is a ready-made bot (aiortc: plays audio / video, records, hooks for your own). Tested: two bots negotiated and exchanged audio through the protocol. Calls in encrypted chats can't include bots. See `docs/BOTS.md`.
+- **Media cache** now starts at its maximum (1 GB, still never more than 60% of the free space; your own choice is kept).
+- **Chat list:** profile and group pictures load only when they scroll into view.
+
 ## 1.66.0 — One menu for search and chat settings, Android notification fixes
 
 - **Search and chat settings are now one menu** (like Discord): the magnifier at the top of a chat opens a menu with two tabs, Search and Settings. Tapping the chat's name opens it on Settings. Settings is split into collapsible sections (Name & photo, Notifications, Encryption, Members) so it is no longer one long list.

@@ -207,6 +207,8 @@ function pEnd() {
     para("Big files are uploaded to a free file host and expire after a while. Uploads carry on even if you leave the chat, and the chat list shows which chats are still uploading."),
     para("Turn on notifications (the bell) to hear about messages and calls when the app isn't open."),
     para("Got an idea? Account → Suggest a feature goes straight to the developer's email. You can reopen this tour from Account → Welcome tour."));
+  const src = h("a", "", "QuickMessage is open source: view the code on GitHub"); src.href = "https://github.com/BlueToadMakerr/message"; src.target = "_blank"; src.rel = "noopener noreferrer"; src.style.display = "block"; src.style.marginTop = ".6rem";
+  w.append(src);
   return { node: w };
 }
 

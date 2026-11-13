@@ -7,7 +7,7 @@ export const RETENTION = "72h";
 export const RETENTION_MS = 72 * 3600 * 1000;
 export const MAX_BYTES = 1000 * 1024 * 1024;           // Litterbox's limit is 1 GB
 import { PRIVATE as PRIVATE_FILES } from "./mode.js";
-const HOST_RE = /^https:\/\/(?:litter\.catbox\.moe|files\.catbox\.moe|oshi\.at|tmpfile\.link|(?:www\.)?file\.io|0x0\.st|tempfile\.org)\/[\w.\-\/%~+]+$/i;      // every file host we accept links from (see hosts.js)
+const HOST_RE = /^https:\/\/(?:litter\.catbox\.moe|files\.catbox\.moe|oshi\.at|tmpfile\.link|(?:www\.)?file\.io|0x0\.st|tempfile\.org|(?:h|a|d)\.uguu\.se|tmpfiles\.org|filebin\.net)\/[\w.\-\/%~+]+$/i;      // every file host we accept links from (see hosts.js)
 
 const rand16 = () => {
   const a = crypto.getRandomValues(new Uint8Array(16)), c = "abcdefghijklmnopqrstuvwxyz0123456789";
@@ -137,7 +137,12 @@ export const relayMax = () => relayLimit();
 const DIRECT = {
   fileio: { url: "https://file.io/", fields: (f, ttl) => { f.append("expires", Math.round(ttl / 86400) + "d"); f.append("autoDelete", "false"); f.append("maxDownloads", "1000"); }, file: "file" },
   tmpfile: { url: "https://tmpfile.link/api/upload", fields: () => {}, file: "file" },
-  catbox: { url: "https://catbox.moe/user/api.php", fields: f => { f.append("reqtype", "fileupload"); }, file: "fileToUpload" }
+  catbox: { url: "https://catbox.moe/user/api.php", fields: f => { f.append("reqtype", "fileupload"); }, file: "fileToUpload" },
+  uguu: { url: "https://uguu.se/upload", fields: () => {}, file: "files[]" },
+  // tmpfiles.org answers with a page link (tmpfiles.org/123/name); the file itself is at tmpfiles.org/dl/123/name
+  tmpfiles: { url: "https://tmpfiles.org/api/v1/upload", fields: () => {}, file: "file", fixUrl: u => u.replace(/^http:/, "https:").replace(/^(https:\/\/tmpfiles\.org)\/(?!dl\/)/, "$1/dl/") },
+  // filebin.net takes a plain PUT of the file to /<bin>/<name>; we pick a random bin, so the link is the address we sent it to
+  filebin: { put: true, base: "https://filebin.net/" }
 };
 const pickUrl = text => {
   let j = null; try { j = JSON.parse(text); } catch (_) { /* not JSON */ }
@@ -154,6 +159,21 @@ const pickUrl = text => {
 export function uploadDirectHost(host, file, ttl, onProgress, signal) {
   const d = DIRECT[host];
   if (!d) return Promise.reject(new Error("No direct upload for " + host));
+  if (d.put) return new Promise((resolve, reject) => {
+    const bin = rand16() + rand16().slice(0, 4), stored = rand16() + extOf(file), url = d.base + bin + "/" + stored;
+    const x = new XMLHttpRequest();
+    x.open("PUT", url);
+    x.setRequestHeader("Content-Type", file.type || "application/octet-stream");
+    x.upload.onprogress = e => { if (e.lengthComputable && onProgress) onProgress(e.loaded / e.total); };
+    x.onload = () => {
+      if (x.status < 200 || x.status >= 300) return reject(Object.assign(new Error((x.responseText || "").slice(0, 200) || "The file host answered " + x.status + "."), { http: x.status }));
+      resolve({ url, name: file.name || "file", size: file.size, mime: file.type || "application/octet-stream", kind: kindOf(file.type), expiresAt: Date.now() + ttl * 1000 });
+    };
+    x.onerror = () => reject(new Error("Couldn't reach " + new URL(d.base).host + " from the browser."));
+    if (signal) signal.addEventListener("abort", () => { x.abort(); reject(Object.assign(new Error("Cancelled"), { aborted: true })); }, { once: true });
+    onProgress && onProgress(0);
+    x.send(file);
+  });
   return new Promise((resolve, reject) => {
     const f = new FormData(); d.fields(f, ttl); f.append(d.file, file, file.name || "file");
     const x = new XMLHttpRequest();
@@ -162,7 +182,7 @@ export function uploadDirectHost(host, file, ttl, onProgress, signal) {
     x.onload = () => {
       const text = x.responseText || "";
       if (x.status < 200 || x.status >= 300) return reject(Object.assign(new Error(text.slice(0, 200) || "The file host answered " + x.status + "."), { http: x.status }));
-      let url = ""; try { url = pickUrl(text); } catch (e) { return reject(e); }
+      let url = ""; try { url = pickUrl(text); if (d.fixUrl) url = d.fixUrl(url); } catch (e) { return reject(e); }
       if (!HOST_RE.test(url)) return reject(Object.assign(new Error("The file host didn't return a usable link: " + text.slice(0, 120)), { http: 502 }));
       resolve({ url, name: file.name || "file", size: file.size, mime: file.type || "application/octet-stream", kind: kindOf(file.type), expiresAt: Date.now() + ttl * 1000 });
     };

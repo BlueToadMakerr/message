@@ -939,6 +939,20 @@ searchIdx = initChatSearch({
     const rows = []; snap.forEach(x => { rows.push(x); if (x.val() && x.val().enc) sawEnc = true; });
     return Promise.all(rows.map(async x => [x.key, await hydrate(x.val())]));
   },
+  firstKey: async () => { const s = await get(query(messagesRef, orderByKey(), limitToFirst(1))); let k = null; s.forEach(x => { k = x.key; }); return k; },
+  thumbOf: async (key, k) => {                       // a search result's small picture: this device's copy if there is one, else the message (and its media node) once
+    if (saverOn()) return null;
+    let m = msgData.get(key);
+    if (!m || (!m.content && !m.url)) {
+      const raw = (await get(ref(db, `${chatPath}/messages/${key}`))).val();
+      if (!raw) return null;
+      if (raw.big) { let body = await cacheGet(chatId, key); if (body == null) { body = (await get(ref(db, `${chatPath}/media/${key}`))).val(); if (typeof body === "string") cachePut(chatId, key, body); } if (typeof body !== "string") return null; m = raw.enc ? await openMessage(chatId, { ...raw, content: body }) : { ...raw, content: body }; }
+      else m = await hydrate(raw);
+    }
+    if (m.type === "image" || m.type === "video") { const src = safeMediaUrl(m.content || m.text, m.type); return src ? { src, kind: m.type } : null; }
+    if (m.type === "file" && (m.kind === "image" || m.kind === "video") && m.url && !m._enc && /^https:/.test(m.url)) return { src: m.url, kind: m.kind };
+    return null;
+  },
   members: () => peopleNow().map(p => ({ uid: p.uid, name: p.name, sub: "Tap to mention them" })),
   pins: () => pinList(), resolvePin: k => resolvePin(k),
   onPerson: (uid, name) => { const i = $("msgInput"); i.value = (i.value && !/\s$/.test(i.value) ? i.value + " " : i.value) + "@" + name + " "; i.focus(); i.dispatchEvent(new Event("input")); },
@@ -1660,7 +1674,8 @@ function showPane(p) {
   hub.dataset.pane = p;
   for (const b of $("hubTabs").children) b.classList.toggle("on", b.dataset.p === p);
   if (p === "settings") { $("chatNameInput").value = customName; $("chatPhotoInput").value = customPhoto; renderParticipants(); }
-  else { $("searchBtn").onclick(); }
+  else if (p === "search") { searchIdx && searchIdx.open(); }
+  else paintPinsPane();
 }
 const optionsDialog = {
   get open() { return hub.open && hub.dataset.pane === "settings"; },
@@ -1751,7 +1766,7 @@ $("chatOptionsBtn").before(devButton("{ }", async () => {
     );
   } });
 }, { title: "Developer info about this chat" }));
-$("chatOptionsBtn").onclick = () => { if (!hub.open) hub.showModal(); showPane("search"); };
+$("chatOptionsBtn").onclick = () => { if (!hub.open) hub.showModal(); showPane("settings"); };
 document.querySelector(".chat-title-wrap").style.cursor = "pointer";
 document.querySelector(".chat-title-wrap").addEventListener("click", () => optionsDialog.showModal());      // tap the chat's name: straight to its settings
 
@@ -1792,19 +1807,30 @@ function decoratePins() {
     else if (!on && has) has.remove();
   }
 }
-async function paintPinBar() {
-  const list = pinList().sort((a, b) => b.ts - a.ts), bar = $("pinBar");
-  if (!list.length) { bar.hidden = true; return; }
-  const top = list[0]; let r = null;
-  const m = msgData.get(top.key);
-  if (m) r = { text: m.text, name: m.name, k: m.type }; else { try { r = pinCache.get(top.key) || await resolvePin(top.key); if (r) pinCache.set(top.key, r); } catch (_) { /* offline */ } }
-  const label = r ? (r.text || r.name || ({ image: "Photo", video: "Video", audio: "Voice message", file: "File" }[r.k] || "Pinned message")) : "Pinned message";
-  $("pinText").textContent = label; $("pinCount").textContent = list.length > 1 ? list.length + " pins" : "";
-  bar.hidden = false; bar.dataset.key = top.key;
+let pinsPaint = 0;
+/** The Pins tab of the chat menu: every pinned message, newest first; tap to jump to it. */
+async function paintPinsPane() {
+  const box = $("pinsList"), token = ++pinsPaint, list = pinList().sort((a, b) => b.ts - a.ts);
+  if (hub.dataset.pane !== "pins") return;
+  box.replaceChildren();
+  if (!list.length) { const e = document.createElement("div"); e.className = "muted cs-empty"; e.textContent = "Nothing is pinned yet. Open a message's menu and choose Pin."; box.append(e); return; }
+  for (const p of list) {
+    let r = null; const m = msgData.get(p.key);
+    if (m) r = { text: m.text, name: m.name, k: m.type }; else { try { r = pinCache.get(p.key) || await resolvePin(p.key); if (r) pinCache.set(p.key, r); } catch (_) { /* offline */ } }
+    if (token !== pinsPaint) return;
+    const b = document.createElement("div"); b.className = "cs-item";
+    const ic = document.createElement("span"); ic.className = "cs-ic"; ic.textContent = "\ud83d\udccc";
+    const body = document.createElement("span"); body.className = "cs-body";
+    const t = document.createElement("span"); t.className = "cs-t"; t.textContent = r ? (r.text || r.name || ({ image: "Photo", video: "Video", audio: "Voice message", file: "File" }[r.k] || "Pinned message")) : "Pinned message";
+    const sub = document.createElement("span"); sub.className = "cs-s"; sub.textContent = "Pinned by " + (p.by === me ? "you" : (peekProfile(p.by)?.displayName || "someone"));
+    body.append(t, sub);
+    const x = document.createElement("button"); x.type = "button"; x.className = "btn small cs-pinx"; x.textContent = "Unpin"; x.onclick = e => { e.stopPropagation(); togglePin(p.key); };
+    b.append(ic, body, x); b.style.cursor = "pointer"; b.onclick = () => { hub.close(); searchJump(p.key); };
+    box.append(b);
+  }
 }
-$("pinBar").onclick = () => { const k = $("pinBar").dataset.key; if (k) searchJump(k); };
 new MutationObserver(() => decoratePins()).observe(messagesDiv, { childList: true });
-function startPins() { onValue(ref(db, `privateChats/${chatId}/pins`), s => { pinsMap = s.val() || {}; decoratePins(); paintPinBar(); }, () => {}); }
+function startPins() { onValue(ref(db, `privateChats/${chatId}/pins`), s => { pinsMap = s.val() || {}; decoratePins(); if (hub.open && hub.dataset.pane === "pins") paintPinsPane(); }, () => {}); }
 
 // ---------- mute (stored in the database so every device and the notification server honor it) ----------
 const FOREVER = 9e15;

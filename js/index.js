@@ -336,7 +336,7 @@ function renderList() {
 
     const title = chatTitle(s);
     const useOther = !s.customName.trim() && s.otherProfiles.length === 1;
-    a.append(avatarEl(title, s.customPhoto || (useOther ? s.otherProfiles[0].pfp : ""), "avatar"));
+    a.append(avatarEl(title, s.customPhoto || (useOther ? s.otherProfiles[0].pfp : ""), "avatar", true));
 
     const body = document.createElement("div");
     body.className = "body";

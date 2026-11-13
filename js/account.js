@@ -203,6 +203,7 @@ $("suggestSend").onclick = () => {
   try { const a = document.createElement("a"); a.href = href; a.target = "_top"; a.rel = "noopener"; document.body.append(a); a.click(); a.remove(); } catch (_) { /* ignore */ }
   toast("Opening your email app… If nothing opens, use Copy text and send it to " + SUGGEST_TO, "info", 5000);
 };
+import("./version.js").then(m => { $("aboutVersion").textContent = "You are using version " + m.SITE_VERSION + "."; }).catch(() => {});
 $("suggestCopy").onclick = async () => {
   const text = $("suggestText").value.trim();
   if (!text) return toast("Write your idea first.", "info", 2000);

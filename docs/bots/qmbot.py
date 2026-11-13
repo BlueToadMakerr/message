@@ -83,6 +83,13 @@ class QMBot:
         a = {k: v for k, v in (("name", as_name), ("pfp", as_pfp)) if v}
         return self.call("send", chat=chat, text=text, **({"as": a} if a else {}), src=src, **({"replyTo": {"key": reply_to}} if reply_to else {}), **({"file": file} if file else {}))
     def edit(self, chat, id, text): return self.call("edit", chat=chat, id=id, text=text)
+    # ---- calls: the bot joins a call as one more participant (see qmcall.py for the voice / video part)
+    def call_join(self, chat, audio=True, video=False, stream=None): return self.call("callJoin", chat=chat, audio=audio, video=video, stream=stream)
+    def call_sessions(self, chat): return self.call("callSessions", chat=chat).get("sessions", [])
+    def call_signals(self, chat, sid): return self.call("callSignals", chat=chat, sid=sid).get("signals", [])   # also keeps the session alive: ask at least every 30 s
+    def call_signal(self, chat, sid, to_uid, to_sid, t, d, epoch=1): return self.call("callSignal", chat=chat, sid=sid, to={"uid": to_uid, "sid": to_sid}, t=t, d=d, epoch=epoch)
+    def call_state(self, chat, sid, audio=None, video=None): return self.call("callState", chat=chat, sid=sid, audio=audio, video=video)
+    def call_leave(self, chat, sid): return self.call("callLeave", chat=chat, sid=sid)
     def delete(self, chat, id): return self.call("delete", chat=chat, id=id)
 
     # ---- new messages

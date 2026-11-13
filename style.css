@@ -1112,10 +1112,16 @@ html.is-offline .sync-pill{top:calc(var(--off-h,0px) + var(--vb-h,0px) + 8px)}
 :root[data-theme="dark"] .tk-k { color: #c297ff; } :root[data-theme="dark"] .tk-s { color: #7ee2a0; } :root[data-theme="dark"] .tk-n { color: #ffb067; } :root[data-theme="dark"] .tk-f { color: #79c0ff; }
 
 /* search + settings in one menu */
-.hub-tabs { flex: 1; max-width: 16rem; }
-#searchDialog[data-pane="search"] .pane-settings, #searchDialog[data-pane="settings"] .pane-search { display: none; }
+.hub-title { margin: 0; }
+.hub-tabs { margin: .25rem 0 .6rem; padding-bottom: 0; }
+.pane-search { display: flex; flex-direction: column; gap: .7rem; }
+.pane-search .cs-chips { margin-top: .1rem; padding: .1rem 0 .3rem; }
+#searchDialog:not([data-pane="search"]) .pane-search, #searchDialog:not([data-pane="settings"]) .pane-settings, #searchDialog:not([data-pane="pins"]) .pane-pins { display: none; }
+.cs-thumb { width: 44px; height: 44px; border-radius: 8px; object-fit: cover; flex: 0 0 auto; background: #8883; }
+.cs-pinx { margin-left: auto; flex: 0 0 auto; }
 .pane-settings { display: flex; flex-direction: column; gap: .5rem; }
 .hub-sec { border: 1px solid var(--border); border-radius: 12px; padding: 0 .75rem; }
 .hub-sec > summary { cursor: pointer; padding: .7rem 0; font-weight: 600; list-style-position: inside; }
 .hub-sec[open] > summary { border-bottom: 1px solid var(--border); margin-bottom: .6rem; }
 .hub-sec[open] { padding-bottom: .75rem; }
+.btn[hidden]{display:none!important}

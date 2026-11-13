@@ -5,11 +5,12 @@ const ICON = { person: "\ud83d\udc64", pin: "\ud83d\udccc", image: "\ud83d\udcf7
 export const kindOfMsg = m => m.type === "image" || m.type === "video" || m.type === "audio" ? m.type : m.type === "file" ? "file" : "text";
 const slim = (key, m) => ({ key, k: kindOfMsg(m), ts: m.timestamp || 0, from: m.fromUid || "", text: String(m.text || "").slice(0, 400), name: String(m.name || ""), size: m.size || 0 });
 /** Search over slim records. */
+const KINDWORDS = { image: "photo picture image", video: "video clip movie", audio: "audio voice sound", file: "file document attachment" };       // typing "photo" finds photos even without a file name
 export function searchRecords(recs, q, kind) {
   const needle = String(q || "").trim().toLowerCase(), out = [];
   for (const r of recs) {
     if (kind !== "all" && kind !== r.k) continue;
-    if (needle ? !(r.text + " " + r.name).toLowerCase().includes(needle) : r.k === "text") continue;   // no words typed: only list files
+    if (needle ? !(r.text + " " + r.name + " " + (KINDWORDS[r.k] || "")).toLowerCase().includes(needle) : r.k === "text") continue;   // no words typed: only list files
     out.push(r);
   }
   return out.sort((a, b) => b.ts - a.ts);
@@ -18,12 +19,15 @@ export function searchRecords(recs, q, kind) {
  *  plain text is never written to disk) and searched from there for free. Older, never-seen history is fetched only when the result
  *  list is scrolled to its end (one page of PAGE messages at a time, never more than one request at once, no pictures). */
 const PAGE = 250, SHARD = 2000;
-export function initChatSearch({ $, msgData, nameOf, jumpTo, fetchOlder, oldestLoaded, atStart, store, chatId, members = () => [], pins = () => [], resolvePin = async () => null, onPerson = () => {} }) {
+export function initChatSearch({ $, msgData, nameOf, jumpTo, fetchOlder, oldestLoaded, atStart, firstKey = async () => undefined, thumbOf = async () => null, store, chatId, members = () => [], pins = () => [], resolvePin = async () => null, onPerson = () => {} }) {
   const dlg = $("searchDialog"), input = $("searchInput"), list = $("searchResults"), note = $("searchNote"), stopBtn = $("searchOlder");
   const pinRecs = new Map();     // pinned message key -> slim record (null = the message is gone)
   let kind = "all", idx = new Map(), oldest = null, done = false, busy = false, stop = false, armed = false, loaded = null, dirty = false, saveT = 0, armT = 0;
   const records = () => { const m = new Map(idx); for (const [k, v] of msgData) if (v && v.type !== "event") m.set(k, slim(k, v)); return [...m.values()]; };
-  const complete = () => done || atStart();
+  // "the whole chat was searched" is only said when the chat's very first message is among what was searched (asked from the database), never because a page happened to come back short
+  let first;                                                   // undefined = not known yet, null = the chat has no messages
+  const askFirst = () => firstKey().then(k => { const was = first; first = k; if (k && k !== was) later(); paintIf(); }, () => {});
+  const complete = () => first === null || (first !== undefined && (idx.has(first) || msgData.has(first)));
   // ---- remembering (several shards: one database entry may not be huge)
   async function load() {
     if (!store) return;
@@ -32,7 +36,7 @@ export function initChatSearch({ $, msgData, nameOf, jumpTo, fetchOlder, oldestL
       if (!meta || !meta.n) return;
       const parts = await Promise.all(Array.from({ length: meta.n }, (_, i) => store.get("sidx:" + chatId + ":" + i)));
       for (const part of parts) if (Array.isArray(part)) part.forEach(r => idx.set(r.key, r));
-      oldest = meta.oldest || null; done = !!meta.done;
+      oldest = meta.oldest || null; done = !!meta.done; if (meta.first) first = meta.first;
     } catch (_) { /* start empty */ }
   }
   const ready = load().then(() => { loaded = true; paintIf(); });
@@ -41,7 +45,7 @@ export function initChatSearch({ $, msgData, nameOf, jumpTo, fetchOlder, oldestL
     if (!store || !dirty) return; dirty = false;
     const all = [...idx.values()].sort((a, b) => (a.key < b.key ? -1 : 1)), n = Math.ceil(all.length / SHARD);
     for (let i = 0; i < n; i++) store.set("sidx:" + chatId + ":" + i, all.slice(i * SHARD, (i + 1) * SHARD)).catch(() => {});
-    store.set("sidx:" + chatId, { n, oldest, done }).catch(() => {});
+    store.set("sidx:" + chatId, { n, oldest, done, first }).catch(() => {});
   }
   const later = () => { dirty = true; clearTimeout(saveT); saveT = setTimeout(save, 3000); };
   /** every message the chat page shows goes through here */
@@ -58,8 +62,23 @@ export function initChatSearch({ $, msgData, nameOf, jumpTo, fetchOlder, oldestL
     const s = document.createElement("span"); s.className = "cs-s"; s.textContent = sub;
     body.append(t, s); b.append(ic, body); b.onclick = onClick; return b;
   };
-  const recRow = r => row(ICON[r.k], r.k === "text" ? r.text.slice(0, 140) : (r.name || r.text || { image: "Photo", video: "Video", audio: "Voice message" }[r.k] || "File"),
-    [nameOf(r.from), when(r.ts), r.size ? fmtBytes(r.size) : ""].filter(Boolean).join(" \u00b7 "), () => { dlg.close(); jumpTo(r.key); });
+  // photos and videos show a small picture (a video: its first frame), fetched only when the row scrolls into view, two at a time
+  const thumbs = new Map(); let tq = 0; const waitQ = [];
+  const pump = () => { while (tq < 2 && waitQ.length) { const f = waitQ.shift(); tq++; f().finally(() => { tq--; pump(); }); } };
+  const tio = typeof IntersectionObserver === "function" ? new IntersectionObserver(es => es.forEach(e => {
+    if (!e.isIntersecting) return; tio.unobserve(e.target); const el = e.target;
+    waitQ.push(async () => {
+      let t = thumbs.get(el._key); if (t === undefined) { try { t = await thumbOf(el._key, el._k); } catch (_) { t = null; } thumbs.set(el._key, t); }
+      if (!t || !el.isConnected) return;
+      let node;
+      if (t.kind === "video") { node = document.createElement("video"); node.muted = true; node.preload = "metadata"; node.playsInline = true; node.src = t.src; node.addEventListener("loadedmetadata", () => { try { node.currentTime = 0.1; } catch (_) {} }, { once: true }); }
+      else { node = new Image(); node.alt = ""; node.referrerPolicy = "no-referrer"; node.src = t.src; }
+      node.className = "cs-thumb"; el.replaceWith(node);
+    }); pump();
+  }), { root: list, rootMargin: "100px" }) : null;
+  const withThumb = (b, r) => { if (tio && (r.k === "image" || r.k === "video")) { const ic = b.querySelector(".cs-ic"); ic._key = r.key; ic._k = r.k; tio.observe(ic); } return b; };
+  const recRow = r => withThumb(row(ICON[r.k], r.k === "text" ? r.text.slice(0, 140) : (r.name || r.text || { image: "Photo", video: "Video", audio: "Voice message" }[r.k] || "File"),
+    [nameOf(r.from), when(r.ts), r.size ? fmtBytes(r.size) : ""].filter(Boolean).join(" \u00b7 "), () => { dlg.close(); jumpTo(r.key); }), r);
   async function resolveAll() {                       // pinned messages are fetched once each (at most 50), then searched like anything else
     await 0;                                          // never repaint from inside a paint
     let any = false;
@@ -71,7 +90,7 @@ export function initChatSearch({ $, msgData, nameOf, jumpTo, fetchOlder, oldestL
     list.replaceChildren();
     const msg = t => { const e = document.createElement("div"); e.className = "muted cs-empty"; e.textContent = t; list.append(e); };
     const head = t => { const e = document.createElement("div"); e.className = "cs-h"; e.textContent = t; list.append(e); };
-    if (all && !q) { msg("Type to search people, pins, files and messages, or pick a tab to browse them."); stopBtn.hidden = true; note.textContent = ""; return; }
+    if (!q) { msg("Type to search people, pins, files and messages."); stopBtn.hidden = true; note.textContent = ""; return; }
     let shown = 0;
     // people
     if (all || kind === "people") {
@@ -114,15 +133,15 @@ export function initChatSearch({ $, msgData, nameOf, jumpTo, fetchOlder, oldestL
     try {
       const before = oldest && (!oldestLoaded() || oldest < oldestLoaded()) ? oldest : oldestLoaded();
       const page = await fetchOlder(before, PAGE);
-      if (!page.length) done = true;
-      else { for (const [k, m] of page) if (m && m.type !== "event") idx.set(k, slim(k, m)); oldest = page[0][0]; if (page.length < PAGE) done = true; later(); }   // a page that comes back short is the start of the chat
+      if (!page.length) { done = true; await askFirst(); }
+      else { for (const [k, m] of page) if (m && m.type !== "event") idx.set(k, slim(k, m)); oldest = page[0][0]; later(); }
     } catch (_) { note.textContent = "Couldn't reach the server. Scroll again to retry."; }
     busy = false; dirty = true; save(); paint();          // a scan step is saved at once (leaving the page can cut a delayed save short)
   }
-  input.addEventListener("input", () => { paint(); clearTimeout(armT); armT = setTimeout(arm, 700); });   // stopped typing and still nothing to show: allow one page
-  $("searchChips").addEventListener("click", e => { const c = e.target.closest(".chip"); if (!c) return; kind = c.dataset.k; for (const x of $("searchChips").children) x.classList.toggle("on", x === c); paint(); clearTimeout(armT); armT = setTimeout(arm, 700); });
+  input.addEventListener("input", () => { paint(); clearTimeout(armT); if (input.value.trim()) armT = setTimeout(arm, 700); });   // stopped typing and still nothing to show: allow one page
+  $("searchChips").addEventListener("click", e => { const c = e.target.closest(".chip"); if (!c) return; kind = c.dataset.k; for (const x of $("searchChips").children) x.classList.toggle("on", x === c); paint(); clearTimeout(armT); if (input.value.trim()) armT = setTimeout(arm, 700); });
   stopBtn.onclick = () => { stop = true; armed = false; };
   $("searchClose").onclick = () => dlg.close();
-  $("searchBtn").onclick = async () => { if (!dlg.open) dlg.showModal(); await ready; paint(); setTimeout(() => input.focus(), 50); };
-  return { add, drop };
+  const open = async () => { if (!dlg.open) dlg.showModal(); await ready; if (first === undefined) await askFirst(); paint(); setTimeout(() => input.focus(), 50); };
+  return { add, drop, open };
 }

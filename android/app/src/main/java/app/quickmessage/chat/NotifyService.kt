@@ -733,6 +733,7 @@ class NotifyService : Service() {
         val lastText = last?.text ?: ""
         val b = builder(CH_MSG).setSmallIcon(android.R.drawable.stat_notify_chat).setAutoCancel(false).setCategory(Notification.CATEGORY_MESSAGE)
             .setContentIntent(open(chatId, false, chatId.hashCode())).setOnlyAlertOnce(quiet)
+        b.setShowWhen(true).setWhen(last?.ts?.takeIf { it > 0 } ?: System.currentTimeMillis())          // the notification's age is the age of the newest message, not of the moment it was (re)built
         b.addExtras(android.os.Bundle().apply { putString("qm_chat", chatId) })          // lets handleSync find the chat of an active notification
         chatBmp[chatId]?.let { b.setLargeIcon(it) }
         if (Build.VERSION.SDK_INT >= 28) {

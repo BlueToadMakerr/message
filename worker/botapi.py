@@ -69,6 +69,95 @@ def view(db, bid, key, m, names):
     return o
 
 
+# ---------------------------------------------------------------- calls: a bot joins a call as one more session (voice / video)
+# The page's call code (js/call/signal.js + mesh.js) signals through calls/{chat}/sessions and calls/{chat}/inbox/{uid}/{session}.
+# A bot has no browser, so these routes do that bookkeeping for it; the media itself is WebRTC, which the bot's own program handles
+# (docs/bots/qmcall.py does it with aiortc). The worker keeps the session alive (heartbeat) while the bot keeps using call routes
+# (any call route renews a 90 second lease), and removes it when the lease runs out.
+_CALLS, _CLOCK = {}, threading.Lock()          # (chat, sid) -> {"bot": id, "lease": ts}
+LEASE = 90
+
+
+def _sid_ok(sid): return bool(re.match(r"^[\w-]{10,40}$", str(sid or "")))
+
+
+def _own_session(db, bid, chat, sid):
+    if not _sid_ok(sid): bad("sid is required (the id callJoin returned).")
+    with _CLOCK:
+        c = _CALLS.get((chat, sid))
+        if not c or c["bot"] != bid: bad("This bot has no such session. Join first (callJoin); a session ends after 90 seconds without any call request.", 404)
+        c["lease"] = time.time()
+
+
+def call_tick(db, now=None):
+    """Called by the worker every few seconds: keeps live bot sessions alive, removes expired ones. Returns how many are live."""
+    now = now or time.time(); live = 0
+    with _CLOCK: items = list(_CALLS.items())
+    for (chat, sid), c in items:
+        if now - c["lease"] > LEASE:
+            with _CLOCK: _CALLS.pop((chat, sid), None)
+            try: db.update({f"calls/{chat}/sessions/{sid}": None, f"calls/{chat}/inbox/{c['bot']}/{sid}": None})
+            except Exception: pass
+        else:
+            live += 1
+            try: db.update({f"calls/{chat}/sessions/{sid}/lastSeen": int(now * 1000)})
+            except Exception: pass
+    return live
+
+
+def handle_call(db, bid, bot, route, q, b):
+    """Returns the answer for a call route, or None when the route isn't one of them."""
+    if route == "POST /callJoin":
+        in_chat(db, bid, b.get("chat")); chat = b["chat"]
+        if db.get(f"privateChats/{chat}/chatData/encrypted") is True: bad("Calls in end-to-end encrypted chats can't include bots.", 403)
+        now = int(time.time() * 1000); sid = db.new_key()
+        others = [s for s in (db.get(f"calls/{chat}/sessions") or {}).values() if isinstance(s, dict) and s.get("uid") != bid]
+        sess = {"uid": bid, "device": "Bot", "bot": True, "audio": bool(b.get("audio", True)), "video": bool(b.get("video", False)), "screen": False,
+                "camStream": clean(b.get("stream") or sid, 80), "joinedAt": now, "lastSeen": now}
+        ups = {f"calls/{chat}/sessions/{sid}": sess, f"calls/{chat}/inbox/{bid}/{sid}": None}
+        if not others: ups[f"calls/{chat}/startedAt"] = now
+        db.update(ups)
+        with _CLOCK: _CALLS[(chat, sid)] = {"bot": bid, "lease": time.time()}
+        return {"sid": sid, "sessions": _sessions(db, chat, sid, bid)}
+    if route == "GET /callSessions":
+        in_chat(db, bid, q.get("chat")); return {"sessions": _sessions(db, q["chat"], None, bid)}
+    if route in ("POST /callLeave", "PATCH /callState", "POST /callSignal", "GET /callSignals"):
+        chat = b.get("chat") or q.get("chat"); sid = b.get("sid") or q.get("sid")
+        in_chat(db, bid, chat); _own_session(db, bid, chat, sid)
+        if route == "POST /callLeave":
+            with _CLOCK: _CALLS.pop((chat, sid), None)
+            ups = {f"calls/{chat}/sessions/{sid}": None, f"calls/{chat}/inbox/{bid}/{sid}": None}
+            if not [1 for k, s in (db.get(f"calls/{chat}/sessions") or {}).items() if k != sid and isinstance(s, dict)]: ups[f"calls/{chat}/startedAt"] = None
+            db.update(ups); return {"ok": True}
+        if route == "PATCH /callState":
+            ups = {}
+            for k in ("audio", "video"):
+                if isinstance(b.get(k), bool): ups[f"calls/{chat}/sessions/{sid}/{k}"] = b[k]
+            if not ups: bad("Send audio and/or video (true or false).")
+            db.update(ups); return {"ok": True}
+        if route == "POST /callSignal":
+            to = b.get("to") if isinstance(b.get("to"), dict) else {}
+            tu, ts_ = str(to.get("uid") or ""), str(to.get("sid") or "")
+            if not tu or not _sid_ok(ts_): bad("to: {uid, sid} is required (a session from callSessions).")
+            if db.get(f"calls/{chat}/sessions/{ts_}/uid") != tu: bad("That session isn't in the call.", 404)
+            if b.get("t") not in ("desc", "cand"): bad("t must be \"desc\" or \"cand\".")
+            ep = b.get("epoch") if isinstance(b.get("epoch"), int) and not isinstance(b.get("epoch"), bool) else 1
+            db.update({f"calls/{chat}/inbox/{tu}/{ts_}/{db.new_key()}": {"from": sid, "t": b["t"], "epoch": ep, "d": b.get("d")}}); return {"ok": True}
+        box = db.get(f"calls/{chat}/inbox/{bid}/{sid}") or {}                       # callSignals: what the other sessions sent us, oldest first; read once, then removed
+        keys = sorted(k for k, v in box.items() if isinstance(v, dict))
+        if keys: db.update({f"calls/{chat}/inbox/{bid}/{sid}/{k}": None for k in keys})
+        return {"signals": [dict(box[k], id=k) for k in keys]}
+    return None
+
+
+def _sessions(db, chat, me, bid=None):
+    out = []
+    for sid, s in (db.get(f"calls/{chat}/sessions") or {}).items():
+        if isinstance(s, dict) and isinstance(s.get("uid"), str) and sid != me and s["uid"] != bid:
+            out.append({"sid": sid, "uid": s["uid"], "name": name_of(db, s["uid"]), "bot": bool(BOT_RE.match(s["uid"])), "audio": bool(s.get("audio")), "video": bool(s.get("video")), "screen": bool(s.get("screen"))})
+    return out
+
+
 def handle(db, method, route, q, b, tok, stats=None):
     """Returns the JSON-able answer or raises BotError."""
     bid, bot = auth_bot(db, tok)
@@ -76,6 +165,8 @@ def handle(db, method, route, q, b, tok, stats=None):
     q = {k: (v[0] if isinstance(v, list) else v) for k, v in (q or {}).items()}
     if not isinstance(b, dict): b = {}
     if stats is not None: stats["botCalls"] = stats.get("botCalls", 0) + 1
+    r = handle_call(db, bid, bot, route, q, b)
+    if r is not None: return r
     if route == "GET /me":
         st = db.get(f"accsettings/{bid}/settings") or {}
         return {"id": bid, "name": st.get("displayName") or bot.get("name"), "pfp": st.get("pfp", ""), "owner": bot.get("owner"),
@@ -169,7 +260,9 @@ def handle(db, method, route, q, b, tok, stats=None):
 
 # ---------------------------------------------------------------- requests through the database (botInbox -> botOutbox)
 OPS = {"me": ("GET", "/me"), "setProfile": ("PATCH", "/me"), "chats": ("GET", "/chats"), "members": ("GET", "/members"), "messages": ("GET", "/messages"),
-       "send": ("POST", "/send"), "edit": ("PATCH", "/message"), "delete": ("DELETE", "/message")}
+       "send": ("POST", "/send"), "edit": ("PATCH", "/message"), "delete": ("DELETE", "/message"),
+       "callJoin": ("POST", "/callJoin"), "callLeave": ("POST", "/callLeave"), "callSessions": ("GET", "/callSessions"), "callSignals": ("GET", "/callSignals"),
+       "callSignal": ("POST", "/callSignal"), "callState": ("PATCH", "/callState")}
 
 
 def run_request(db, bot_id, req, stats=None):

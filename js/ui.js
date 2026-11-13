@@ -159,7 +159,9 @@ function hueFor(str) {
   return h;
 }
 
-export function avatarEl(name, url, cls = "avatar") {
+let avIO = null;
+/** @param lazy true: the picture is only fetched/decoded once the avatar scrolls into view (long lists such as the chat list); initials show meanwhile */
+export function avatarEl(name, url, cls = "avatar", lazy = false) {
   const wrap = document.createElement("span");
   wrap.className = cls;
   const label = (name || "?").trim();
@@ -169,7 +171,17 @@ export function avatarEl(name, url, cls = "avatar") {
     wrap.classList.add("initials");
     wrap.style.background = `hsl(${hueFor(label)} 55% 42%)`;
   };
-  if (url && /^(https?:|data:image\/)/i.test(url)) {
+  if (url && lazy && typeof IntersectionObserver === "function" && /^(https?:|data:image\/)/i.test(url)) {
+    fallback();
+    avIO ||= new IntersectionObserver(es => es.forEach(e => {
+      if (!e.isIntersecting) return;
+      avIO.unobserve(e.target); const w = e.target, u = w._qmUrl; w._qmUrl = null; if (!u) return;
+      const img = new Image(); img.alt = ""; img.referrerPolicy = "no-referrer";
+      img.onload = () => { w.replaceChildren(img); w.classList.remove("initials"); w.style.background = ""; };
+      img.src = u;                                    // on error the initials simply stay
+    }), { rootMargin: "200px" });
+    wrap._qmUrl = url; avIO.observe(wrap);
+  } else if (url && /^(https?:|data:image\/)/i.test(url)) {
     const img = new Image();
     img.alt = "";
     img.referrerPolicy = "no-referrer";
