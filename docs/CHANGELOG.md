@@ -2,6 +2,13 @@
 
 Newest first. Older rounds (1–43) are kept below exactly as they were written.
 
+## 1.70.0 — Media tab, no white flash, pushes list in dev mode
+
+- **Chat menu → new Media tab**: every photo, video and audio of the chat in one place, as a grid (videos show their first frame; thumbnails load only when scrolled to), with All / Photos / Videos / Audio filters. Scrolling to the end looks further back in the chat, like search.
+- **Search no longer lists photos, videos or audio** (they can't be searched by words anyway); the Photos / Videos / Audio chips are gone. Files stay.
+- **Account → "Recent pushes on this phone"** now only shows in developer mode.
+- **No white flash while pages load** (Android, iPhone): the webview is painted with the site's page colour from the first frame. The app remembers the last colour, so even a cold start is right; the page and call frames also paint the page background. Android bubbles use it too.
+
 ## 1.69.0 — Usage statistics (analytics), account based
 
 - **Republish `database.rules.json`** (new boolean `accsettings/{uid}/settings/analytics`, the account's choice).

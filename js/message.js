@@ -1678,6 +1678,7 @@ function showPane(p) {
   for (const b of $("hubTabs").children) b.classList.toggle("on", b.dataset.p === p);
   if (p === "settings") { $("chatNameInput").value = customName; $("chatPhotoInput").value = customPhoto; renderParticipants(); }
   else if (p === "search") { searchIdx && searchIdx.open(); }
+  else if (p === "media") { searchIdx && searchIdx.openMedia(); }
   else paintPinsPane();
 }
 const optionsDialog = {

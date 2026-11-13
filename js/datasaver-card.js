@@ -68,7 +68,7 @@ if ($("offlineCard")) {
 (function pushDiagCard() {
   if (!window.QMApp || !QMApp.pushDiag) return;
   const anchor = document.getElementById("audioCard"); if (!anchor) return;
-  const card = document.createElement("section"); card.className = "card"; card.id = "pushDiagCard";
+  const card = document.createElement("section"); card.className = "card dev-only"; card.id = "pushDiagCard";
   card.innerHTML = '<h2>Recent pushes on this phone</h2><p class="muted" style="font-size:.88rem">Each notification the phone was told about, how late it arrived and what happened. "priority high/normal" means Android lowered a push\'s priority, which makes it late. Useful when a notification is late or missing.</p><div id="pdList" class="pd-list"></div><div class="row" style="margin-top:.5rem"><button type="button" class="btn small" id="pdRefresh">Refresh</button></div>';
   anchor.after(card);
   const paint = () => {

@@ -81,6 +81,9 @@ class MainActivity : Activity() {
         Config.init(this)
         super.onCreate(b)
         instance = this
+        // The colour last used behind the page (saved by setBars): the webview is painted with it from the first frame, so loading a page never flashes white.
+        val night = (resources.configuration.uiMode and android.content.res.Configuration.UI_MODE_NIGHT_MASK) == android.content.res.Configuration.UI_MODE_NIGHT_YES
+        barColor = getSharedPreferences("quickmessage", MODE_PRIVATE).getInt("barColor", if (night) 0xFF0E1014.toInt() else 0xFFF4F5F9.toInt())
         root = FrameLayout(this).apply { setBackgroundColor(barColor) }
         web = object : WebView(this) {
             // Tells the keyboard this field takes images (Gboard's clipboard / GIF / sticker suggestions say "not supported" otherwise).
@@ -95,6 +98,7 @@ class MainActivity : Activity() {
                 }
             }
         }
+        web.setBackgroundColor(barColor)
         root.addView(web, FrameLayout.LayoutParams(-1, -1))
         setContentView(root)
         // Edge to edge: the page draws under the status and navigation bars and keeps clear of them itself (--sat/--sab, see js/bars.js),
@@ -810,6 +814,8 @@ class MainActivity : Activity() {
         @JavascriptInterface fun setBars(color: String, lightBackground: Boolean) = runOnUiThread {
             try { barColor = Color.parseColor(color) } catch (_: Exception) { return@runOnUiThread }
             root.setBackgroundColor(barColor)
+            web.setBackgroundColor(barColor)
+            getSharedPreferences("quickmessage", MODE_PRIVATE).edit().putInt("barColor", barColor).apply()
             if (Build.VERSION.SDK_INT >= 30) {
                 val m = android.view.WindowInsetsController.APPEARANCE_LIGHT_STATUS_BARS or android.view.WindowInsetsController.APPEARANCE_LIGHT_NAVIGATION_BARS
                 window.insetsController?.setSystemBarsAppearance(if (lightBackground) m else 0, m)

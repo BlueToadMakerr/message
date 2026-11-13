@@ -57,14 +57,19 @@
 <dialog id="searchDialog" class="modal cs-dialog" data-pane="settings">
   <div class="modal-body">
     <div class="modal-head"><h2 class="hub-title">Chat</h2><button type="button" class="icon-btn" id="searchClose" aria-label="Close" data-icon="close"></button></div>
-    <div class="cs-chips hub-tabs" id="hubTabs" role="tablist"><button type="button" class="chip on" data-p="settings" role="tab">Settings</button><button type="button" class="chip" data-p="search" role="tab">Search</button><button type="button" class="chip" data-p="pins" role="tab">Pins</button></div>
+    <div class="cs-chips hub-tabs" id="hubTabs" role="tablist"><button type="button" class="chip on" data-p="settings" role="tab">Settings</button><button type="button" class="chip" data-p="search" role="tab">Search</button><button type="button" class="chip" data-p="media" role="tab">Media</button><button type="button" class="chip" data-p="pins" role="tab">Pins</button></div>
     <div class="pane-search">
     <input id="searchInput" class="field" type="search" placeholder="Search people, pins, files, messages…" autocomplete="off" enterkeyhint="search">
     <div class="cs-chips" id="searchChips" role="tablist">
-      <button type="button" class="chip on" data-k="all">All</button><button type="button" class="chip" data-k="text">Messages</button><button type="button" class="chip" data-k="people">People</button><button type="button" class="chip" data-k="pins">Pins</button><button type="button" class="chip" data-k="image">Photos</button><button type="button" class="chip" data-k="video">Videos</button><button type="button" class="chip" data-k="audio">Audio</button><button type="button" class="chip" data-k="file">Files</button>
+      <button type="button" class="chip on" data-k="all">All</button><button type="button" class="chip" data-k="text">Messages</button><button type="button" class="chip" data-k="people">People</button><button type="button" class="chip" data-k="pins">Pins</button><button type="button" class="chip" data-k="file">Files</button>
     </div>
     <div id="searchResults" class="cs-results"></div>
     <div class="cs-foot"><span id="searchNote" class="muted"></span><button type="button" class="btn small" id="searchOlder" hidden>Stop</button></div>
+    </div>
+    <div class="pane-media">
+    <div class="cs-chips" id="mediaChips" role="tablist"><button type="button" class="chip on" data-m="all">All</button><button type="button" class="chip" data-m="image">Photos</button><button type="button" class="chip" data-m="video">Videos</button><button type="button" class="chip" data-m="audio">Audio</button></div>
+    <div id="mediaList" class="cs-results media-grid"></div>
+    <div class="cs-foot"><span id="mediaNote" class="muted"></span></div>
     </div>
     <div class="pane-pins"><div id="pinsList" class="cs-results"></div></div>
     <div class="pane-settings" id="optionsDialog">

@@ -125,6 +125,7 @@ if (window.top === window) {
     if (!meta) { meta = document.createElement("meta"); meta.name = "theme-color"; document.head.append(meta); }
     meta.content = color;
     const n = parseInt(color.slice(1), 16), lum = (0.299 * (n >> 16) + 0.587 * ((n >> 8) & 255) + 0.114 * (n & 255)) / 255;
+    try { window.webkit?.messageHandlers?.qmBars?.postMessage(color); } catch (_) { /* not in the iOS app */ }
     try { window.QMApp && window.QMApp.setBars && window.QMApp.setBars(color, lum > 0.55); } catch (_) { /* not in the app */ }
   };
   document.addEventListener("DOMContentLoaded", apply);

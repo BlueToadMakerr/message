@@ -29,8 +29,11 @@ class BubbleActivity : Activity() {
         super.onCreate(b)
         chat = intent?.getStringExtra(MainActivity.EXTRA_CHAT).orEmpty()
         if (!Regex("^[\\w-]{1,64}$").matches(chat)) { finish(); return }
-        val root = FrameLayout(this).apply { setBackgroundColor(Color.WHITE) }
+        val night = (resources.configuration.uiMode and android.content.res.Configuration.UI_MODE_NIGHT_MASK) == android.content.res.Configuration.UI_MODE_NIGHT_YES
+        val bg = getSharedPreferences("quickmessage", MODE_PRIVATE).getInt("barColor", if (night) 0xFF0E1014.toInt() else 0xFFF4F5F9.toInt())
+        val root = FrameLayout(this).apply { setBackgroundColor(bg) }
         web = WebView(this)
+        web.setBackgroundColor(bg)
         root.addView(web, FrameLayout.LayoutParams(-1, -1))
         setContentView(root)
         web.settings.apply {

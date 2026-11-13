@@ -40,7 +40,7 @@ export function initChatSearch({ $, msgData, nameOf, jumpTo, fetchOlder, oldestL
     } catch (_) { /* start empty */ }
   }
   const ready = load().then(() => { loaded = true; paintIf(); });
-  const paintIf = () => { if (dlg.open) paint(); };
+  const paintIf = () => { if (!dlg.open) return; if (dlg.dataset.pane === "media") paintMedia(); else if (dlg.dataset.pane === "search") paint(); };
   function save() {
     if (!store || !dirty) return; dirty = false;
     const all = [...idx.values()].sort((a, b) => (a.key < b.key ? -1 : 1)), n = Math.ceil(all.length / SHARD);
@@ -65,7 +65,7 @@ export function initChatSearch({ $, msgData, nameOf, jumpTo, fetchOlder, oldestL
   // photos and videos show a small picture (a video: its first frame), fetched only when the row scrolls into view, two at a time
   const thumbs = new Map(); let tq = 0; const waitQ = [];
   const pump = () => { while (tq < 2 && waitQ.length) { const f = waitQ.shift(); tq++; f().finally(() => { tq--; pump(); }); } };
-  const tio = typeof IntersectionObserver === "function" ? new IntersectionObserver(es => es.forEach(e => {
+  const mkTio = root => typeof IntersectionObserver === "function" ? new IntersectionObserver(es => es.forEach(e => {
     if (!e.isIntersecting) return; tio.unobserve(e.target); const el = e.target;
     waitQ.push(async () => {
       let t = thumbs.get(el._key); if (t === undefined) { try { t = await thumbOf(el._key, el._k); } catch (_) { t = null; } thumbs.set(el._key, t); }
@@ -75,8 +75,9 @@ export function initChatSearch({ $, msgData, nameOf, jumpTo, fetchOlder, oldestL
       else { node = new Image(); node.alt = ""; node.referrerPolicy = "no-referrer"; node.src = t.src; }
       node.className = "cs-thumb"; el.replaceWith(node);
     }); pump();
-  }), { root: list, rootMargin: "100px" }) : null;
-  const withThumb = (b, r) => { if (tio && (r.k === "image" || r.k === "video")) { const ic = b.querySelector(".cs-ic"); ic._key = r.key; ic._k = r.k; tio.observe(ic); } return b; };
+  }), { root, rootMargin: "100px" }) : null;
+  const tio = mkTio(list), tioMedia = mkTio($("mediaList"));
+  const withThumb = (b, r, obs = tio) => { if (obs && (r.k === "image" || r.k === "video")) { const ic = b.querySelector(".cs-ic"); ic._key = r.key; ic._k = r.k; obs.observe(ic); } return b; };
   const recRow = r => withThumb(row(ICON[r.k], r.k === "text" ? r.text.slice(0, 140) : (r.name || r.text || { image: "Photo", video: "Video", audio: "Voice message" }[r.k] || "File"),
     [nameOf(r.from), when(r.ts), r.size ? fmtBytes(r.size) : ""].filter(Boolean).join(" \u00b7 "), () => { dlg.close(); jumpTo(r.key); }), r);
   async function resolveAll() {                       // pinned messages are fetched once each (at most 50), then searched like anything else
@@ -106,10 +107,10 @@ export function initChatSearch({ $, msgData, nameOf, jumpTo, fetchOlder, oldestL
     }
     // media and messages
     if (kind !== "people" && kind !== "pins") {
-      const res = searchRecords(records(), q, all ? "all" : kind);
+      const res = searchRecords(records(), q, all ? "all" : kind).filter(r => r.k === "text" || r.k === "file");    // photos, videos and audio live in the Media tab
       const media = res.filter(r => r.k !== "text"), texts = res.filter(r => r.k === "text");
       if (all) {
-        if (media.length) { head("Media and files"); shown += media.length; media.slice(0, 6).forEach(r => list.append(recRow(r))); if (media.length > 6) msg(media.length - 6 + " more: open the Photos, Videos, Audio or Files tab."); }
+        if (media.length) { head("Files"); shown += media.length; media.slice(0, 6).forEach(r => list.append(recRow(r))); if (media.length > 6) msg(media.length - 6 + " more: open the Files tab."); }
         if (texts.length) { head("Messages"); shown += texts.length; texts.slice(0, 300).forEach(r => list.append(recRow(r))); }
       } else { shown += res.length; res.slice(0, 300).forEach(r => list.append(recRow(r))); }
       if (!shown) msg(complete() ? "Nothing found." : "Nothing found yet.");
@@ -119,6 +120,29 @@ export function initChatSearch({ $, msgData, nameOf, jumpTo, fetchOlder, oldestL
     } else { if (!shown && kind === "people") msg("No one matches."); note.textContent = ""; }
     stopBtn.hidden = !busy;
   };
+  // ---- Media tab: every photo, video and audio this device knows of in the chat, newest first (older ones are fetched when the end is reached)
+  const mlist = $("mediaList"), mnote = $("mediaNote"); let mkind = "all";
+  function paintMedia() {
+    mlist.replaceChildren();
+    const res = records().filter(r => (mkind === "all" ? r.k === "image" || r.k === "video" || r.k === "audio" : r.k === mkind)).sort((a, b) => b.ts - a.ts);
+    for (const r of res.slice(0, 600)) {
+      if (r.k === "audio") { mlist.append(row(ICON.audio, r.name || "Voice message", [nameOf(r.from), when(r.ts), r.size ? fmtBytes(r.size) : ""].filter(Boolean).join(" \u00b7 "), () => { dlg.close(); jumpTo(r.key); })); continue; }
+      const t = document.createElement("button"); t.type = "button"; t.className = "media-tile"; t.title = [nameOf(r.from), when(r.ts)].join(" \u00b7 ");
+      const ic = document.createElement("span"); ic.className = "cs-ic"; ic.textContent = ICON[r.k]; t.append(ic);
+      if (r.k === "video") { const pl = document.createElement("span"); pl.className = "play"; pl.textContent = "\u25b6"; t.append(pl); }
+      t.onclick = () => { dlg.close(); jumpTo(r.key); };
+      mlist.append(withThumb(t, r, tioMedia));
+    }
+    if (!res.length) { const e = document.createElement("div"); e.className = "muted cs-empty"; e.textContent = complete() ? "No photos, videos or audio in this chat." : "None found yet."; mlist.append(e); }
+    if (!complete()) { const e = document.createElement("div"); e.className = "cs-more muted"; e.id = "mMore"; e.textContent = busy ? "Looking through older messages\u2026" : "Scroll down to look further back"; mlist.append(e); watchMedia(e); }
+    mnote.textContent = complete() ? `Whole chat checked (${res.length} item${res.length === 1 ? "" : "s"})` : `${res.length} found in ${records().length} messages so far`;
+  }
+  let mio = null;
+  function watchMedia(el) { mio?.disconnect(); mio = new IntersectionObserver(es => { if (es.some(x => x.isIntersecting) && marmed && !busy && !complete()) more(); }, { root: mlist, threshold: 0.01 }); mio.observe(el); }
+  let marmed = false; const marm = () => { marmed = true; armed = true; const e = $("mMore"); if (e) watchMedia(e); };
+  mlist.addEventListener("scroll", marm, { passive: true }); mlist.addEventListener("wheel", marm, { passive: true }); mlist.addEventListener("touchmove", marm, { passive: true });
+  $("mediaChips").addEventListener("click", e => { const c = e.target.closest(".chip"); if (!c) return; mkind = c.dataset.m; for (const x of $("mediaChips").children) x.classList.toggle("on", x === c); paintMedia(); });
+  const openMedia = async () => { if (!dlg.open) dlg.showModal(); await ready; if (first === undefined) await askFirst(); paintMedia(); };
   // ---- the list is scrolled to its end (or the person stopped typing and nothing is shown): fetch one older page, then wait to be asked again
   let io = null;
   function watchMore(el) {
@@ -129,14 +153,14 @@ export function initChatSearch({ $, msgData, nameOf, jumpTo, fetchOlder, oldestL
   const arm = () => { armed = true; const e = $("csMore"); if (e) watchMore(e); };
   list.addEventListener("scroll", arm, { passive: true }); list.addEventListener("wheel", arm, { passive: true }); list.addEventListener("touchmove", arm, { passive: true });
   async function more() {
-    armed = false; busy = true; stop = false; paint();
+    armed = false; marmed = false; busy = true; stop = false; paintIf();
     try {
       const before = oldest && (!oldestLoaded() || oldest < oldestLoaded()) ? oldest : oldestLoaded();
       const page = await fetchOlder(before, PAGE);
       if (!page.length) { done = true; await askFirst(); }
       else { for (const [k, m] of page) if (m && m.type !== "event") idx.set(k, slim(k, m)); oldest = page[0][0]; later(); }
     } catch (_) { note.textContent = "Couldn't reach the server. Scroll again to retry."; }
-    busy = false; dirty = true; save(); paint();          // a scan step is saved at once (leaving the page can cut a delayed save short)
+    busy = false; dirty = true; save(); paintIf();          // a scan step is saved at once (leaving the page can cut a delayed save short)
   }
   let tracked = false;
   input.addEventListener("input", () => { if (!tracked && input.value.trim().length > 1) { tracked = true; import("./analytics.js").then(m => m.track("search_used", { tab: (document.querySelector("#searchChips .on") || {}).dataset?.k || "all" })).catch(() => {}); } paint(); clearTimeout(armT); if (input.value.trim()) armT = setTimeout(arm, 700); });   // stopped typing and still nothing to show: allow one page
@@ -144,5 +168,5 @@ export function initChatSearch({ $, msgData, nameOf, jumpTo, fetchOlder, oldestL
   stopBtn.onclick = () => { stop = true; armed = false; };
   $("searchClose").onclick = () => dlg.close();
   const open = async () => { if (!dlg.open) dlg.showModal(); await ready; if (first === undefined) await askFirst(); paint(); setTimeout(() => input.focus(), 50); };
-  return { add, drop, open };
+  return { add, drop, open, openMedia };
 }

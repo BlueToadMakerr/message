@@ -37,6 +37,7 @@ struct WebContainer: UIViewRepresentable {
         cfg.userContentController.addUserScript(WKUserScript(source: "window.__qmIosApp = { version: '\(ver)', build: '\(build)' };", injectionTime: .atDocumentStart, forMainFrameOnly: false))
         cfg.userContentController.add(context.coordinator, name: "qmUpdate")   // "Download update" opens the .ipa link in Safari
         cfg.userContentController.add(context.coordinator, name: "qmScreen")   // screen sharing (see ScreenReceiver.swift, js/native.js)
+        cfg.userContentController.add(context.coordinator, name: "qmBars")     // page background colour (js/bars.js) so loading never flashes white
         cfg.userContentController.add(context.coordinator, name: "qmNotify")   // local notifications (see js/ios-notify.js, Notifier.swift)
 
         let web = WKWebView(frame: .zero, configuration: cfg)
@@ -46,8 +47,13 @@ struct WebContainer: UIViewRepresentable {
         web.scrollView.contentInsetAdjustmentBehavior = .never
         web.scrollView.bounces = false
         web.isOpaque = false
-        web.backgroundColor = UIColor.systemBackground
-        web.scrollView.backgroundColor = UIColor.systemBackground
+        var bg = UIColor.systemBackground          // until the page says its colour: the last one it used
+        if let s = UserDefaults.standard.string(forKey: "qmBarColor"), s.count == 7, let n = UInt32(s.dropFirst(), radix: 16) {
+            bg = UIColor(red: CGFloat((n >> 16) & 255) / 255, green: CGFloat((n >> 8) & 255) / 255, blue: CGFloat(n & 255) / 255, alpha: 1)
+        }
+        web.backgroundColor = bg
+        web.scrollView.backgroundColor = bg
+        if #available(iOS 15.0, *) { web.underPageBackgroundColor = bg }
         context.coordinator.web = web
         Notifier.shared.start(web: web)
         ScreenReceiver.shared.start(web: web)
@@ -124,6 +130,15 @@ struct WebContainer: UIViewRepresentable {
             if message.name == "qmServer" {
                 if let m = message.body as? [String: Any], let u = m["url"] as? String, Config.setServer(u) {
                     web?.load(URLRequest(url: Config.siteURL.appendingPathComponent("index.html")))      // the other server has its own accounts: start from its login screen
+                }
+                return
+            }
+            if message.name == "qmBars" {
+                if let s = message.body as? String, s.count == 7, s.hasPrefix("#"), let n = UInt32(s.dropFirst(), radix: 16) {
+                    let c = UIColor(red: CGFloat((n >> 16) & 255) / 255, green: CGFloat((n >> 8) & 255) / 255, blue: CGFloat(n & 255) / 255, alpha: 1)
+                    UserDefaults.standard.set(s, forKey: "qmBarColor")
+                    web?.backgroundColor = c; web?.scrollView.backgroundColor = c
+                    if #available(iOS 15.0, *) { web?.underPageBackgroundColor = c }
                 }
                 return
             }
