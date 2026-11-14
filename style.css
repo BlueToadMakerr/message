@@ -1167,7 +1167,7 @@ html.dev-on .dev-only { display: block !important; }
 .qmpip-grip { position: absolute; right: 0; bottom: 0; width: 22px; height: 22px; cursor: nwse-resize; touch-action: none; z-index: 3;
   background: linear-gradient(135deg, transparent 55%, rgb(255 255 255 / .7) 55% 62%, transparent 62% 72%, rgb(255 255 255 / .7) 72% 79%, transparent 79%); }
 .qmpip-grip[hidden] { display: none; }
-.qmpip-video { width: 100%; height: 100%; object-fit: contain; display: block; background: #000; }
+.qmpip-bar[hidden] { display: none; }
 .qmpip-atitle { flex: 1; min-width: 0; font-size: .8rem; font-weight: 600; padding-left: 6px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 /* Android's own picture-in-picture for the floating video: only that video is left in the window */
 html.qm-bpip-native body > *:not(#qmPipvideo) { display: none !important; }

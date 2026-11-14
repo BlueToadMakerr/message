@@ -74,8 +74,8 @@ import { drawWave, videoPlayer } from "./player.js";
     head.addEventListener("pointerup", () => { if (drag) { drag = null; store.set("qm-pip-pos-" + id, JSON.stringify({ x: w.x, y: w.y })); } });
     // resize (bottom-right corner), keeps the picture's shape
     let rs = null;
-    grip.addEventListener("pointerdown", e => { rs = { x: e.clientX, w: el.offsetWidth }; grip.setPointerCapture(e.pointerId); e.preventDefault(); e.stopPropagation(); });
-    grip.addEventListener("pointermove", e => { if (rs) w.setWidth(rs.w + (e.clientX - rs.x), true); });
+    grip.addEventListener("pointerdown", e => { rs = { x: e.clientX, y: e.clientY, w: el.offsetWidth }; grip.setPointerCapture(e.pointerId); e.preventDefault(); e.stopPropagation(); });
+    grip.addEventListener("pointermove", e => { if (rs) w.setWidth(rs.w + Math.max(e.clientX - rs.x, (e.clientY - rs.y) * (w.ratio || 16 / 9)), true); });
     grip.addEventListener("pointerup", () => { if (rs) { rs = null; store.set("qm-pip-w-" + id, String(el.offsetWidth)); } });
     w.setWidth = (px, live) => {
       const wd = clamp(Math.round(px), 180, Math.min(720, innerWidth - 8)), r = w.ratio || 16 / 9;

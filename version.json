@@ -1,1 +1,3 @@
-{ "version": "1.74.0", "apiVersion": 1, "released": "2026-11-13", "notes": "Per-account analytics, media from files." }
+{
+  "version": "1.74.1"
+}

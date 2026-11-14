@@ -2,6 +2,10 @@
 
 Newest first. Older rounds (1–43) are kept below exactly as they were written.
 
+## 1.74.1 — Black bar under the floating video fixed
+
+- **Black bar**: an old style rule (`.qmpip-video { height: 100% }`, meant for the previous bare video element) now matched the floating window itself and stretched it to the full screen height. Removed; the window is exactly as tall as the picture plus the controls. This also fixes vertical resizing: the resize corner now follows horizontal or vertical dragging (the window keeps the video's shape).
+
 ## 1.74.0 — Video no longer pauses when it floats; same controls in the floating window
 
 - **No pause on scroll-away**: the floating window no longer moves the chat's video (moving a playing video between documents reloads it, which caused the blip). The window's own player is warmed up in the background and takes over silently while the chat's video is still playing, aligned to the same time, then the original stops.
