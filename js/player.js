@@ -266,7 +266,7 @@ export function audioPlayer(src, { title = "", name = "", wave: waveData = "", d
 }
 
 // ------------------------------------------------------------------ video
-export function videoPlayer(src, { poster = "", onLayout, autoplay = false, title = "", name = "" } = {}) {
+export function videoPlayer(src, { poster = "", onLayout, autoplay = false, title = "", name = "", floating = false } = {}) {
   const root = mk("div", "qp qp-video paused");
   root.tabIndex = 0;
   const v = document.createElement("video"); v.playsInline = true; v.preload = netSaver(src) ? "none" : "metadata"; v.src = src; if (poster) v.poster = poster; if (title) v.title = title;
@@ -362,39 +362,48 @@ export function videoPlayer(src, { poster = "", onLayout, autoplay = false, titl
   let hideT = null;
   function wake() { root.classList.add("show"); clearTimeout(hideT); if (!v.paused) hideT = setTimeout(() => root.classList.remove("show"), 2500); }
   root.addEventListener("pointermove", wake); root.addEventListener("pointerdown", wake); root.addEventListener("focusin", wake);
-  // ---- floating player (js/pip.js): a playing video that scrolls out of view, or whose page closes, carries on in the built-in window (this very
-  // <video> element is moved there); when the same video is on screen again it is moved back. While the video is in the browser's own
-  // picture-in-picture nothing is moved, so it keeps playing there.
-  const topPip = () => { try { return TOP.__qmPip && TOP.__qmPip.auto() ? TOP.__qmPip : null; } catch (_) { return null; } };
+  // ---- floating player (js/pip.js): a playing video that scrolls out of view, or whose page closes, carries on in the built-in window. Nothing is
+  // moved or reloaded: the window's own copy is kept warm near the playing position, starts silently while this video still plays, and this one
+  // is only stopped once the other is really playing in step (so there is no pause). When this video is on screen again it goes the other way.
+  // (The window's own player is made with floating: true and does none of this.)
+  const topPip = () => { try { return !floating && TOP.__qmPip && TOP.__qmPip.auto() ? TOP.__qmPip : null; } catch (_) { return null; } };
   const vtitle = () => title || name || "Video";
-  let handed = false, ph = null, onScreen = true;
+  let handed = false, onScreen = true, warmT = 0;
+  const meta = () => ({ src, poster, title: vtitle(), name });
+  const warm = () => { const p = topPip(); if (p && !handed && !v.paused) { try { p.warm(meta(), v.currentTime); } catch (_) { /* ignore */ } } };
   v.addEventListener("play", () => {
     try { if (TOP.__qmAudio && !TOP.__qmAudio.paused) TOP.__qmAudio.pause(); } catch (_) { /* ignore */ }
     TOP.__qmCur = { el: v, title: vtitle(), kind: "video", src };
+    if (!floating) { clearInterval(warmT); warm(); warmT = setInterval(warm, 2000); }
   });
+  v.addEventListener("pause", () => clearInterval(warmT)); v.addEventListener("ended", () => clearInterval(warmT));
   const inPip = () => { try { return document.pictureInPictureElement === v; } catch (_) { return false; } };
-  const give = (closing) => {
+  const give = closing => {
     const p = topPip(); if (!p || v.paused || v.ended || handed) return;
     if (inPip() && !closing) return;                       // playing in the browser's own picture-in-picture: leave it be
-    const s = { src, time: v.currentTime, playing: true, rate: v.playbackRate, volume: v.volume, muted: v.muted, title: vtitle(), poster, chat: chatOf(), key: msgKeyOf(root), nativePip: inPip() };
-    ph = document.createComment("pip"); root.style.minHeight = root.offsetHeight + "px";      // the message keeps its size while the video is away
-    v.replaceWith(ph);
-    const restore = el => { try { document.adoptNode(el); if (ph) { ph.replaceWith(el); ph = null; } root.style.minHeight = ""; handed = false; el.pause(); } catch (_) { /* the page is gone */ } };
-    if (p.handoff(s, v, restore)) handed = true; else { ph.replaceWith(v); ph = null; root.style.minHeight = ""; }
+    const s = { ...meta(), time: v.currentTime, playing: true, rate: v.playbackRate, volume: v.volume, muted: v.muted, chat: chatOf(), key: msgKeyOf(root), nativePip: inPip() };
+    // closing: this page is going away, the window starts at once; else this video keeps playing until the window's copy is running in step
+    if (p.handoff(s, closing ? null : { time: () => v.currentTime, stop: () => { handed = true; try { v.pause(); } catch (_) { /* ignore */ } } })) { if (closing) handed = true; else handed = "pending"; }
   };
   const adopt = () => {
-    let raw = null; try { raw = TOP.__qmPip && TOP.__qmPip.take(src, handed ? v : null); } catch (_) { /* ignore */ }
+    let raw = null; try { raw = TOP.__qmPip && TOP.__qmPip.take(src); } catch (_) { /* ignore */ }
     if (!raw) return;
-    const s = JSON.parse(raw);
-    if (s.same && ph) { document.adoptNode(v); ph.replaceWith(v); ph = null; root.style.minHeight = ""; }
-    handed = false;
-    const go = () => { try { v.currentTime = s.time; v.playbackRate = s.rate; v.volume = s.volume; v.muted = s.muted; } catch (_) { /* ignore */ } if (s.playing) v.play().catch(() => {}); };
-    try { v.currentTime = s.time; } catch (_) { /* ignore */ }
-    if (v.readyState >= 1) go(); else v.addEventListener("loadedmetadata", go, { once: true });
+    const s = JSON.parse(raw); handed = false;
+    const finish = () => { try { TOP.__qmPip.done(src); } catch (_) { /* ignore */ } };
+    try { v.playbackRate = s.rate; v.volume = s.volume; } catch (_) { /* ignore */ }
+    const go = () => {
+      try { v.currentTime = s.time + (s.playing ? 0.12 : 0); } catch (_) { /* ignore */ }
+      if (!s.playing) { v.muted = s.muted; finish(); return; }
+      v.muted = true;                                      // silent until it plays in step with the window's copy, which carries on meanwhile
+      v.addEventListener("playing", () => { v.muted = s.muted; finish(); }, { once: true });
+      v.play().catch(() => { v.muted = s.muted; finish(); });
+      setTimeout(() => { v.muted = s.muted; finish(); }, 2500);
+    };
+    if (v.readyState >= 1) go(); else { v.preload = "auto"; v.addEventListener("loadedmetadata", go, { once: true }); v.load(); }
   };
   v.addEventListener("leavepictureinpicture", () => { if (!onScreen) give(); });   // the browser's picture-in-picture was closed while this is out of view
-  if ("IntersectionObserver" in window) new IntersectionObserver(es => { for (const e of es) { onScreen = e.intersectionRatio > 0.15; if (onScreen) adopt(); else give(); } }, { threshold: [0, 0.15, 0.4] }).observe(root);
-  addEventListener("pagehide", () => give(true));
+  if (!floating && "IntersectionObserver" in window) new IntersectionObserver(es => { for (const e of es) { onScreen = e.intersectionRatio > 0.15; if (onScreen) { if (handed === "pending") handed = false; adopt(); } else give(); } }, { threshold: [0, 0.15, 0.4] }).observe(root);
+  if (!floating) addEventListener("pagehide", () => { clearInterval(warmT); give(true); });
   if (autoplay) v.play().catch(() => {});
   root.video = v;
   return root;

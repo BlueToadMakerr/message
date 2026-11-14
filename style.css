@@ -1175,3 +1175,10 @@ html.qm-bpip-native, html.qm-bpip-native body { overflow: hidden; background: #0
 html.qm-bpip-native #qmPipvideo { inset: 0 !important; left: 0 !important; top: 0 !important; width: 100vw !important; height: 100vh !important; border-radius: 0; z-index: 2147483000; }
 html.qm-bpip-native #qmPipvideo .qmpip-head, html.qm-bpip-native #qmPipvideo .qmpip-bar { display: none; }
 html.qm-bpip-native #qmPipvideo .qmpip-body { height: 100vh !important; }
+/* the floating video window holds a real video player: the same controls as in the chat, below the picture and always shown */
+.qmpip-video-body, .qmpip-video .qmpip-body { min-height: 0; }
+.qmpip-video .qmpip-body .qp-video { width: 100%; border-radius: 0; display: flex; flex-direction: column; overflow: visible; }
+.qmpip-video .qmpip-body .qp-video video { max-height: min(46vh, 420px); }
+.qmpip-video .qmpip-body .qp-big { display: none; }
+.qmpip-video .qmpip-body .qp-bar { position: static; opacity: 1 !important; padding: .35rem .4rem; background: rgb(20 22 28 / .92); flex-wrap: nowrap; }
+.qmpip-video .qmpip-body .qp-video:not(.show):not(.paused) { cursor: default; }

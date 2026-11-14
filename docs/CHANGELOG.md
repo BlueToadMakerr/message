@@ -2,6 +2,13 @@
 
 Newest first. Older rounds (1–43) are kept below exactly as they were written.
 
+## 1.74.0 — Video no longer pauses when it floats; same controls in the floating window
+
+- **No pause on scroll-away**: the floating window no longer moves the chat's video (moving a playing video between documents reloads it, which caused the blip). The window's own player is warmed up in the background and takes over silently while the chat's video is still playing, aligned to the same time, then the original stops.
+- **Floating video window uses the chat's real player**: identical controls (play, seek, time, volume, speed, menu, picture-in-picture), but placed below the picture and always visible.
+- **iOS build fix**: `if (inCall) break` in `Notifier.swift` (Swift needs `if inCall { break }`). The log you sent was cut off, so only that error was visible.
+- Floating window sizing/position tweaked so it stays clear of the status bar on phones. The black column in the Android screenshot could not be reproduced here; it is suspected to be the old moved-video layer, which no longer exists.
+
 ## 1.73.0 — More analytics (per account), media from files, square audio tiles
 
 - **Analytics, per account**: events now carry the account's own random id as GA `user_id` (and the Android SDK's user id), so one account's use can be followed live in Google Analytics (Realtime, User explorer; developer mode adds `debug_mode` so events show in DebugView). It is removed the moment analytics is switched off on any device or the user signs out; still never names, emails, messages or file names. The welcome tour and Account text say so.

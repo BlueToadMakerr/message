@@ -5,7 +5,7 @@
 // iPhone control centre, headset buttons), Android's media notification (QMApp.mediaState), and automatic browser picture-in-picture when the tab
 // is switched. Frames reach this through window.top.__qmPip.
 import { icon } from "./ui.js";
-import { drawWave } from "./player.js";
+import { drawWave, videoPlayer } from "./player.js";
 
 (function () {
   if (window.top !== window || window.__qmPip) return;
@@ -79,7 +79,7 @@ import { drawWave } from "./player.js";
     grip.addEventListener("pointerup", () => { if (rs) { rs = null; store.set("qm-pip-w-" + id, String(el.offsetWidth)); } });
     w.setWidth = (px, live) => {
       const wd = clamp(Math.round(px), 180, Math.min(720, innerWidth - 8)), r = w.ratio || 16 / 9;
-      el.style.width = wd + "px"; body.style.height = Math.round(clamp(wd / r, 70, innerHeight * 0.7)) + "px";
+      el.style.width = wd + "px"; body.style.height = w.auto ? "" : Math.round(clamp(wd / r, 70, innerHeight * 0.7)) + "px";
       if (live || w.shown) place();
     };
     addEventListener("resize", () => { if (w.shown) place(); });
@@ -165,130 +165,98 @@ import { drawWave } from "./player.js";
     if (gone) W.__qmCur = null;
   }
 
-  // ------------------------------------------------------------ the video window (the player's own <video> element is moved in, so playback just carries on)
+  // ------------------------------------------------------------ the video window
+  // The window holds a real videoPlayer (the same controls as in the chat, shown below the picture and always visible). To hand a playing video over
+  // without a pause, its element is kept warm (loaded, parked near the playing position), the chat's video carries on while the window's one starts
+  // silently, and only when that one is really playing and in step is the chat's stopped. Getting it back works the same way in reverse.
   const videoState = { open: false, src: "", chat: "", key: "", title: "" };
-  let vEl = null, vOwn = false, vRestore = null;
-  const vPlay = ib("Play", "play"), vBack = ib("Back 10 seconds", "rew"), vFwd = ib("Forward 10 seconds", "ff"), vMute = ib("Mute", "volume");
-  vBack.innerHTML = "−10"; vFwd.innerHTML = "+10"; vBack.classList.add("txt"); vFwd.classList.add("txt");
-  const vSeek = mk("input", "qmpip-seek"); vSeek.type = "range"; vSeek.min = 0; vSeek.max = 1000; vSeek.value = 0; vSeek.setAttribute("aria-label", "Seek");
-  const vTime = mk("span", "qmpip-time", "0:00");
-  vw_.bar.append(vPlay, vBack, vSeek, vFwd, vTime, vMute);
-  let seeking = false;
-  const vPaint = () => {
-    if (!vEl) return; const d = vEl.duration || 0;
-    vPlay.innerHTML = icon(vEl.paused ? "play" : "pause", 18); vPlay.title = vEl.paused ? "Play" : "Pause";
-    if (!seeking) vSeek.value = d ? Math.round(vEl.currentTime / d * 1000) : 0;
-    vTime.textContent = fmt(vEl.currentTime) + " / " + fmt(d); vMute.innerHTML = icon(vEl.muted || !vEl.volume ? "volumeX" : "volume", 18);
-  };
-  vSeek.oninput = () => { seeking = true; if (vEl && vEl.duration) vEl.currentTime = vSeek.value / 1000 * vEl.duration; };
-  vSeek.onchange = () => { seeking = false; };
-  vPlay.onclick = () => vEl && (vEl.paused ? vEl.play().catch(() => {}) : vEl.pause());
-  vBack.onclick = () => vEl && (vEl.currentTime = Math.max(0, vEl.currentTime - 10));
-  vFwd.onclick = () => vEl && (vEl.currentTime = Math.min(vEl.duration || 1e9, vEl.currentTime + 10));
-  vMute.onclick = () => { if (vEl) vEl.muted = !vEl.muted; };
-  vw_.bClose.onclick = () => closeVideo(true);
+  let pl = null, vEl = null, disposeT = 0, startGuard = 0;
+  vw_.bar.hidden = true; vw_.bNative.hidden = true; vw_.auto = true;
   const gotoMsg = (chat, key) => { if (chat && W.QM) { if (key && W.QM.openChatAt) W.QM.openChatAt(chat, key); else if (W.QM.openChat) W.QM.openChat(chat); } };
+  vw_.bClose.onclick = () => closeVideo(true);
   vw_.bOpen.onclick = () => gotoMsg(videoState.chat, videoState.key);
-  vw_.bNative.onclick = () => nativePip();
-  vw_.body.addEventListener("click", () => vPlay.onclick());
-  const vEvents = ["play", "pause", "timeupdate", "durationchange", "volumechange", "ended"];
+  const inBrowserPip = el => { try { return !!el && el.ownerDocument.pictureInPictureElement === el; } catch (_) { return false; } };
   const onLeavePip = () => {          // the browser's own picture-in-picture was closed: this window takes over, so it keeps playing on the site
     if (ignoreLeave > Date.now()) return;
-    if (videoState.open && vEl && !vw_.shown) { vw_.show(); }
+    if (videoState.open && vEl && !vw_.shown) vw_.show();
   };
-  function attachV(el) {
-    vEl = el;
-    for (const e of vEvents) el.addEventListener(e, vPaint);
-    el.addEventListener("loadedmetadata", onMeta); el.addEventListener("leavepictureinpicture", onLeavePip);
+  const onMeta = () => { if (vEl && vEl.videoWidth) { vw_.ratio = vEl.videoWidth / vEl.videoHeight; } };
+  function dispose() {
+    clearTimeout(disposeT);
+    if (!pl) return;
+    try { vEl.pause(); vEl.removeEventListener("loadedmetadata", onMeta); vEl.removeEventListener("leavepictureinpicture", onLeavePip); } catch (_) { /* ignore */ }
+    try { vEl.removeAttribute("src"); vEl.load(); } catch (_) { /* ignore */ }
+    try { pl.remove(); } catch (_) { /* ignore */ }
+    if (W.__qmCur && W.__qmCur.el === vEl) W.__qmCur = null;
+    pl = vEl = null;
   }
-  function detachV() {
-    if (!vEl) return;
-    for (const e of vEvents) { try { vEl.removeEventListener(e, vPaint); } catch (_) { /* ignore */ } }
-    try { vEl.removeEventListener("loadedmetadata", onMeta); vEl.removeEventListener("leavepictureinpicture", onLeavePip); } catch (_) { /* ignore */ }
+  function ensure(meta) {
+    if (pl && pl._src === meta.src) { clearTimeout(disposeT); return pl; }
+    dispose();
+    pl = videoPlayer(meta.src, { poster: meta.poster || "", title: meta.title || "", name: meta.name || "", floating: true });
+    pl._src = meta.src; vEl = pl.video; vEl.preload = "auto";
+    vEl.addEventListener("loadedmetadata", onMeta); vEl.addEventListener("leavepictureinpicture", onLeavePip);
+    vw_.body.append(pl);
+    return pl;
   }
-  const onMeta = () => { if (vEl && vEl.videoWidth) { vw_.ratio = vEl.videoWidth / vEl.videoHeight; sizeVideo(); } };
-  const inBrowserPip = el => { try { return !!el && el.ownerDocument.pictureInPictureElement === el; } catch (_) { return false; } };
-
-  /** s: { src, time, playing, rate, volume, muted, title, poster, chat, key, nativePip }, el: the player's <video> (moved here: no new element). */
-  function openVideo(s, el, restore) {
-    if (!auto() || !el) return false;
-    if (vEl && vEl !== el) closeVideo(true);
-    const t = +s.time || 0, wasPip = inBrowserPip(el);
-    ignoreLeave = Date.now() + 1500;
-    try { D.adoptNode(el); } catch (_) { /* same realm already */ }
-    el.classList.add("qmpip-video"); el.controls = false; vw_.body.append(el);
-    attachV(el); vOwn = true; vRestore = typeof restore === "function" ? restore : null;
+  /** a video is playing in a chat: keep this window's copy loaded around the same spot, so taking over later starts at once */
+  function warm(meta, t) {
+    if (!auto()) return;
+    if (videoState.open && videoState.src !== meta.src) return;
+    ensure(meta);
+    if (!videoState.open && isFinite(t) && Math.abs((vEl.currentTime || 0) - t) > 4) { try { vEl.currentTime = t; } catch (_) { /* ignore */ } }
+  }
+  /** s: { src, time, playing, rate, volume, muted, title, name, poster, chat, key, nativePip }; stop: { time(), stop() } of the chat's own video, still playing */
+  function openVideo(s, stop) {
+    if (!auto()) return false;
+    ensure(s); clearTimeout(disposeT);
     Object.assign(videoState, { open: true, src: s.src, chat: s.chat || "", key: s.key || "", title: s.title || "" });
-    // moving a video makes the browser reload it: put it back where it was
-    const go = () => { try { el.currentTime = t; el.playbackRate = s.rate || 1; el.volume = typeof s.volume === "number" ? s.volume : 1; el.muted = !!s.muted; } catch (_) { /* ignore */ } if (s.playing) el.play().catch(() => {}); };
-    try { el.currentTime = t; } catch (_) { /* ignore */ }
-    if (el.readyState >= 1) go(); else el.addEventListener("loadedmetadata", go, { once: true });
     vw_.title.textContent = s.title || "Video"; vw_.bOpen.hidden = !videoState.chat;
+    const el = vEl, t = +s.time || 0, wasNative = !!s.nativePip || inBrowserPip(el);
+    const shouldBe = () => { try { el.playbackRate = s.rate || 1; el.volume = typeof s.volume === "number" ? s.volume : 1; el.muted = !!s.muted; } catch (_) { /* ignore */ } };
+    let done = false;
+    const finish = () => {
+      if (done) return; done = true; clearTimeout(startGuard);
+      if (stop) { try { const o = stop.time(); if (isFinite(o) && Math.abs(o - el.currentTime) > 0.25) el.currentTime = o + 0.05; } catch (_) { /* ignore */ } }
+      shouldBe();
+      if (stop) { try { stop.stop(); } catch (_) { /* ignore */ } }
+    };
+    try { el.playbackRate = s.rate || 1; el.volume = typeof s.volume === "number" ? s.volume : 1; } catch (_) { /* ignore */ }
+    el.muted = stop ? true : !!s.muted;                    // silent until it is in step with the chat's video, which is still sounding
+    const start = () => {
+      try { el.currentTime = t + (stop ? 0.12 : 0); } catch (_) { /* ignore */ }
+      if (s.playing) { el.addEventListener("playing", finish, { once: true }); el.play().catch(() => finish()); startGuard = setTimeout(finish, 2500); } else finish();
+    };
+    if (el.readyState >= 1) start(); else el.addEventListener("loadedmetadata", start, { once: true });
     W.__qmCur = { el, title: s.title || "Video", kind: "video", src: s.src };
-    vw_.ratio = el.videoWidth ? el.videoWidth / el.videoHeight : 16 / 9;
-    const wasNative = !!s.nativePip || wasPip;
-    if (wasNative) {               // it was in the browser's picture-in-picture: put it back there and keep this window out of the way until that is closed
+    if (wasNative) {            // it was in the browser's picture-in-picture: put it back there and keep this window out of the way until that is closed
       vw_.shown = false; vw_.sync(); sizeVideo();
       const again = () => el.requestPictureInPicture().catch(() => { vw_.show(); });
       if (el.readyState >= 1) again(); else el.addEventListener("loadedmetadata", again, { once: true });
     } else { vw_.show(); sizeVideo(); }
-    vPaint(); bind();
+    bind();
     return true;
   }
-  function sizeVideo() { const saved = +store.get("qm-pip-w-video") || 0; vw_.setWidth(saved || clamp(Math.round(innerWidth * (innerWidth < 600 ? 0.62 : 0.3)), 200, 360)); }
-  function release(pause) {
-    if (!vEl) return null;
-    const el = vEl; detachV(); vEl = null; vOwn = false;
-    if (pause) { try { el.pause(); } catch (_) { /* ignore */ } }
-    el.classList.remove("qmpip-video");
-    return el;
-  }
+  function sizeVideo() { const saved = +store.get("qm-pip-w-video") || 0; vw_.setWidth(saved || clamp(Math.round(innerWidth * (innerWidth < 600 ? 0.62 : 0.3)), 220, 380)); }
   function closeVideo(userClosed) {
-    if (!vEl) return;
-    const back = vRestore; vRestore = null;
-    const el = release(true);
-    try { if (back) back(el); else el.remove(); } catch (_) { try { el.remove(); } catch (__) { /* ignore */ } }   // the page that owns it gets its video back (paused)
-    videoState.open = false; ignoreLeave = Date.now() + 1500;
-    if (inBrowserPip(el)) { try { el.ownerDocument.exitPictureInPicture(); } catch (_) { /* ignore */ } }
-    vw_.hide();
-    if (W.__qmCur && W.__qmCur.el === el) W.__qmCur = null;
+    if (!pl) return;
+    try { vEl.pause(); } catch (_) { /* ignore */ }
+    ignoreLeave = Date.now() + 1500;
+    if (inBrowserPip(vEl)) { try { vEl.ownerDocument.exitPictureInPicture(); } catch (_) { /* ignore */ } }
+    videoState.open = false; vw_.hide();
+    if (W.__qmCur && W.__qmCur.el === vEl) W.__qmCur = null;
+    clearTimeout(disposeT); disposeT = setTimeout(() => { if (!videoState.open) dispose(); }, 60000);     // stays loaded for a minute in case it is started again
     bind();
   }
   /** a page's video scrolled away / the page is closing while it plays */
-  function handoff(s, el, restore) { try { return openVideo(typeof s === "string" ? JSON.parse(s) : s, el, restore); } catch (_) { return false; } }
-  /** the same video is on screen again: the player takes its element back (state returned, window closed) */
-  function take(src, el) {
+  function handoff(s, stop) { try { return openVideo(typeof s === "string" ? JSON.parse(s) : s, stop); } catch (_) { return false; } }
+  /** the same video is on screen again: its state (the window stays until the page's video really plays: done()) */
+  function take(src) {
     if (!videoState.open || videoState.src !== src || !vEl) return null;
-    const mine = el && vEl === el;
-    const s = { time: vEl.currentTime, playing: !vEl.paused, rate: vEl.playbackRate, volume: vEl.volume, muted: vEl.muted, same: !!mine, nativePip: inBrowserPip(vEl) };
-    if (mine) { ignoreLeave = Date.now() + 1500; vRestore = null; release(false); videoState.open = false; vw_.hide(); if (W.__qmCur && W.__qmCur.el === el) W.__qmCur = null; }
-    else closeVideo(false);
-    return JSON.stringify(s);
+    return JSON.stringify({ time: vEl.currentTime, playing: !vEl.paused, rate: vEl.playbackRate, volume: vEl.volume, muted: vEl.muted, nativePip: inBrowserPip(vEl) });
   }
-  // the browser's / Android's own picture-in-picture for the floating video (Android: unchanged)
-  async function nativePip() {
-    if (!vEl) return;
-    try {
-      const ap = W.QMApp && W.QMApp.enterVideoPip ? W.QMApp : null;
-      if (ap) {
-        const root = D.documentElement; root.classList.add("qm-bpip-native");
-        const el = vEl;
-        const end = () => { root.classList.remove("qm-bpip-native"); el.removeEventListener("play", sync); el.removeEventListener("pause", sync); el.removeEventListener("resize", ratio); delete W.__qmPipCtl; delete W.__qmPipEnded; };
-        const sync = () => { try { ap.setPipPlaying(!el.paused); } catch (_) { /* ignore */ } };
-        const ratio = () => { try { ap.setPipRatio(el.videoWidth || 16, el.videoHeight || 9); } catch (_) { /* ignore */ } };
-        W.__qmPipCtl = op => ctl(op); W.__qmPipEnded = end;
-        el.addEventListener("play", sync); el.addEventListener("pause", sync); el.addEventListener("resize", ratio);
-        if (el.paused) await el.play().catch(() => {});
-        ap.enterVideoPip(el.videoWidth || 16, el.videoHeight || 9, !el.paused); setTimeout(ratio, 400);
-        setTimeout(() => { let on = false; try { on = !!ap.inPip(); } catch (_) { /* ignore */ } if (!on) end(); }, 3000);
-        return;
-      }
-      if (vEl.webkitSupportsPresentationMode && vEl.webkitSupportsPresentationMode("picture-in-picture") && !vEl.requestPictureInPicture) { vEl.webkitSetPresentationMode(vEl.webkitPresentationMode === "picture-in-picture" ? "inline" : "picture-in-picture"); return; }
-      if (D.pictureInPictureElement === vEl) await D.exitPictureInPicture();
-      else { await vEl.requestPictureInPicture(); vw_.hide(); videoState.open = true; }
-    } catch (_) { /* can't be popped out now */ }
-  }
-  vw_.onVis = () => { vw_.bNative.hidden = !(D.pictureInPictureEnabled || (W.QMApp && W.QMApp.enterVideoPip) || (vEl && vEl.webkitSupportsPresentationMode)); };
+  const done = src => { if (videoState.open && videoState.src === src) closeVideo(false); };
+  vw_.onVis = () => {};
 
   // browsers switch to their own picture-in-picture by themselves when the tab is left (a playing video; else the call's window)
   function setAutoPipHandler() {
@@ -379,10 +347,10 @@ import { drawWave } from "./player.js";
   aClose.onclick = () => { const a = audio(); if (a) { cancel(a); } };
 
   // ------------------------------------------------------------ housekeeping
-  setInterval(() => { lost(); bind(); paintAudio(); nativeState(false); if (vEl && videoState.open) vPaint(); }, 400);
+  setInterval(() => { lost(); bind(); paintAudio(); nativeState(false); }, 400);
   let raf = 0;
   const loop = () => { raf = 0; const a = audio(); if (!aEl.hidden && a && !a.paused) { paintAudio(); raf = requestAnimationFrame(loop); } };
   setInterval(() => { if (!raf && !aEl.hidden) raf = requestAnimationFrame(loop); }, 400);
   addEventListener("resize", () => { if (videoState.open) sizeVideo(); });
-  W.__qmPip = { auto, handoff, take, closeVideo, callFloat, callIsFloating: () => cw_.shown, active: () => videoState.open && videoState.src, cancel };
+  W.__qmPip = { auto, handoff, take, done, warm, closeVideo, callFloat, callIsFloating: () => cw_.shown, active: () => videoState.open && videoState.src, cancel };
 })();
