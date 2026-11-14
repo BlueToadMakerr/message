@@ -266,11 +266,18 @@ export function audioPlayer(src, { title = "", name = "", wave: waveData = "", d
 }
 
 // ------------------------------------------------------------------ video
-export function videoPlayer(src, { poster = "", onLayout, autoplay = false, title = "", name = "", floating = false } = {}) {
+export function videoPlayer(src, { poster = "", onLayout, autoplay = false, title = "", name = "", floating = false, hostEl = null } = {}) {
   const root = mk("div", "qp qp-video paused");
   root.tabIndex = 0;
-  const v = document.createElement("video"); v.playsInline = true; v.preload = netSaver(src) ? "none" : "metadata"; v.src = src; if (poster) v.poster = poster; if (title) v.title = title;
-  v.setAttribute("webkit-playsinline", "");
+  // v0 is the picture's slot in this page. The element that really plays (v) is the single one kept in the top window (js/pip.js) once playing starts:
+  // it is never moved or reloaded, only placed over this slot (or over the floating window's). In the floating window (hostEl) it is that same element from the start.
+  const v0 = document.createElement("video"); v0.playsInline = true; v0.preload = hostEl ? "none" : netSaver(src) ? "none" : "metadata"; if (title) v0.title = title;
+  if (!hostEl) { v0.src = src; if (poster) v0.poster = poster; }
+  v0.setAttribute("webkit-playsinline", "");
+  let v = v0;
+  const L = [];                                                           // listeners that follow the playing element
+  const on = (t, fn, o) => { L.push([t, fn, o]); v.addEventListener(t, fn, o); };
+  const rebind = el => { for (const [t, fn, o] of L) { try { v.removeEventListener(t, fn, o); } catch (_) { /* ignore */ } el.addEventListener(t, fn, o); } v = el; };
   const big = btn("qp-big", "Play", icon("play", 34));
   const bar = mk("div", "qp-bar");
   const play = btn("qp-btn qp-play", "Play", icon("play", 18));
@@ -282,28 +289,42 @@ export function videoPlayer(src, { poster = "", onLayout, autoplay = false, titl
   const vol = document.createElement("input"); vol.type = "range"; vol.min = 0; vol.max = 1; vol.step = 0.05; vol.value = 1; vol.className = "qp-vol"; vol.setAttribute("aria-label", "Volume");
   const spd = btn("qp-btn qp-speed", "Playback speed", "1×");
   const inApp = !!(window.QMApp && window.QMApp.enterVideoPip);                                            // the Android app: its own picture-in-picture
-  const safariPip = !!(v.webkitSupportsPresentationMode && v.webkitSupportsPresentationMode("picture-in-picture"));
-  const canPip = inApp || safariPip || !!(document.pictureInPictureEnabled && !v.disablePictureInPicture && v.requestPictureInPicture);
+  const safariPip = !!(v0.webkitSupportsPresentationMode && v0.webkitSupportsPresentationMode("picture-in-picture"));
+  const canPip = inApp || safariPip || !!(document.pictureInPictureEnabled && !v0.disablePictureInPicture && v0.requestPictureInPicture);
   const pip = canPip ? btn("qp-btn", "Picture in picture", icon("pip", 18)) : null;
   const fs = btn("qp-btn", "Full screen", icon("maximize", 18));
   const dl = btn("qp-btn", "Download", icon("download", 18)); dl.onclick = () => downloadMedia(src, name || title);
   const more = btn("qp-btn qp-more", "More", icon("more", 18));
   bar.append(play, cur, seek, dur, mute, vol, spd, ...(pip ? [pip] : []), dl, more, fs);
-  root.append(v, big, bar);
+  root.append(v0, big, bar);
 
   const setPlaying = p => { root.classList.toggle("paused", !p); play.innerHTML = icon(p ? "pause" : "play", 18); big.innerHTML = icon("play", 34); play.title = p ? "Pause" : "Play"; };
-  v.addEventListener("play", () => { exclusive(v); setPlaying(true); wake(); });
-  v.addEventListener("pause", () => { setPlaying(false); root.classList.add("show"); });
-  v.addEventListener("ended", () => { root.classList.add("show"); });
+  on("play", () => { exclusive(v); setPlaying(true); wake(); });
+  on("pause", () => { setPlaying(false); root.classList.add("show"); });
+  on("ended", () => { root.classList.add("show"); });
   const upd = () => { const d = v.duration || 0; fill.style.width = knob.style.left = (d ? v.currentTime / d * 100 : 0) + "%"; cur.textContent = fmt(v.currentTime); dur.textContent = fmt(d); if (v.buffered.length && d) buf.style.width = v.buffered.end(v.buffered.length - 1) / d * 100 + "%"; };
-  v.addEventListener("timeupdate", upd); v.addEventListener("progress", upd); v.addEventListener("durationchange", upd);
-  v.addEventListener("loadedmetadata", () => { upd(); onLayout && onLayout(v); });
-  v.addEventListener("error", () => { root.classList.add("failed"); cur.textContent = "Can't play"; });
-  v.addEventListener("volumechange", () => { mute.innerHTML = icon(v.muted || v.volume === 0 ? "volumeX" : "volume", 18); vol.value = v.muted ? 0 : v.volume; });
-  const toggle = () => (v.paused ? v.play().catch(() => {}) : v.pause());
+  on("timeupdate", upd); on("progress", upd); on("durationchange", upd);
+  on("loadedmetadata", () => { upd(); if (v !== v0 && v.videoWidth && !v0.videoWidth) v0.style.aspectRatio = v.videoWidth + " / " + v.videoHeight; onLayout && onLayout(v); });
+  on("error", () => { root.classList.add("failed"); cur.textContent = "Can't play"; });
+  on("volumechange", () => { mute.innerHTML = icon(v.muted || v.volume === 0 ? "volumeX" : "volume", 18); vol.value = v.muted ? 0 : v.volume; });
+  // the playing element is hosted by the top window (js/pip.js): same element for the chat and the floating window, so scrolling away never swaps or pauses anything
+  const canHost = () => { try { return !floating && !hostEl && !!TOP.__qmPip && !!TOP.__qmPip.attach && TOP.__qmPip.auto(); } catch (_) { return false; } };
+  const syncUI = () => { upd(); setPlaying(!v.paused); mute.innerHTML = icon(v.muted || v.volume === 0 ? "volumeX" : "volume", 18); vol.value = v.muted ? 0 : v.volume; spd.textContent = rateText(v.playbackRate || 1); if (!v.paused) wake(); };
+  const ensureHost = () => {
+    if (!canHost()) return;
+    try {
+      const P = TOP.__qmPip, info = { chat: chatOf(), key: msgKeyOf(root), title: vtitle() };
+      let el = P.existing(src);
+      if (el) P.setInline(src, v0, info);
+      else el = P.attach({ src, poster, title: vtitle(), name, slot: v0, time: v0.currentTime, rate: v0.playbackRate, volume: v0.volume, muted: v0.muted, ...info });
+      if (el && el !== v) { rebind(el); v0.style.visibility = "hidden"; if (el.videoWidth) v0.style.aspectRatio = el.videoWidth + " / " + el.videoHeight; syncUI(); }
+    } catch (_) { /* play here instead */ }
+  };
+  const playV = () => { ensureHost(); return v.play(); };
+  const toggle = () => (v.paused ? playV().catch(() => {}) : v.pause());
   play.onclick = toggle; big.onclick = toggle;
-  v.addEventListener("click", () => { toggle(); });
-  v.addEventListener("dblclick", () => fs.click());
+  root.addEventListener("click", e => { if (e.target === v0 || e.target === root) toggle(); });
+  root.addEventListener("dblclick", e => { if (e.target === v0 || e.target === root) fs.click(); });
   mute.onclick = () => { v.muted = !v.muted; };
   vol.oninput = () => { v.muted = false; v.volume = +vol.value; };
   spd.onclick = () => speedMenu(spd, v, document.fullscreenElement === root ? root : document.body, r => { spd.textContent = rateText(r); });
@@ -321,14 +342,16 @@ export function videoPlayer(src, { poster = "", onLayout, autoplay = false, titl
         TOP.__qmPipCtl = op => { if (op === "toggle") (v.paused ? v.play().catch(() => {}) : v.pause()); else v.currentTime = Math.max(0, Math.min(v.duration || 1e9, v.currentTime + (op === "back" ? -10 : 10))); };
         TOP.__qmPipEnded = end;
         v.addEventListener("play", sync); v.addEventListener("pause", sync); v.addEventListener("resize", ratio);
-        if (v.paused) await v.play().catch(() => {});
+        if (v.paused) await playV().catch(() => {});
         window.QMApp.enterVideoPip(v.videoWidth || 16, v.videoHeight || 9, !v.paused); setTimeout(ratio, 400);
         setTimeout(() => { let on = false; try { on = !!window.QMApp.inPip(); } catch (_) { /* ignore */ } if (!on) end(); }, 3000);   // Android refused: undo
         return;
       }
+      ensureHost();
       if (v.readyState < 1) await new Promise(r => { v.addEventListener("loadedmetadata", r, { once: true }); setTimeout(r, 4000); });
       if (safariPip && !v.requestPictureInPicture) { v.webkitSetPresentationMode(v.webkitPresentationMode === "picture-in-picture" ? "inline" : "picture-in-picture"); return; }
-      if (document.pictureInPictureElement === v) await document.exitPictureInPicture(); else await v.requestPictureInPicture();
+      const d = v.ownerDocument;
+      if (d.pictureInPictureElement === v) await d.exitPictureInPicture(); else await v.requestPictureInPicture();
     } catch (_) { /* this video can't be popped out right now */ }
   };
   if (pip) pip.onclick = doPip;
@@ -341,10 +364,11 @@ export function videoPlayer(src, { poster = "", onLayout, autoplay = false, titl
     { el: dur },
   ], more, v, () => (document.fullscreenElement === root ? root : document.body));
   fs.onclick = () => {
+    if (v !== v0 && !hostEl) { try { TOP.__qmPip.fullscreen(); return; } catch (_) { /* fall through */ } }
     const on = document.fullscreenElement || document.webkitFullscreenElement;
     if (on) (document.exitFullscreen || document.webkitExitFullscreen).call(document);
     else if (root.requestFullscreen) root.requestFullscreen().catch(() => {});
-    else if (v.webkitEnterFullscreen) v.webkitEnterFullscreen();
+    else if (v0.webkitEnterFullscreen) v0.webkitEnterFullscreen();
   };
   document.addEventListener("fullscreenchange", () => { const on = document.fullscreenElement === root; root.classList.toggle("fullscreen", on); fs.innerHTML = icon(on ? "minimize" : "maximize", 18); });
   let dragging = false;
@@ -362,49 +386,22 @@ export function videoPlayer(src, { poster = "", onLayout, autoplay = false, titl
   let hideT = null;
   function wake() { root.classList.add("show"); clearTimeout(hideT); if (!v.paused) hideT = setTimeout(() => root.classList.remove("show"), 2500); }
   root.addEventListener("pointermove", wake); root.addEventListener("pointerdown", wake); root.addEventListener("focusin", wake);
-  // ---- floating player (js/pip.js): a playing video that scrolls out of view, or whose page closes, carries on in the built-in window. Nothing is
-  // moved or reloaded: the window's own copy is kept warm near the playing position, starts silently while this video still plays, and this one
-  // is only stopped once the other is really playing in step (so there is no pause). When this video is on screen again it goes the other way.
-  // (The window's own player is made with floating: true and does none of this.)
-  const topPip = () => { try { return !floating && TOP.__qmPip && TOP.__qmPip.auto() ? TOP.__qmPip : null; } catch (_) { return null; } };
   const vtitle = () => title || name || "Video";
-  let handed = false, onScreen = true, warmT = 0;
-  const meta = () => ({ src, poster, title: vtitle(), name });
-  const warm = () => { const p = topPip(); if (p && !handed && !v.paused) { try { p.warm(meta(), v.currentTime); } catch (_) { /* ignore */ } } };
-  v.addEventListener("play", () => {
+  on("play", () => {
     try { if (TOP.__qmAudio && !TOP.__qmAudio.paused) TOP.__qmAudio.pause(); } catch (_) { /* ignore */ }
     TOP.__qmCur = { el: v, title: vtitle(), kind: "video", src };
-    if (!floating) { clearInterval(warmT); warm(); warmT = setInterval(warm, 2000); }
   });
-  v.addEventListener("pause", () => clearInterval(warmT)); v.addEventListener("ended", () => clearInterval(warmT));
-  const inPip = () => { try { return document.pictureInPictureElement === v; } catch (_) { return false; } };
-  const give = closing => {
-    const p = topPip(); if (!p || v.paused || v.ended || handed) return;
-    if (inPip() && !closing) return;                       // playing in the browser's own picture-in-picture: leave it be
-    const s = { ...meta(), time: v.currentTime, playing: true, rate: v.playbackRate, volume: v.volume, muted: v.muted, chat: chatOf(), key: msgKeyOf(root), nativePip: inPip() };
-    // closing: this page is going away, the window starts at once; else this video keeps playing until the window's copy is running in step
-    if (p.handoff(s, closing ? null : { time: () => v.currentTime, stop: () => { handed = true; try { v.pause(); } catch (_) { /* ignore */ } } })) { if (closing) handed = true; else handed = "pending"; }
-  };
-  const adopt = () => {
-    let raw = null; try { raw = TOP.__qmPip && TOP.__qmPip.take(src); } catch (_) { /* ignore */ }
-    if (!raw) return;
-    const s = JSON.parse(raw); handed = false;
-    const finish = () => { try { TOP.__qmPip.done(src); } catch (_) { /* ignore */ } };
-    try { v.playbackRate = s.rate; v.volume = s.volume; } catch (_) { /* ignore */ }
-    const go = () => {
-      try { v.currentTime = s.time + (s.playing ? 0.12 : 0); } catch (_) { /* ignore */ }
-      if (!s.playing) { v.muted = s.muted; finish(); return; }
-      v.muted = true;                                      // silent until it plays in step with the window's copy, which carries on meanwhile
-      v.addEventListener("playing", () => { v.muted = s.muted; finish(); }, { once: true });
-      v.play().catch(() => { v.muted = s.muted; finish(); });
-      setTimeout(() => { v.muted = s.muted; finish(); }, 2500);
-    };
-    if (v.readyState >= 1) go(); else { v.preload = "auto"; v.addEventListener("loadedmetadata", go, { once: true }); v.load(); }
-  };
-  v.addEventListener("leavepictureinpicture", () => { if (!onScreen) give(); });   // the browser's picture-in-picture was closed while this is out of view
-  if (!floating && "IntersectionObserver" in window) new IntersectionObserver(es => { for (const e of es) { onScreen = e.intersectionRatio > 0.15; if (onScreen) { if (handed === "pending") handed = false; adopt(); } else give(); } }, { threshold: [0, 0.15, 0.4] }).observe(root);
-  if (!floating) addEventListener("pagehide", () => { clearInterval(warmT); give(true); });
-  if (autoplay) v.play().catch(() => {});
-  root.video = v;
+  root.dispose = () => { for (const [t, fn, o] of L) { try { v.removeEventListener(t, fn, o); } catch (_) { /* ignore */ } } L.length = 0; };
+  if (hostEl) {                                          // the floating window: the same element, this page only holds the slot and the controls
+    v0.style.visibility = "hidden"; rebind(hostEl); root.slot = v0;
+    const size = () => { v0.style.aspectRatio = hostEl.videoWidth ? hostEl.videoWidth + " / " + hostEl.videoHeight : "16 / 9"; };
+    size(); hostEl.addEventListener("loadedmetadata", size, { once: true });
+    syncUI();
+  } else {
+    addEventListener("pagehide", () => { try { TOP.__qmPip && TOP.__qmPip.slotGone(v0); } catch (_) { /* ignore */ } root.dispose(); });
+    if (canHost() && TOP.__qmPip.existing(src)) ensureHost();      // this video is already playing (the chat was left and opened again)
+  }
+  if (autoplay) playV().catch(() => {});
+  root.video = v0; root.slot = v0;
   return root;
 }

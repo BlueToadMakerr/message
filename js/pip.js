@@ -21,6 +21,9 @@ import { drawWave, videoPlayer } from "./player.js";
   const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
   const iosMedia = on => { try { W.webkit.messageHandlers.qmNotify.postMessage({ op: "media", on: !!on }); } catch (_) { /* not the iPhone app */ } };
 
+  // safe areas (status bar / notch / home bar): a window must never rest under them
+  const probe = mk("div"); probe.style.cssText = "position:fixed;visibility:hidden;pointer-events:none;padding:env(safe-area-inset-top,0px) env(safe-area-inset-right,0px) env(safe-area-inset-bottom,0px) env(safe-area-inset-left,0px)"; D.body.append(probe);
+  const insets = () => { const c = getComputedStyle(probe); return { t: parseFloat(c.paddingTop) || 0, r: parseFloat(c.paddingRight) || 0, b: parseFloat(c.paddingBottom) || 0, l: parseFloat(c.paddingLeft) || 0 }; };
   // ------------------------------------------------------------ edge tabs: drag them anywhere along either side
   function makeTab(iconName, id, defTop) {
     const tab = mk("button", "qmpip-tab"); tab.id = "qmPipTab" + id; tab.type = "button"; tab.hidden = true; tab.innerHTML = icon(iconName, 18);
@@ -28,7 +31,7 @@ import { drawWave, videoPlayer } from "./player.js";
     D.body.append(tab);
     const pos = json("qm-pip-tab-" + id) || { side: "right", y: defTop };
     const apply = () => {
-      pos.y = clamp(pos.y, 4, Math.max(4, innerHeight - 52));
+      const I = insets(); pos.y = clamp(pos.y, I.t + 6, Math.max(I.t + 6, innerHeight - I.b - 52));
       tab.style.top = pos.y + "px"; tab.classList.toggle("left", pos.side === "left");
       tab.style.left = pos.side === "left" ? "0" : "auto"; tab.style.right = pos.side === "left" ? "auto" : "0";
     };
@@ -61,17 +64,19 @@ import { drawWave, videoPlayer } from "./player.js";
     D.body.append(el);
     const tab = makeTab(tabIconName, id, tabTop);
     const w = { id, el, head, title, body, bar, tab, bOpen, bNative, bMin, bClose, min: false, shown: false, x: null, y: null, ratio: 16 / 9, onMove: null, onVis: null };
-    const place = () => {
-      const vw = innerWidth, vh = innerHeight, pw = el.offsetWidth || 240, ph = el.offsetHeight || 160;
+    // soft: while dragging the window may be pulled a little past the border; when let go it snaps back inside
+    const place = soft => {
+      const vw = innerWidth, vh = innerHeight, pw = el.offsetWidth || 240, ph = el.offsetHeight || 160, I = insets(), g = 6, o = soft ? 40 : 0;
       if (w.x == null) { const s = json("qm-pip-pos-" + id); w.x = s ? s.x : vw - pw - 12; w.y = s ? s.y : vh - ph - 90; }
-      w.x = clamp(w.x, 4, Math.max(4, vw - pw - 4)); w.y = clamp(w.y, 4, Math.max(4, vh - ph - 4));
+      const minX = I.l + g - o, maxX = vw - I.r - pw - g + o, minY = I.t + g - o, maxY = vh - I.b - ph - g + o;
+      w.x = clamp(w.x, minX, Math.max(minX, maxX)); w.y = clamp(w.y, minY, Math.max(minY, maxY));
       el.style.left = w.x + "px"; el.style.top = w.y + "px"; w.onMove && w.onMove();
     };
     w.place = place;
     let drag = null;
     head.addEventListener("pointerdown", e => { if (e.target.closest("button")) return; drag = { dx: e.clientX - w.x, dy: e.clientY - w.y }; head.setPointerCapture(e.pointerId); e.preventDefault(); });
-    head.addEventListener("pointermove", e => { if (!drag) return; w.x = e.clientX - drag.dx; w.y = e.clientY - drag.dy; place(); });
-    head.addEventListener("pointerup", () => { if (drag) { drag = null; store.set("qm-pip-pos-" + id, JSON.stringify({ x: w.x, y: w.y })); } });
+    head.addEventListener("pointermove", e => { if (!drag) return; w.x = e.clientX - drag.dx; w.y = e.clientY - drag.dy; place(true); });
+    head.addEventListener("pointerup", () => { if (drag) { drag = null; el.style.transition = "left .16s, top .16s"; place(); setTimeout(() => { el.style.transition = ""; }, 200); store.set("qm-pip-pos-" + id, JSON.stringify({ x: w.x, y: w.y })); } });
     // resize (bottom-right corner), keeps the picture's shape
     let rs = null;
     grip.addEventListener("pointerdown", e => { rs = { x: e.clientX, y: e.clientY, w: el.offsetWidth }; grip.setPointerCapture(e.pointerId); e.preventDefault(); e.stopPropagation(); });
@@ -165,98 +170,135 @@ import { drawWave, videoPlayer } from "./player.js";
     if (gone) W.__qmCur = null;
   }
 
-  // ------------------------------------------------------------ the video window
-  // The window holds a real videoPlayer (the same controls as in the chat, shown below the picture and always visible). To hand a playing video over
-  // without a pause, its element is kept warm (loaded, parked near the playing position), the chat's video carries on while the window's one starts
-  // silently, and only when that one is really playing and in step is the chat's stopped. Getting it back works the same way in reverse.
+  // ------------------------------------------------------------ the video: ONE element for its whole life
+  // The playing <video> lives here in the top window, in a layer that is never moved, reloaded or re-created. A chat's player only holds an
+  // empty slot (its controls bind to this element); the layer is placed over the slot, clipped to what is visible. When the slot scrolls out of
+  // view (or its page closes) the layer is simply placed over the floating window's slot instead, so nothing is swapped and nothing pauses.
   const videoState = { open: false, src: "", chat: "", key: "", title: "" };
-  let pl = null, vEl = null, disposeT = 0, startGuard = 0;
+  let V = null, pl = null, vEl = null, idleT = 0, vraf = 0;
+  const host = mk("div", "qmvhost"); host.hidden = true; D.body.append(host);
   vw_.bar.hidden = true; vw_.bNative.hidden = true; vw_.auto = true;
   const gotoMsg = (chat, key) => { if (chat && W.QM) { if (key && W.QM.openChatAt) W.QM.openChatAt(chat, key); else if (W.QM.openChat) W.QM.openChat(chat); } };
   vw_.bClose.onclick = () => closeVideo(true);
   vw_.bOpen.onclick = () => gotoMsg(videoState.chat, videoState.key);
   const inBrowserPip = el => { try { return !!el && el.ownerDocument.pictureInPictureElement === el; } catch (_) { return false; } };
-  const onLeavePip = () => {          // the browser's own picture-in-picture was closed: this window takes over, so it keeps playing on the site
-    if (ignoreLeave > Date.now()) return;
-    if (videoState.open && vEl && !vw_.shown) vw_.show();
+
+  // where a slot (in this window or in a frame) is on screen, in this window's coordinates, and how much of it can be seen
+  const cut = (a, b) => ({ l: Math.max(a.l, b.l), t: Math.max(a.t, b.t), r: Math.min(a.r, b.r), b: Math.min(a.b, b.b) });
+  function measure(slot) {
+    try {
+      let w = slot.ownerDocument.defaultView; if (!slot.isConnected || !w) return null;
+      const q = slot.getBoundingClientRect(); if (!q.width || !q.height) return null;
+      let full = { l: q.left, t: q.top, r: q.right, b: q.bottom }, vis = { ...full };
+      for (let e = slot.parentElement; e; e = e.parentElement) {
+        const cs = w.getComputedStyle(e);
+        if (cs.overflowX !== "visible" || cs.overflowY !== "visible") { const r = e.getBoundingClientRect(); vis = cut(vis, { l: r.left, t: r.top, r: r.right, b: r.bottom }); }
+      }
+      vis = cut(vis, { l: 0, t: 0, r: w.innerWidth, b: w.innerHeight });
+      while (w !== W) {
+        const fe = w.frameElement; if (!fe) return null;
+        const r = fe.getBoundingClientRect(), ox = r.left + fe.clientLeft, oy = r.top + fe.clientTop;
+        full = { l: full.l + ox, t: full.t + oy, r: full.r + ox, b: full.b + oy }; vis = { l: vis.l + ox, t: vis.t + oy, r: vis.r + ox, b: vis.b + oy };
+        vis = cut(vis, { l: r.left, t: r.top, r: r.right, b: r.bottom }); w = w.parent;
+      }
+      const area = Math.max(0, vis.r - vis.l) * Math.max(0, vis.b - vis.t);
+      return { full, vis, frac: area / ((full.r - full.l) * (full.b - full.t)) };
+    } catch (_) { return null; }
+  }
+  const putHost = m => {
+    if (!m || m.frac <= 0) { host.style.visibility = "hidden"; return; }
+    const f = m.full, v = m.vis, s = host.style;
+    s.visibility = ""; s.left = f.l + "px"; s.top = f.t + "px"; s.width = (f.r - f.l) + "px"; s.height = (f.b - f.t) + "px";
+    s.clipPath = `inset(${Math.max(0, v.t - f.t)}px ${Math.max(0, f.r - v.r)}px ${Math.max(0, f.b - v.b)}px ${Math.max(0, v.l - f.l)}px)`;
   };
-  const onMeta = () => { if (vEl && vEl.videoWidth) { vw_.ratio = vEl.videoWidth / vEl.videoHeight; } };
-  function dispose() {
-    clearTimeout(disposeT);
-    if (!pl) return;
-    try { vEl.pause(); vEl.removeEventListener("loadedmetadata", onMeta); vEl.removeEventListener("leavepictureinpicture", onLeavePip); } catch (_) { /* ignore */ }
-    try { vEl.removeAttribute("src"); vEl.load(); } catch (_) { /* ignore */ }
-    try { pl.remove(); } catch (_) { /* ignore */ }
-    if (W.__qmCur && W.__qmCur.el === vEl) W.__qmCur = null;
-    pl = vEl = null;
-  }
-  function ensure(meta) {
-    if (pl && pl._src === meta.src) { clearTimeout(disposeT); return pl; }
-    dispose();
-    pl = videoPlayer(meta.src, { poster: meta.poster || "", title: meta.title || "", name: meta.name || "", floating: true });
-    pl._src = meta.src; vEl = pl.video; vEl.preload = "auto";
-    vEl.addEventListener("loadedmetadata", onMeta); vEl.addEventListener("leavepictureinpicture", onLeavePip);
-    vw_.body.append(pl);
-    return pl;
-  }
-  /** a video is playing in a chat: keep this window's copy loaded around the same spot, so taking over later starts at once */
-  function warm(meta, t) {
-    if (!auto()) return;
-    if (videoState.open && videoState.src !== meta.src) return;
-    ensure(meta);
-    if (!videoState.open && isFinite(t) && Math.abs((vEl.currentTime || 0) - t) > 4) { try { vEl.currentTime = t; } catch (_) { /* ignore */ } }
-  }
-  /** s: { src, time, playing, rate, volume, muted, title, name, poster, chat, key, nativePip }; stop: { time(), stop() } of the chat's own video, still playing */
-  function openVideo(s, stop) {
-    if (!auto()) return false;
-    ensure(s); clearTimeout(disposeT);
-    Object.assign(videoState, { open: true, src: s.src, chat: s.chat || "", key: s.key || "", title: s.title || "" });
-    vw_.title.textContent = s.title || "Video"; vw_.bOpen.hidden = !videoState.chat;
-    const el = vEl, t = +s.time || 0, wasNative = !!s.nativePip || inBrowserPip(el);
-    const shouldBe = () => { try { el.playbackRate = s.rate || 1; el.volume = typeof s.volume === "number" ? s.volume : 1; el.muted = !!s.muted; } catch (_) { /* ignore */ } };
-    let done = false;
-    const finish = () => {
-      if (done) return; done = true; clearTimeout(startGuard);
-      if (stop) { try { const o = stop.time(); if (isFinite(o) && Math.abs(o - el.currentTime) > 0.25) el.currentTime = o + 0.05; } catch (_) { /* ignore */ } }
-      shouldBe();
-      if (stop) { try { stop.stop(); } catch (_) { /* ignore */ } }
-    };
-    try { el.playbackRate = s.rate || 1; el.volume = typeof s.volume === "number" ? s.volume : 1; } catch (_) { /* ignore */ }
-    el.muted = stop ? true : !!s.muted;                    // silent until it is in step with the chat's video, which is still sounding
-    const start = () => {
-      try { el.currentTime = t + (stop ? 0.12 : 0); } catch (_) { /* ignore */ }
-      if (s.playing) { el.addEventListener("playing", finish, { once: true }); el.play().catch(() => finish()); startGuard = setTimeout(finish, 2500); } else finish();
-    };
-    if (el.readyState >= 1) start(); else el.addEventListener("loadedmetadata", start, { once: true });
-    W.__qmCur = { el, title: s.title || "Video", kind: "video", src: s.src };
-    if (wasNative) {            // it was in the browser's picture-in-picture: put it back there and keep this window out of the way until that is closed
-      vw_.shown = false; vw_.sync(); sizeVideo();
-      const again = () => el.requestPictureInPicture().catch(() => { vw_.show(); });
-      if (el.readyState >= 1) again(); else el.addEventListener("loadedmetadata", again, { once: true });
-    } else { vw_.show(); sizeVideo(); }
-    bind();
-    return true;
-  }
+
   function sizeVideo() { const saved = +store.get("qm-pip-w-video") || 0; vw_.setWidth(saved || clamp(Math.round(innerWidth * (innerWidth < 600 ? 0.62 : 0.3)), 220, 380)); }
-  function closeVideo(userClosed) {
-    if (!pl) return;
-    try { vEl.pause(); } catch (_) { /* ignore */ }
-    ignoreLeave = Date.now() + 1500;
-    if (inBrowserPip(vEl)) { try { vEl.ownerDocument.exitPictureInPicture(); } catch (_) { /* ignore */ } }
-    videoState.open = false; vw_.hide();
-    if (W.__qmCur && W.__qmCur.el === vEl) W.__qmCur = null;
-    clearTimeout(disposeT); disposeT = setTimeout(() => { if (!videoState.open) dispose(); }, 60000);     // stays loaded for a minute in case it is started again
+  function showFloat() {
+    if (!V || V.mode === "float") return;
+    V.mode = "float"; videoState.open = true;
+    pl = videoPlayer(V.src, { poster: V.meta.poster || "", title: V.meta.title || "", name: V.meta.name || "", floating: true, hostEl: V.el });
+    vw_.body.append(pl);
+    Object.assign(videoState, { src: V.src, chat: V.meta.chat || "", key: V.meta.key || "", title: V.meta.title || "" });
+    vw_.title.textContent = V.meta.title || "Video"; vw_.bOpen.hidden = !videoState.chat;
+    vw_.show(); sizeVideo();
+  }
+  function hideFloat() {
+    if (pl) { try { pl.dispose(); pl.remove(); } catch (_) { /* ignore */ } pl = null; }
+    if (V) V.mode = "inline";
+    videoState.open = false; if (vw_.shown) vw_.hide();
+  }
+  function tick() {
+    vraf = 0; if (!V) return;
+    const el = V.el, playing = !el.paused && !el.ended, inl = V.inline ? measure(V.inline.slot) : null;
+    let want;
+    if (inBrowserPip(el)) want = "native";
+    else if (inl && inl.frac >= (V.mode === "float" ? 0.4 : 0.12)) want = "inline";
+    else if ((playing || V.mode === "float") && auto() && !V.closed) want = "float";
+    else want = "hidden";
+    if (want === "inline" && V.mode === "float") hideFloat();
+    else if (want === "float" && V.mode !== "float") showFloat();
+    else if ((want === "native" || want === "hidden") && V.mode === "float") hideFloat();
+    host.hidden = false;
+    if (want === "inline") putHost(inl);
+    else if (want === "float" && pl && !vw_.min && vw_.shown) putHost(measure(pl.slot));
+    else host.style.visibility = "hidden";
+    host.classList.toggle("native", want === "native"); host.classList.toggle("fl", want === "float");
+    // not playing and nowhere to show: let go of it after a while
+    if (!playing && want === "hidden") { if (!idleT) idleT = setTimeout(() => { idleT = 0; if (V && V.el.paused && !V.inline) dropVideo(); }, 60000); } else if (idleT) { clearTimeout(idleT); idleT = 0; }
+    start();
+  }
+  function start() { if (!vraf && V) vraf = requestAnimationFrame(tick); }
+  setInterval(() => { if (V && !vraf) vraf = requestAnimationFrame(tick); }, 500);   // also while the tab is in the background (frames are throttled there)
+
+  /** the element for a video that is already hosted (a chat opened again while it plays), or null */
+  const existing = src => (V && V.src === src ? V.el : null);
+  /** a chat's player starts a video: o = { src, poster, title, name, slot, chat, key, time, rate, volume, muted }; returns the element (not started) */
+  function attach(o) {
+    if (!auto() && !o.force) return null;
+    if (V && V.src === o.src) { setInline(o.src, o.slot, o); return V.el; }
+    if (V) dropVideo();
+    const el = D.createElement("video"); el.playsInline = true; el.setAttribute("webkit-playsinline", ""); el.preload = "auto"; el.src = o.src; if (o.poster) el.poster = o.poster; if (o.title) el.title = o.title;
+    try { el.playbackRate = o.rate || 1; el.volume = typeof o.volume === "number" ? o.volume : 1; el.muted = !!o.muted; } catch (_) { /* ignore */ }
+    const t = +o.time || 0; if (t > 0) el.addEventListener("loadedmetadata", () => { try { el.currentTime = t; } catch (_) { /* ignore */ } }, { once: true });
+    host.append(el);
+    V = { src: o.src, el, meta: { poster: o.poster, title: o.title, name: o.name, chat: o.chat, key: o.key }, inline: { slot: o.slot }, mode: "inline", closed: false };
+    vEl = el;
+    el.addEventListener("leavepictureinpicture", () => { ignoreLeave > Date.now() || start(); });
+    W.__qmCur = { el, title: o.title || o.name || "Video", kind: "video", src: o.src };
+    bind(); start();
+    return el;
+  }
+  function setInline(src, slot, o) {
+    if (!V || V.src !== src) return;
+    V.inline = { slot }; V.closed = false;
+    if (o) { V.meta = { ...V.meta, chat: o.chat || V.meta.chat, key: o.key || V.meta.key, title: o.title || V.meta.title }; videoState.chat = V.meta.chat || ""; videoState.key = V.meta.key || ""; }
+    start();
+  }
+  /** the page that held the slot is going away (or the slot was removed): a playing video carries on in the window */
+  function slotGone(slot) { if (V && V.inline && V.inline.slot === slot) { V.inline = null; if (V.el.paused) dropVideo(); else start(); } }
+  function dropVideo() {
+    if (!V) return;
+    const el = V.el; ignoreLeave = Date.now() + 1500;
+    try { el.pause(); } catch (_) { /* ignore */ }
+    if (inBrowserPip(el)) { try { el.ownerDocument.exitPictureInPicture(); } catch (_) { /* ignore */ } }
+    hideFloat();
+    try { el.removeAttribute("src"); el.load(); el.remove(); } catch (_) { /* ignore */ }
+    if (W.__qmCur && W.__qmCur.el === el) W.__qmCur = null;
+    V = null; vEl = null; host.hidden = true; clearTimeout(idleT); idleT = 0;
     bind();
   }
-  /** a page's video scrolled away / the page is closing while it plays */
-  function handoff(s, stop) { try { return openVideo(typeof s === "string" ? JSON.parse(s) : s, stop); } catch (_) { return false; } }
-  /** the same video is on screen again: its state (the window stays until the page's video really plays: done()) */
-  function take(src) {
-    if (!videoState.open || videoState.src !== src || !vEl) return null;
-    return JSON.stringify({ time: vEl.currentTime, playing: !vEl.paused, rate: vEl.playbackRate, volume: vEl.volume, muted: vEl.muted, nativePip: inBrowserPip(vEl) });
+  function closeVideo() { dropVideo(); }
+  function fullscreen() {
+    if (!V) return;
+    const el = V.el, on = D.fullscreenElement === host || D.webkitFullscreenElement === host;
+    if (on) { (D.exitFullscreen || D.webkitExitFullscreen).call(D); return; }
+    el.controls = true; host.style.pointerEvents = "auto";
+    const done = () => { if (!(D.fullscreenElement === host)) { el.controls = false; host.style.pointerEvents = ""; D.removeEventListener("fullscreenchange", done); } };
+    D.addEventListener("fullscreenchange", done);
+    (host.requestFullscreen || host.webkitRequestFullscreen || (() => Promise.reject())).call(host).catch(() => { if (el.webkitEnterFullscreen) el.webkitEnterFullscreen(); });
   }
-  const done = src => { if (videoState.open && videoState.src === src) closeVideo(false); };
-  vw_.onVis = () => {};
+  vw_.onVis = () => { start(); };
+  addEventListener("resize", start);
 
   // browsers switch to their own picture-in-picture by themselves when the tab is left (a playing video; else the call's window)
   function setAutoPipHandler() {
@@ -309,15 +351,15 @@ import { drawWave, videoPlayer } from "./player.js";
   let aMinimised = false, aDismissed = null, aPos = null, aDrag = null;
   const audio = () => { const a = W.__qmAudio; return a && a.dataset && a.dataset.src ? a : null; };
   const inView = a => !!(W.__qmInView && W.__qmInView[a.dataset.src]);
-  const aPlace = () => {
-    const vw = innerWidth, vh = innerHeight, pw = aEl.offsetWidth || 340, ph = aEl.offsetHeight || 80;
+  const aPlace = soft => {
+    const vw = innerWidth, vh = innerHeight, pw = aEl.offsetWidth || 340, ph = aEl.offsetHeight || 80, I = insets(), g = 6, o = soft ? 40 : 0;
     if (!aPos) { const s = json("qm-pip-pos-audio"); aPos = s || { x: (vw - pw) / 2, y: vh - ph - 18 - 20 }; }
-    aPos.x = clamp(aPos.x, 4, Math.max(4, vw - pw - 4)); aPos.y = clamp(aPos.y, 4, Math.max(4, vh - ph - 4));
+    aPos.x = clamp(aPos.x, I.l + g - o, Math.max(I.l + g - o, vw - I.r - pw - g + o)); aPos.y = clamp(aPos.y, I.t + g - o, Math.max(I.t + g - o, vh - I.b - ph - g + o));
     aEl.style.left = aPos.x + "px"; aEl.style.top = aPos.y + "px";
   };
   aTop.addEventListener("pointerdown", e => { if (e.target.closest("button")) return; aPlace(); aDrag = { dx: e.clientX - aPos.x, dy: e.clientY - aPos.y }; aTop.setPointerCapture(e.pointerId); e.preventDefault(); });
-  aTop.addEventListener("pointermove", e => { if (!aDrag) return; aPos.x = e.clientX - aDrag.dx; aPos.y = e.clientY - aDrag.dy; aPlace(); });
-  aTop.addEventListener("pointerup", () => { if (aDrag) { aDrag = null; store.set("qm-pip-pos-audio", JSON.stringify(aPos)); } });
+  aTop.addEventListener("pointermove", e => { if (!aDrag) return; aPos.x = e.clientX - aDrag.dx; aPos.y = e.clientY - aDrag.dy; aPlace(true); });
+  aTop.addEventListener("pointerup", () => { if (aDrag) { aDrag = null; aEl.style.transition = "left .16s, top .16s"; aPlace(); setTimeout(() => { aEl.style.transition = ""; }, 200); store.set("qm-pip-pos-audio", JSON.stringify(aPos)); } });
   addEventListener("resize", () => { if (!aEl.hidden) aPlace(); });
   function paintAudio() {
     const a = audio();
@@ -351,6 +393,5 @@ import { drawWave, videoPlayer } from "./player.js";
   let raf = 0;
   const loop = () => { raf = 0; const a = audio(); if (!aEl.hidden && a && !a.paused) { paintAudio(); raf = requestAnimationFrame(loop); } };
   setInterval(() => { if (!raf && !aEl.hidden) raf = requestAnimationFrame(loop); }, 400);
-  addEventListener("resize", () => { if (videoState.open) sizeVideo(); });
-  W.__qmPip = { auto, handoff, take, done, warm, closeVideo, callFloat, callIsFloating: () => cw_.shown, active: () => videoState.open && videoState.src, cancel };
+    W.__qmPip = { auto, existing, attach, setInline, slotGone, fullscreen, closeVideo, callFloat, callIsFloating: () => cw_.shown, active: () => videoState.open && videoState.src, cancel };
 })();

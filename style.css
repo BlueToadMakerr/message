@@ -1182,3 +1182,14 @@ html.qm-bpip-native #qmPipvideo .qmpip-body { height: 100vh !important; }
 .qmpip-video .qmpip-body .qp-big { display: none; }
 .qmpip-video .qmpip-body .qp-bar { position: static; opacity: 1 !important; padding: .35rem .4rem; background: rgb(20 22 28 / .92); flex-wrap: nowrap; }
 .qmpip-video .qmpip-body .qp-video:not(.show):not(.paused) { cursor: default; }
+/* the one live video element (js/pip.js): placed over a chat's video slot, or over the floating window's slot; never moved or reloaded */
+.qmvhost { position: fixed; left: 0; top: 0; z-index: 90; pointer-events: none; background: #000; overflow: hidden; }
+.qmvhost.fl { z-index: 1990; }
+.qmvhost[hidden] { display: none; }
+.qmvhost video { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; background: #000; display: block; }
+.qmvhost:fullscreen { left: 0 !important; top: 0 !important; width: 100% !important; height: 100% !important; clip-path: none !important; pointer-events: auto; }
+.qmvhost.native { visibility: hidden !important; }
+html.qm-vpip .qmvhost { z-index: 2147483001; }
+.qp-video .qp-slot-hidden { visibility: hidden; }
+.qmpip-video, .qmpip-video .qmpip-body, .qmpip-video .qmpip-body .qp-video { background: transparent; }
+.qmpip-video .qmpip-body .qp-video video { visibility: hidden; }

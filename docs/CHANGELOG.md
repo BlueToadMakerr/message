@@ -2,6 +2,13 @@
 
 Newest first. Older rounds (1–43) are kept below exactly as they were written.
 
+## 1.75.0 — One live video element; floating windows can't get stuck under a border
+
+- **The video is one element for its whole life.** It now lives in the top window and is never moved, copied, reloaded or re-created. The chat's player only holds an empty slot and its controls; the picture is placed over the slot (clipped to what is visible), and when the slot scrolls out of view, or you leave the chat, the same picture is simply placed over the floating window instead. Nothing is paused or swapped, so fast scrolling can't glitch and the browser/Android media controls stay attached to the same element. The video is only loaded once for playing (the chat keeps just a tiny metadata/poster copy as the slot).
+- Opening the chat again while that video still plays re-attaches its controls to the running video.
+- Full screen of a playing video uses the browser's own full-screen controls (the live element can't live inside the chat's frame).
+- **Floating windows snap back**: dragging a window (video, call) or the mini audio player past a screen edge lets go with a snap back inside, and they now stay clear of the status bar / notch / home bar (safe areas). Edge tabs respect them too.
+
 ## 1.74.1 — Black bar under the floating video fixed
 
 - **Black bar**: an old style rule (`.qmpip-video { height: 100% }`, meant for the previous bare video element) now matched the floating window itself and stretched it to the full screen height. Removed; the window is exactly as tall as the picture plus the controls. This also fixes vertical resizing: the resize corner now follows horizontal or vertical dragging (the window keeps the video's shape).
