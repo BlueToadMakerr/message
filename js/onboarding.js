@@ -170,8 +170,8 @@ function pAnalytics(ctx) {
   w.append(h("h2", "", "Help improve QuickMessage"),
     para("QuickMessage can send anonymous usage statistics to Google Analytics (on this app's own Firebase project) so errors get found and fixed and the developer can see what is worth improving. It is on by default, and you decide:"));
   const ul = h("ul", "tour-list");
-  for (const t of ["What is sent: which screens you open, how often features are used (sending, calling, searching, pinning, file uploads…), kinds of errors and which file they came from, the app and site version, and your platform (web, Android or iPhone app).",
-    "Never sent: your messages, names, email address, friend code, chat or account ids, file names or links, or who you talk to.",
+  for (const t of ["What is sent: which screens you open and for how long, which buttons and features you use (sending, calling, searching, pinning, file uploads…), kinds of errors and which file they came from, how fast pages load, the app and site version, and your platform (web, Android or iPhone app).",
+    "It is tied to your account's random id (not your name or email) so the developer can see what one account uses and what it doesn't. Never sent: your messages, names, email address, friend code, file names or links, or who you talk to.",
     "Why: to see errors before people report them, which versions are in use, and which features nobody finds or uses.",
     "It is saved on your account: turning it off here (or later in Account → Privacy) turns it off on every device you use. It is also off if your browser sends Do Not Track."]) ul.append(h("li", "", t));
   const status = h("div", "tour-tip", "");

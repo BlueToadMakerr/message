@@ -25,7 +25,9 @@ object AppAnalytics {
     fun init(ctx: Context) {
         try {
             val a = get(ctx) ?: return
-            a.setAnalyticsCollectionEnabled(prefs(ctx).getBoolean("analytics_on", false))
+            val on = prefs(ctx).getBoolean("analytics_on", false)
+            a.setAnalyticsCollectionEnabled(on)
+            a.setUserId(if (on) prefs(ctx).getString("analytics_uid", null) else null)
             if (!hooked) {
                 hooked = true
                 val old = Thread.getDefaultUncaughtExceptionHandler()
@@ -38,7 +40,18 @@ object AppAnalytics {
     }
 
     fun setEnabled(ctx: Context, on: Boolean) {
-        try { prefs(ctx).edit().putBoolean("analytics_on", on).apply(); get(ctx)?.setAnalyticsCollectionEnabled(on) } catch (_: Throwable) {}
+        try {
+            prefs(ctx).edit().putBoolean("analytics_on", on).apply(); get(ctx)?.setAnalyticsCollectionEnabled(on)
+            get(ctx)?.setUserId(if (on) prefs(ctx).getString("analytics_uid", null) else null)
+        } catch (_: Throwable) {}
+    }
+
+    /** The account's own random id (what the website uses as user_id) so the app's events belong to the same user; forgotten when it is switched off. */
+    fun setUser(ctx: Context, id: String) {
+        try {
+            prefs(ctx).edit().putString("analytics_uid", id.take(128)).apply()
+            if (prefs(ctx).getBoolean("analytics_on", false)) get(ctx)?.setUserId(id.take(128))
+        } catch (_: Throwable) {}
     }
 
     fun log(ctx: Context, name: String, vararg params: Pair<String, String>) {

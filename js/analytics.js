@@ -3,7 +3,8 @@
 //   * nothing is sent (and the Analytics SDK isn't even loaded) while signed out, while the choice is unknown, when it is off,
 //     in private-server / own-database mode, or when the browser says "Do Not Track"
 //   * what is sent: which screens are used, how often features are used, error kinds and file names, app / site versions, platform.
-//     Never: messages, names, emails, friend codes, chat or account ids, file names or links. See docs/ANALYTICS.md.
+//     Events belong to the account's own random id (user_id), so what one user does can be followed (GA Realtime / DebugView / User explorer).
+//     Never: messages, names, emails, friend codes, file names or links. See docs/ANALYTICS.md.
 // Every page calls track(); the real work happens once, in the top window (the shell), like the database connection.
 import { SITE_VERSION } from "./version.js";
 import { PRIVATE } from "./mode.js";
@@ -16,6 +17,7 @@ const inApp = !!window.QMApp;
 const dnt = () => navigator.doNotTrack === "1" || window.doNotTrack === "1";
 const blocked = () => PRIVATE || !!customDbUrl() || dnt();
 
+const devMode = () => { try { return localStorage.getItem("qm-dev") === "1"; } catch (_) { return false; } };
 const clean = v => typeof v === "string" ? v.replace(/https?:\/\/\S+/g, "<url>").replace(/[\w.+-]+@[\w-]+\.[\w.]+/g, "<email>").replace(/\bQM-[A-Za-z0-9-]+/g, "<code>").slice(0, 100) : v;
 export const bucket = n => n <= 0 ? "0" : n < 10 ? "1-9" : n < 100 ? "10-99" : n < 1000 ? "100-999" : "1000+";
 export const sizeBucket = bytes => bytes < 1e5 ? "<100KB" : bytes < 1e6 ? "<1MB" : bytes < 1e7 ? "<10MB" : bytes < 1e8 ? "<100MB" : "100MB+";
@@ -32,8 +34,14 @@ const core = {
   },
   send([name, params]) {
     const p = {};
+    if (devMode()) p.debug_mode = true;                                       // developer mode: events appear live in GA's DebugView
     for (const [k, v] of Object.entries(params)) if (v !== undefined && v !== null) p[String(k).slice(0, 40)] = typeof v === "number" || typeof v === "boolean" ? v : clean(String(v));
     try { this.mod.logEvent(this.an, name, p); } catch (_) { /* never break the app */ }
+  },
+  /** The events belong to the account's random id (never name or email) so one user's use can be followed; cleared whenever it is switched off or signed out. */
+  identify(uid) {
+    try { this.mod.setUserId(this.an, uid || null); } catch (_) { /* ignore */ }
+    try { if (uid && window.QMApp && window.QMApp.setAnalyticsUser) window.QMApp.setAnalyticsUser(uid); } catch (_) { /* ignore */ }
   },
   async load() {
     if (this.an) return true;
@@ -55,11 +63,14 @@ const core = {
     this.enabled = !!on && !blocked();
     nativeSet(this.enabled);
     if (this.enabled) {
-      if (await this.load()) { try { this.mod.setAnalyticsCollectionEnabled(this.an, true); this.mod.setConsent({ analytics_storage: "granted" }); } catch (_) { /* ignore */ } for (const e of this.queue.splice(0)) this.send(e); for (const e of this.later.splice(0)) this.send(e); }
+      if (await this.load()) {
+        try { this.mod.setAnalyticsCollectionEnabled(this.an, true); this.mod.setConsent({ analytics_storage: "granted" }); } catch (_) { /* ignore */ }
+        this.identify(this.uid); for (const e of this.queue.splice(0)) this.send(e); for (const e of this.later.splice(0)) this.send(e); }
       else { this.enabled = false; this.queue.length = 0; }
     } else {
       this.queue.length = 0; if (this.uid) this.later.length = 0;
-      if (this.an) { try { this.mod.setAnalyticsCollectionEnabled(this.an, false); this.mod.setConsent({ analytics_storage: "denied" }); } catch (_) { /* ignore */ } }
+      if (this.an) { this.identify(null); try { this.mod.setAnalyticsCollectionEnabled(this.an, false); this.mod.setConsent({ analytics_storage: "denied" }); } catch (_) { /* ignore */ } }
+      try { if (window.QMApp && window.QMApp.setAnalyticsUser) window.QMApp.setAnalyticsUser(""); } catch (_) { /* ignore */ }
     }
     if (was !== this.enabled) for (const f of this.listeners) { try { f(this.enabled); } catch (_) { /* ignore */ } }
   }
@@ -116,3 +127,34 @@ addEventListener("unhandledrejection", e => {
   track("app_error", { kind: "promise", msg: m, page: pageName() });
 });
 if (isTop) addEventListener("appinstalled", () => track("pwa_installed"));
+
+// ---------------------------------------------------------------- everything that is clicked (by the control's fixed name, never by what is typed), console errors, load timing
+let clicks = 0, lastClick = "", lastAt = 0;
+const label = el => {
+  const t = el.closest("[data-track]"); if (t) return t.dataset.track;
+  const c = el.closest("button, a, summary, select, input, [role=button], [role=tab], [role=menuitem], .chip, .icon-btn, .ctl");
+  if (!c || c.closest("[data-notrack], .bubble, .msg-text, [contenteditable=true], textarea")) return "";
+  const raw = c.id || c.getAttribute("aria-label") || c.getAttribute("title") || c.dataset.action || c.dataset.k || c.dataset.p || c.dataset.pane || c.name || "";
+  return /^[\w .:/&+'()-]{1,60}$/.test(raw) && !/@|QM-|\d{5,}|[\w-]{20,}/.test(raw) ? raw.trim().toLowerCase() : "";
+};
+addEventListener("click", e => {
+  try {
+    if (clicks >= 300 || !e.isTrusted) return;
+    const l = label(e.target); if (!l) return;
+    const now = Date.now(); if (l === lastClick && now - lastAt < 1500) return; lastClick = l; lastAt = now; clicks++;
+    track("ui_click", { control: l, page: pageName() });
+  } catch (_) { /* ignore */ }
+}, true);
+const origErr = console.error;
+console.error = function (...a) {
+  try { if (errs < 5) { const m = clean(a.map(x => (x && x.message) || String(x)).join(" ").slice(0, 160)); const key = "c:" + m; if (m && !seen.has(key)) { seen.add(key); errs++; track("app_error", { kind: "console", msg: m, page: pageName() }); } } } catch (_) { /* ignore */ }
+  return origErr.apply(this, a);
+};
+addEventListener("load", () => setTimeout(() => {
+  try { const n = performance.getEntriesByType("navigation")[0]; if (n && n.loadEventEnd) track("page_timing", { page: pageName(), ms: Math.round(n.loadEventEnd / 100) * 100, ttfb: Math.round(n.responseStart / 50) * 50 }); } catch (_) { /* ignore */ }
+}, 0));
+// how long a page is actually looked at (visible time), sent when it is left or hidden
+let shownAt = document.visibilityState === "visible" ? Date.now() : 0, sentSecs = 0;
+const flush = () => { if (shownAt) { const s = Math.round((Date.now() - shownAt) / 1000); shownAt = 0; if (s >= 2 && sentSecs < 36000) { sentSecs += s; track("page_time", { page: pageName(), secs: secsBucket(s) }); } } };
+document.addEventListener("visibilitychange", () => { if (document.visibilityState === "hidden") flush(); else shownAt = Date.now(); });
+addEventListener("pagehide", flush);

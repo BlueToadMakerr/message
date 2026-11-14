@@ -47,7 +47,7 @@ html:has(.call-body), .call-body { height: 100%; }
 
 .safe {
   position: absolute;
-  top: var(--top-h); bottom: var(--dock-h); left: 0; right: var(--dock-w);
+  top: var(--top-h); bottom: calc(var(--dock-h) + var(--dock-gap, 8px)); left: 0; right: var(--dock-w);
   z-index: 0;
 }
 
@@ -321,3 +321,9 @@ html:has(.call-body), .call-body { height: 100%; }
 
 .person-row .stat.declined { color: #f87171; font-weight: 600; }
 .ctl[hidden] { display: none !important; }
+
+/* the call is popped out into the browser's window: say so, with a way back */
+.popped-note { position: absolute; inset: var(--top-h) var(--dock-w) var(--dock-h) 0; display: none; place-items: center; align-content: center; gap: .8rem; text-align: center; color: #cbd0dc; padding: 1rem; z-index: 1; }
+.popped .popped-note { display: grid; }
+.popped-note p { margin: 0; }
+:is(.qm-pip, .bpip-in) { --dock-gap: 0px; }

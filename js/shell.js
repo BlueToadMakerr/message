@@ -363,6 +363,15 @@ function openChat(chatId) {
   if (protectedNow() && chatId !== st.call.chatId) { askUnlock(); return; }
   commit({ chat: chatId, pane: "chat", call: false }, st.pane !== null);
 }
+/** Opens a chat and scrolls to one message in it (the floating players' "go to the message"). */
+function openChatAt(chatId, key) {
+  if (!chatId) return;
+  const jump = () => { try { const f = els().detail, w = f.contentWindow; if (w && w.__qmJump && new URL(w.location.href).searchParams.get("chatId") === chatId) { w.__qmJump(key); return true; } } catch (_) { /* not ready */ } return false; };
+  const already = st.pane === "chat" && st.chatId === chatId;
+  if (!already) openChat(chatId);
+  if (!key) return;
+  let n = 0; const t = setInterval(() => { if (jump() || ++n > 40) clearInterval(t); }, already ? 50 : 250);
+}
 function openPane(name) { if (protectedNow()) { askUnlock(); return; } commit({ chat: null, pane: name, call: false }, st.pane !== null); }
 function closeDetail() {
   if (protectedNow()) { askUnlock(); return; }
@@ -384,7 +393,7 @@ function showCall() {
   const { layer } = els();
   layer.hidden = false;
   layer.classList.remove("min");
-  try { window.__qmPip && window.__qmPip.callFloat(false); } catch (_) { /* ignore */ }
+  try { window.__qmPip && window.__qmPip.callFloat(false); callWin()?.popIn?.(); } catch (_) { /* ignore */ }
   st.call.visible = true;
   renderBar();
 }
@@ -423,11 +432,7 @@ function hideCall() {
   if (!st.call.joined) { closeCallFrame(); return; }
   layer.classList.add("min");
   st.call.visible = false;
-  // floating call window (built-in picture-in-picture) instead of a hidden call, unless turned off in Account
-  try {
-    window.__qmPip && window.__qmPip.callFloat(true, { layer, title: st.call.title || "Call", mic: () => callWin()?.toggleMute(), leave: () => leaveCall(), expand: () => openCall(st.call.chatId),
-      time: () => (st.call.startLocal ? fmtDuration(Date.now() - st.call.startLocal) : "") });
-  } catch (_) { /* ignore */ }
+  // not shown by default: the small arrow in the "in call" bar shows the call in a floating window (browser window where supported, else in the app)
   renderBar();
 }
 
@@ -452,6 +457,7 @@ function callEnded(chatId) {
 
 async function leaveCall(silent = false) {
   const w = callWin();
+  try { window.__qmPip && window.__qmPip.callFloat(false); w && w.popIn && w.popIn(); } catch (_) { /* ignore */ }
   if (w) { try { await w.leave(); } catch (_) { /* ignore */ } }
   if (silent) closeCallFrame();
 }
@@ -462,6 +468,13 @@ function setCallState(patch) {
 }
 
 // ------------------------------------------------------------------ "in call" bar
+const callFloating = () => { const w = callWin(); return !!(w && w.popped) || !!(window.__qmPip && window.__qmPip.callIsFloating()); };
+const floatOps = () => ({ layer: els().layer, title: st.call.title || "Call", onHide: () => paintFloat() });
+function paintFloat() {
+  const b = els().bar.querySelector(".cbar-float"); if (!b) return;
+  const on = callFloating();
+  b.innerHTML = icon(on ? "up" : "down", 18); b.title = on ? "Hide the call window" : "Show the call in a window"; b.setAttribute("aria-label", b.title);
+}
 function renderBar() {
   const { bar } = els();
   tellApp();
@@ -490,7 +503,7 @@ function renderBar() {
   mic.classList.toggle("off", st.call.muted);
   mic.disabled = !st.call.canMic;
   mic.title = st.call.muted ? "Unmute" : "Mute";
-  const tick = () => { bar.querySelector(".cbar-time").textContent = st.call.startLocal ? fmtDuration(Date.now() - st.call.startLocal) : ""; };
+  const tick = () => { bar.querySelector(".cbar-time").textContent = st.call.startLocal ? fmtDuration(Date.now() - st.call.startLocal) : ""; paintFloat(); };
   tick();
   timer = setInterval(tick, 1000);
 }
@@ -512,6 +525,7 @@ function wire() {
     <button type="button" class="cbar-btn cbar-mic" aria-label="Mute"></button>
     <button type="button" class="cbar-btn cbar-cam" aria-label="Camera"></button>
     <button type="button" class="cbar-btn cbar-screen" aria-label="Share screen"></button>
+    <button type="button" class="cbar-btn cbar-float" aria-label="Show the call in a window"></button>
     <button type="button" class="cbar-btn cbar-return">Return to call</button>
     <button type="button" class="cbar-btn cbar-leave" aria-label="Leave call"></button>`;
   bar.querySelector(".cbar-leave").innerHTML = icon("phoneOff", 18);
@@ -522,6 +536,13 @@ function wire() {
   bar.querySelector(".cbar-cam").onclick = () => callWin()?.toggleCam();
   bar.querySelector(".cbar-screen").onclick = () => callWin()?.toggleScreen();
   bar.querySelector(".cbar-leave").onclick = () => leaveCall();
+  bar.querySelector(".cbar-float").onclick = async () => {
+    const w = callWin(), pip = window.__qmPip;
+    if (callFloating()) { if (w && w.popped) w.popIn(); if (pip) { pip.callFloat(false); els().layer.classList.add("min"); } paintFloat(); return; }
+    if (w && w.canPop && w.canPop() && await w.popOut()) { paintFloat(); return; }
+    pip && pip.callFloat(true, floatOps());
+    paintFloat();
+  };
 
   const syncSplit = () => document.body.classList.toggle("split", split.matches);
   split.addEventListener("change", syncSplit);
@@ -547,6 +568,7 @@ export const QM = (window.QM = {
   declined: (chatId, by) => { try { els().callFrame.contentWindow.__qmDeclined?.(chatId, by); } catch (_) { /* ignore */ } },
   plugins: pluginHost,
   setUploads, uploads: allUploads, foreignUploads, activeUploads, showUploadsPopup,
+  callPopChanged: () => paintFloat(), autoPopCall: () => { try { return callWin()?.popOut?.(); } catch (_) { return false; } }, openChatAt,
   openChat, openPane, closeDetail, androidBack, openCall, minimizeCall, callEnded, setCallState, frameReady, frameEscaped, frameFatal, frameFailed,
   isSplit: () => split.matches,
   toggleMute: () => callWin()?.toggleMute(), toggleDeafen: () => callWin()?.toggleDeafen(), toggleScreen: () => callWin()?.toggleScreen(), hangup: () => leaveCall(),

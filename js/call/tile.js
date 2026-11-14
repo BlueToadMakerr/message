@@ -29,11 +29,12 @@ const STATUS_TEXT = { connecting: "Connecting\u2026", reconnecting: "Reconnectin
 export const fpsOn = () => { try { return localStorage.getItem("qm-show-fps") === "1"; } catch (_) { return false; } };
 
 export class Tile {
-  constructor({ key, kind = "cam", isSelf = false, onPin, onRetry, onSelfToggle, onBlocked }) {
+  constructor({ key, kind = "cam", isSelf = false, onPin, onExpand, onRetry, onSelfToggle, onBlocked }) {
     this.key = key;
     this.kind = kind;
     this.isSelf = isSelf;
     this.onPin = onPin;
+    this.onExpand = onExpand;
     this.onRetry = onRetry;
     this.onSelfToggle = onSelfToggle;
     this.onBlocked = onBlocked;
@@ -86,8 +87,8 @@ export class Tile {
     this.fsBtn.innerHTML = icon("maximize", 16);
     this.pinBtn.setAttribute("aria-label", "Pin");
     this.pinBtn.title = "Pin (spotlight)";
-    this.fsBtn.setAttribute("aria-label", "Fullscreen");
-    this.fsBtn.title = "Fullscreen";
+    this.fsBtn.setAttribute("aria-label", "Expand");
+    this.fsBtn.title = "Expand";
     this.muteBtn.setAttribute("aria-label", "Mute on this device");
     this.muteBtn.title = "Mute / unmute on this device";
 
@@ -290,7 +291,7 @@ export class Tile {
   _paint() {
     this._status();
     this.el.classList.toggle("no-video", !(this.wantVideo && this.hasFrame));
-    this.popBtn.hidden = !((document.pictureInPictureEnabled || (window.QMApp && window.QMApp.enterPip)) && this.wantVideo && this.hasFrame);
+    this.popBtn.hidden = !((window.QMApp && window.QMApp.enterPip) && this.wantVideo && this.hasFrame);   // browsers: no per-video pop-out (the whole call pops out); the Android app keeps its own
   }
 
   // \u2264 100 %: plain element volume. > 100 %: the element is muted and the audio runs through a GainNode instead.
@@ -321,12 +322,12 @@ export class Tile {
     this._applyVolume();
   }
 
-  async toggleFullscreen() {
-    try {
-      if (document.fullscreenElement === this.el) await document.exitFullscreen();
-      else if (this.el.requestFullscreen) await this.el.requestFullscreen();
-      else if (this.video.webkitEnterFullscreen) this.video.webkitEnterFullscreen(); // iOS Safari
-    } catch (_) { /* denied */ }
+  /** "Fullscreen" is an expand: this tile fills the call area (the controls stay visible and uncovered). */
+  toggleFullscreen() { this.onExpand && this.onExpand(this.key); }
+  setExpanded(on) {
+    if (this._exp === on) return; this._exp = on;
+    this.fsBtn.innerHTML = icon(on ? "minimize" : "maximize", 16);
+    this.fsBtn.title = on ? "Back to the grid" : "Expand"; this.fsBtn.setAttribute("aria-label", this.fsBtn.title);
   }
 
   destroy() {

@@ -58,6 +58,8 @@ const S = {
   tiles: new Map(),          // key -> Tile      (key = sessionId or sessionId + ":screen")
   selfTile: null,
   pinnedKey: null,
+  expanded: null,
+  popped: false,
   knownScreens: new Set(),
   preferSelfInGrid: false,
   selfInGrid: false,
@@ -267,6 +269,7 @@ async function leave(showLobbyAfter = true) {
 }
 
 async function teardown() {
+  popIn();                       // hanging up closes the popped-out window too
   // Last one out writes "Call ended · duration" into the chat (we're still a member, so the rules allow it).
   const wasLast = S.joined && S.room && Object.keys(S.sessions || {}).filter(k => k !== S.room.sessionId).length === 0;
   const callDur = wasLast && callStart() ? S.room.now() - callStart() : null;
@@ -515,23 +518,38 @@ $("pipAllBtn").onclick = async () => {
     document.querySelectorAll(".tile.pip-target").forEach(t => t.classList.remove("pip-target"));
     window.QMApp.enterPip(); return;
   }
-  // Document Picture-in-Picture only works from the top-level window; the call page lives in an iframe, so use the top's API.
-  let dpip = null; try { dpip = (window.top || window).documentPictureInPicture; } catch (_) { dpip = window.documentPictureInPicture; }
-  if (!dpip) { toast("Your browser can't pop out the whole call. Use the pop-out button on a person's video instead.", "info", 4500); return; }
-  if (dpip.window) { dpip.window.close(); return; }
+  if (S.popped) { popIn(); return; }
+  if (!(await popOut())) toast("Your browser can't pop out the whole call.", "info", 4500);
+};
+
+// ---- Document Picture-in-Picture (browsers): the call grid in the browser's own small window. The page shows "popped out" with a button to pop it back in.
+// Only works from the top-level window; the call page lives in an iframe, so the top's API is used. Closed by popping in, hanging up, or opening the call page.
+let dpipWin = null;
+const dpipApi = () => { try { return (window.top || window).documentPictureInPicture || null; } catch (_) { return window.documentPictureInPicture || null; } };
+async function popOut() {
+  const dpip = dpipApi(); if (!dpip || (window.QMApp && window.QMApp.enterPip)) return false;
+  if (dpip.window) return true;
   try {
     const w = await dpip.requestWindow({ width: 520, height: 320 });
+    dpipWin = w;
     for (const ss of document.styleSheets) {
       try { const s = document.createElement("style"); s.textContent = [...ss.cssRules].map(r => r.cssText).join("\n"); w.document.head.append(s); }
       catch (_) { if (ss.href) { const l = document.createElement("link"); l.rel = "stylesheet"; l.href = ss.href; w.document.head.append(l); } }
     }
-    w.document.documentElement.dataset.theme = "dark";
-    const wrap = w.document.createElement("div"); wrap.className = "call-root"; wrap.style.cssText = "position:fixed;inset:0";
+    const rs = w.document.documentElement; rs.dataset.theme = "dark"; rs.classList.add("qm-pip");           // the small-window layout: everyone in one grid, no header / controls
+    for (const [k, v] of [["--top-h", "0px"], ["--dock-h", "0px"], ["--dock-w", "0px"], ["--gap", "2px"]]) rs.style.setProperty(k, v);
+    const wrap = w.document.createElement("div"); wrap.className = "call-root"; wrap.style.cssText = "position:fixed;inset:0;background:#0b0d12";
     const safe = $("safe"), home = safe.parentNode;
+    safe.style.cssText = "position:absolute;inset:0";
     wrap.append(safe); w.document.body.style.margin = "0"; w.document.body.append(wrap);
-    w.addEventListener("pagehide", () => { home.prepend(safe); });
-  } catch (err) { console.warn("[pip] couldn't open", err); toast("Couldn't pop out the call.", "error"); }
-};
+    S.popped = true; document.documentElement.classList.add("popped"); layout();
+    w.addEventListener("pagehide", () => { safe.style.cssText = ""; home.prepend(safe); dpipWin = null; S.popped = false; document.documentElement.classList.remove("popped"); layout(); try { QM && QM.callPopChanged && QM.callPopChanged(false); } catch (_) { /* ignore */ } });
+    try { QM && QM.callPopChanged && QM.callPopChanged(true); } catch (_) { /* ignore */ }
+    return true;
+  } catch (err) { console.warn("[pip] couldn't open", err); return false; }
+}
+function popIn() { try { if (dpipWin) dpipWin.close(); else { const d = dpipApi(); d && d.window && d.window.close(); } } catch (_) { /* ignore */ } }
+$("poppedBack").onclick = popIn;
 
 el.sw.onclick = async () => {
   try { await S.media.switchCamera(); } catch (err) { toast("Couldn't switch camera.", "error"); }
@@ -569,6 +587,7 @@ function newTile(key, kind, isSelf = false) {
   const tile = new Tile({
     key, kind, isSelf,
     onPin: k => { S.pinnedKey = S.pinnedKey === k ? null : k; render(); },
+    onExpand: k => { S.expanded = S.expanded === k ? null : k; layout(); },
     onRetry: k => S.links.get(k.split(":")[0])?.restart(),
     onBlocked: () => setNotice("audio", {
       tone: "warn", text: "Your browser is blocking call audio until you tap.",
@@ -585,6 +604,7 @@ function createSelfTile() {
   const tile = new Tile({
     key: "self", kind: "cam", isSelf: true,
     onPin: k => { S.pinnedKey = S.pinnedKey === k ? null : k; render(); },
+    onExpand: k => { S.expanded = S.expanded === k ? null : k; layout(); },
     onSelfToggle: () => toggleSelfPlacement()
   });
   tile.setName("You", "");
@@ -743,7 +763,12 @@ function layout() {
   tiles.forEach(t => t.setPinned(t.key === S.pinnedKey));
   if (!tiles.length || W <= 0 || H <= 0) return;
 
-  const spot = (document.documentElement.classList.contains("qm-pip") || document.documentElement.classList.contains("bpip-in")) ? null : spotKey(tiles);   // PiP: always the plain grid so everyone fits
+  const popLayout = !!S.popped || document.documentElement.classList.contains("qm-pip") || document.documentElement.classList.contains("bpip-in");
+  // one tile expanded: it fills the area (never under the header / controls: .safe is already inset by them)
+  const exp = S.expanded && !popLayout ? tiles.find(t => t.key === S.expanded) : null;
+  tiles.forEach(t => { t.setExpanded(t === exp); t.el.style.display = exp && t !== exp ? "none" : ""; });
+  if (exp) { exp.el.style.width = W + "px"; exp.el.style.height = H + "px"; exp.el.style.order = "0"; el.grid.classList.add("scroll"); return; }
+  const spot = popLayout ? null : spotKey(tiles);   // PiP: always the plain grid so everyone fits
   if (spot) {
     const z = spotlightSizes(tiles.length, W, H, gap);
     el.grid.classList.add(z.dir === "column" ? "spot-col" : "spot-row");
@@ -755,7 +780,7 @@ function layout() {
       t.el.style.order = main ? "-1" : String(++idx);
     }
   } else {
-    const inPip = (document.documentElement.classList.contains("qm-pip") || document.documentElement.classList.contains("bpip-in"));
+    const inPip = popLayout;
     const g = gridSizes(tiles.length, W, H, gap, inPip ? 0 : 120);   // in the small PiP window every tile shrinks until all fit — no scrolling
     el.grid.classList.toggle("scroll", g.overflow);
     tiles.forEach((t, i) => { t.el.style.width = g.w + "px"; t.el.style.height = g.h + "px"; t.el.style.order = String(i); });
@@ -819,6 +844,9 @@ window.__qmCall = {
   toggleCam() { el.cam.click(); },
   toggleScreen() { shareScreen(true); },
   leave: () => leave(true),
+  popOut, popIn,
+  canPop: () => { const d = dpipApi(); return !!d && !(window.QMApp && window.QMApp.enterPip); },
+  get popped() { return S.popped; },
   get joined() { return S.joined; }
 };
 

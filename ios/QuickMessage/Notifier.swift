@@ -47,6 +47,15 @@ final class Notifier: NSObject, UNUserNotificationCenterDelegate {
             } else {
                 enabled = false; stopKeepAlive(); report()
             }
+        case "media":
+            // A video / audio of a chat is playing: a session that does NOT mix with other audio is what makes it appear in the control centre /
+            // lock screen (Now Playing, fed by the page's Media Session). Back to the quiet mixing session when it stops.
+            if (inCall) break
+            let on = (m["on"] as? Bool) == true
+            do {
+                try AVAudioSession.sharedInstance().setCategory(.playback, mode: .default, options: on ? [] : [.mixWithOthers])
+                try AVAudioSession.sharedInstance().setActive(true)
+            } catch {}
         case "show":
             show(m)
         case "call":

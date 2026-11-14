@@ -698,6 +698,7 @@ class MainActivity : Activity() {
 
         @JavascriptInterface fun pushDiag(): String = Diag.json(applicationContext)
         @JavascriptInterface fun setAnalytics(on: Boolean) = AppAnalytics.setEnabled(applicationContext, on)
+        @JavascriptInterface fun setAnalyticsUser(id: String) = AppAnalytics.setUser(applicationContext, id)
         @JavascriptInterface fun siteCachePrune(since: Long): Int = SiteCache.prune(since)
         @JavascriptInterface fun siteCacheCount(): Int = SiteCache.count()
         @JavascriptInterface fun dataSaverState(): String = DataSaver.state()

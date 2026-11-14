@@ -158,7 +158,7 @@ export async function waveFromFile(file) {
 }
 const decodeWave = str => { try { const u = unb64(str); return u.length >= 8 && u.length <= 1024 ? Array.from(u, v => Math.max(0.06, v / 255)) : null; } catch (_) { return null; } };
 
-function drawWave(cv, peaks, frac) {
+export function drawWave(cv, peaks, frac) {
   const dpr = devicePixelRatio || 1, w = cv.clientWidth, h = cv.clientHeight;
   if (!w || !h) return;
   if (cv.width !== Math.round(w * dpr)) { cv.width = Math.round(w * dpr); cv.height = Math.round(h * dpr); }
@@ -178,6 +178,8 @@ import { saverOn } from "./datasaver.js";
 const netSaver = src => saverOn() && /^https?:/i.test(src);       // Data Saver: don't even read the first bytes until Play is pressed
 const TOP = (() => { try { void window.top.document; return window.top; } catch (_) { return window; } })();
 
+const chatOf = () => { try { return new URL(location.href).searchParams.get("chatId") || ""; } catch (_) { return ""; } };
+const msgKeyOf = el => { try { const m = el.closest('[id^="msg-"]'); return m ? m.id.slice(4) : ""; } catch (_) { return ""; } };
 if (TOP === window) import("./pip.js").catch(() => {});      // the built-in floating players live in the top window
 
 /** Audio plays from an element that lives in the top window, so it keeps going when you leave the chat (and in the background). */
@@ -212,14 +214,14 @@ export function audioPlayer(src, { title = "", name = "", wave: waveData = "", d
   root.append(play, wave, time, spd, dl, more);
   if (title) root.title = title;
   let peaks = null, frac = 0, dur = 0, decDur = 0, raf = 0;
-  const paint = () => drawWave(wave, peaks, frac);
+  const paint = () => { drawWave(wave, peaks, frac); if (peaks) { try { (TOP.__qmWave = TOP.__qmWave || {})[src] = peaks; } catch (_) { /* ignore */ } } };
   // the decoded length is exact; the element's estimate can be off for VBR files
   const upd = () => { dur = decDur || (isFinite(a.duration) && a.duration > 0 ? a.duration : 0); frac = dur ? Math.min(1, a.currentTime / dur) : 0; time.textContent = a.paused && !a.currentTime ? fmt(dur) : fmt(a.currentTime) + " / " + fmt(dur); paint(); };
   const tick = () => { upd(); raf = a.paused ? 0 : requestAnimationFrame(tick); };   // smooth progress while playing
   const uiPlaying = () => { if (!a.paused && !raf) raf = requestAnimationFrame(tick); play.innerHTML = icon(a.paused ? "play" : "pause", 20); play.title = a.paused ? "Play" : "Pause"; };
   const on = {
     loadedmetadata: upd, durationchange: upd, timeupdate: upd, ratechange: () => { spd.textContent = rateText(a.playbackRate); },
-    play: () => { if (TOP.__qmAudio && TOP.__qmAudio !== a) { try { TOP.__qmAudio.pause(); } catch (_) { /* ignore */ } } TOP.__qmAudio = a; a.dataset.title = title || name || ""; TOP.__qmCur = { el: a, title: title || name || "Audio message", kind: "audio", src }; exclusive(a); mediaSession(a, title); uiPlaying(); },
+    play: () => { if (TOP.__qmAudio && TOP.__qmAudio !== a) { try { TOP.__qmAudio.pause(); } catch (_) { /* ignore */ } } TOP.__qmAudio = a; a.dataset.title = title || name || ""; a.dataset.chat = chatOf(); a.dataset.msg = msgKeyOf(root); TOP.__qmCur = { el: a, title: title || name || "Audio message", kind: "audio", src }; exclusive(a); mediaSession(a, title); uiPlaying(); },
     pause: uiPlaying,
     ended: () => { a.currentTime = 0; upd(); },
     error: () => { time.textContent = "Can't play"; },
@@ -360,26 +362,39 @@ export function videoPlayer(src, { poster = "", onLayout, autoplay = false, titl
   let hideT = null;
   function wake() { root.classList.add("show"); clearTimeout(hideT); if (!v.paused) hideT = setTimeout(() => root.classList.remove("show"), 2500); }
   root.addEventListener("pointermove", wake); root.addEventListener("pointerdown", wake); root.addEventListener("focusin", wake);
-  // ---- floating player (js/pip.js): a playing video that scrolls out of view, or whose page closes, carries on in the built-in window;
-  // when the same video is on screen again it takes the playback back
+  // ---- floating player (js/pip.js): a playing video that scrolls out of view, or whose page closes, carries on in the built-in window (this very
+  // <video> element is moved there); when the same video is on screen again it is moved back. While the video is in the browser's own
+  // picture-in-picture nothing is moved, so it keeps playing there.
   const topPip = () => { try { return TOP.__qmPip && TOP.__qmPip.auto() ? TOP.__qmPip : null; } catch (_) { return null; } };
-  const chatOf = (() => { try { return new URL(location.href).searchParams.get("chatId") || ""; } catch (_) { return ""; } })();
-  let handed = false;
-  v.addEventListener("play", () => { TOP.__qmCur = { el: v, title: title || name || "Video", kind: "video", src }; });
-  const give = () => {
+  const vtitle = () => title || name || "Video";
+  let handed = false, ph = null, onScreen = true;
+  v.addEventListener("play", () => {
+    try { if (TOP.__qmAudio && !TOP.__qmAudio.paused) TOP.__qmAudio.pause(); } catch (_) { /* ignore */ }
+    TOP.__qmCur = { el: v, title: vtitle(), kind: "video", src };
+  });
+  const inPip = () => { try { return document.pictureInPictureElement === v; } catch (_) { return false; } };
+  const give = (closing) => {
     const p = topPip(); if (!p || v.paused || v.ended || handed) return;
-    const s = JSON.stringify({ src, time: v.currentTime, playing: true, rate: v.playbackRate, volume: v.volume, muted: v.muted, title: title || name || "Video", poster, chat: chatOf });
-    if (p.handoff(s)) { handed = true; v.pause(); }
+    if (inPip() && !closing) return;                       // playing in the browser's own picture-in-picture: leave it be
+    const s = { src, time: v.currentTime, playing: true, rate: v.playbackRate, volume: v.volume, muted: v.muted, title: vtitle(), poster, chat: chatOf(), key: msgKeyOf(root), nativePip: inPip() };
+    ph = document.createComment("pip"); root.style.minHeight = root.offsetHeight + "px";      // the message keeps its size while the video is away
+    v.replaceWith(ph);
+    const restore = el => { try { document.adoptNode(el); if (ph) { ph.replaceWith(el); ph = null; } root.style.minHeight = ""; handed = false; el.pause(); } catch (_) { /* the page is gone */ } };
+    if (p.handoff(s, v, restore)) handed = true; else { ph.replaceWith(v); ph = null; root.style.minHeight = ""; }
   };
   const adopt = () => {
-    let raw = null; try { raw = TOP.__qmPip && TOP.__qmPip.take(src); } catch (_) { /* ignore */ }
+    let raw = null; try { raw = TOP.__qmPip && TOP.__qmPip.take(src, handed ? v : null); } catch (_) { /* ignore */ }
     if (!raw) return;
-    const s = JSON.parse(raw); handed = false;
+    const s = JSON.parse(raw);
+    if (s.same && ph) { document.adoptNode(v); ph.replaceWith(v); ph = null; root.style.minHeight = ""; }
+    handed = false;
     const go = () => { try { v.currentTime = s.time; v.playbackRate = s.rate; v.volume = s.volume; v.muted = s.muted; } catch (_) { /* ignore */ } if (s.playing) v.play().catch(() => {}); };
+    try { v.currentTime = s.time; } catch (_) { /* ignore */ }
     if (v.readyState >= 1) go(); else v.addEventListener("loadedmetadata", go, { once: true });
   };
-  if ("IntersectionObserver" in window) new IntersectionObserver(es => { for (const e of es) { if (e.intersectionRatio > 0.15) adopt(); else give(); } }, { threshold: [0, 0.15, 0.4] }).observe(root);
-  addEventListener("pagehide", give);
+  v.addEventListener("leavepictureinpicture", () => { if (!onScreen) give(); });   // the browser's picture-in-picture was closed while this is out of view
+  if ("IntersectionObserver" in window) new IntersectionObserver(es => { for (const e of es) { onScreen = e.intersectionRatio > 0.15; if (onScreen) adopt(); else give(); } }, { threshold: [0, 0.15, 0.4] }).observe(root);
+  addEventListener("pagehide", () => give(true));
   if (autoplay) v.play().catch(() => {});
   root.video = v;
   return root;

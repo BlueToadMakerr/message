@@ -26,6 +26,7 @@ object MediaControls {
 
     private fun send(op: String, arg: String = "") {
         val a = MainActivity.instance ?: return
+        AppAnalytics.log(a, "media_control", "op" to op)
         a.runJs("window.__qmMediaCtl&&window.__qmMediaCtl('$op'${if (arg.isEmpty()) "" else ",$arg"})")
     }
 

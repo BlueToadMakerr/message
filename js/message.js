@@ -959,6 +959,7 @@ searchIdx = initChatSearch({
   onPerson: (uid, name) => { const i = $("msgInput"); i.value = (i.value && !/\s$/.test(i.value) ? i.value + " " : i.value) + "@" + name + " "; i.focus(); i.dispatchEvent(new Event("input")); },
   jumpTo: searchJump
 });
+window.__qmJump = key => searchJump(key);       // the floating players' "go to the message"
 function searchJump(key) {
   {
     const t = document.getElementById("msg-" + key);

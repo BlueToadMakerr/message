@@ -2,6 +2,23 @@
 
 Newest first. Older rounds (1–43) are kept below exactly as they were written.
 
+## 1.73.0 — More analytics (per account), media from files, square audio tiles
+
+- **Analytics, per account**: events now carry the account's own random id as GA `user_id` (and the Android SDK's user id), so one account's use can be followed live in Google Analytics (Realtime, User explorer; developer mode adds `debug_mode` so events show in DebugView). It is removed the moment analytics is switched off on any device or the user signs out; still never names, emails, messages or file names. The welcome tour and Account text say so.
+- **More events**: `ui_click` (the fixed id / label of any button, tab or switch used: shows what is never touched), `page_time` (visible time per screen), `page_timing` (load speed), console errors in `app_error`, Android `media_control`. See `docs/ANALYTICS.md`.
+- **Media tab**: files that are really photos, videos or audio (sent as files because they were too big) now show there too, while staying in Files. Audio tiles are square like the rest so the grid keeps its flow; the tab repaints as older messages load.
+
+## 1.72.0 — Floating players refined, call pop-out, one media at a time
+
+- **One thing plays at a time**: starting a video or another audio cancels the old one, closes its floating player and removes its controls (Android notification, lock screen, iPhone control centre).
+- **iPhone control centre / lock screen**: playing audio and video now appear there (the app switches to a non-mixing audio session while media plays).
+- **Same video, no copy**: the floating window now takes the chat's own `<video>` element instead of building a new one (the browser still has to reload it when it moves, so playback is restored to the exact second). Closing the window gives the video back to the chat.
+- **Browser picture-in-picture respected**: a video already in the browser's PiP is left alone (it keeps playing there, also when you leave the chat); the floating window only appears once that PiP is closed. Browsers also switch to their own PiP when you leave the tab (video playing, or the call).
+- **Floating window**: resizable (drag the corner), draggable; the mini audio player is draggable too and seeks with the waveform like the chat's audio messages. The minimised tab can be dragged to either side and anywhere along it.
+- **"Go to the message"** in the floating players now scrolls to the exact message that is playing.
+- **Calls**: no floating call by default. The "in call" bar has a small down arrow that shows the call in the browser's own pop-out window (or, where unsupported, a floating window in the app); the window is just the group name and an up arrow. The call page says "popped out" with a button to pop it back in; opening the call page or hanging up closes the window.
+- **Call page**: everyone is always one grid in small windows (no more big top / bottom margins), a small gap above the controls, "fullscreen" on a tile now expands it inside the call area without covering the controls, and the per-video pop-out button is hidden in browsers (pinning is unchanged). Android's own PiP is untouched.
+
 ## 1.71.0 — Floating players, video in the background, Android media controls
 
 - **Built-in floating player for video** (new `js/pip.js`): a playing video that scrolls out of view, or whose chat you leave, carries on in a small draggable window (play/pause, ±10 s, seek, mute, "go to chat", close). When the same video is on screen again it takes the playback back and the window goes away. The window's picture-in-picture button still uses the browser's / Android's own PiP.

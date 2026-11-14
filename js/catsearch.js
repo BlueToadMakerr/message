@@ -3,7 +3,16 @@
 import { fmtBytes } from "./litter.js";
 const ICON = { person: "\ud83d\udc64", pin: "\ud83d\udccc", image: "\ud83d\udcf7", video: "\ud83c\udfa5", audio: "\ud83c\udfb5", file: "\ud83d\udcc4", text: "\ud83d\udcac" };
 export const kindOfMsg = m => m.type === "image" || m.type === "video" || m.type === "audio" ? m.type : m.type === "file" ? "file" : "text";
-const slim = (key, m) => ({ key, k: kindOfMsg(m), ts: m.timestamp || 0, from: m.fromUid || "", text: String(m.text || "").slice(0, 400), name: String(m.name || ""), size: m.size || 0 });
+const slim = (key, m) => ({ key, k: kindOfMsg(m), ts: m.timestamp || 0, from: m.fromUid || "", text: String(m.text || "").slice(0, 400), name: String(m.name || ""), size: m.size || 0, fk: String(m.kind || (m.mime ? String(m.mime).split("/")[0] : "")).slice(0, 12) });
+/** What a record is as MEDIA: photos / videos / audio messages, and also files that are really one (sent as a file because they were too big): those are both. */
+const EXT = { image: /\.(png|jpe?g|gif|webp|avif|bmp|heic|heif|svg)$/i, video: /\.(mp4|m4v|mov|webm|mkv|avi|3gp|ogv)$/i, audio: /\.(mp3|m4a|wav|ogg|oga|opus|aac|flac|amr|weba)$/i };
+export const mediaKind = r => {
+  if (r.k === "image" || r.k === "video" || r.k === "audio") return r.k;
+  if (r.k !== "file") return null;
+  if (r.fk === "image" || r.fk === "video" || r.fk === "audio") return r.fk;
+  for (const k of ["image", "video", "audio"]) if (EXT[k].test(r.name || "")) return k;
+  return null;
+};
 /** Search over slim records. */
 const KINDWORDS = { image: "photo picture image", video: "video clip movie", audio: "audio voice sound", file: "file document attachment" };       // typing "photo" finds photos even without a file name
 export function searchRecords(recs, q, kind) {
@@ -49,7 +58,8 @@ export function initChatSearch({ $, msgData, nameOf, jumpTo, fetchOlder, oldestL
   }
   const later = () => { dirty = true; clearTimeout(saveT); saveT = setTimeout(save, 3000); };
   /** every message the chat page shows goes through here */
-  const add = (key, m) => { if (!m || m.type === "event") return; idx.set(key, slim(key, m)); later(); };
+  let repaintT = 0;
+  const add = (key, m) => { if (!m || m.type === "event") return; idx.set(key, slim(key, m)); later(); if (dlg.open && dlg.dataset.pane === "media") { clearTimeout(repaintT); repaintT = setTimeout(() => dlg.open && dlg.dataset.pane === "media" && paintMedia(), 250); } };
   const drop = key => { if (idx.delete(key)) later(); };
   addEventListener("pagehide", save);
 
@@ -77,7 +87,7 @@ export function initChatSearch({ $, msgData, nameOf, jumpTo, fetchOlder, oldestL
     }); pump();
   }), { root, rootMargin: "100px" }) : null;
   const tio = mkTio(list), tioMedia = mkTio($("mediaList"));
-  const withThumb = (b, r, obs = tio) => { if (obs && (r.k === "image" || r.k === "video")) { const ic = b.querySelector(".cs-ic"); ic._key = r.key; ic._k = r.k; obs.observe(ic); } return b; };
+  const withThumb = (b, r, obs = tio) => { const mk = mediaKind(r); if (obs && (mk === "image" || mk === "video")) { const ic = b.querySelector(".cs-ic"); ic._key = r.key; ic._k = mk; obs.observe(ic); } return b; };
   const recRow = r => withThumb(row(ICON[r.k], r.k === "text" ? r.text.slice(0, 140) : (r.name || r.text || { image: "Photo", video: "Video", audio: "Voice message" }[r.k] || "File"),
     [nameOf(r.from), when(r.ts), r.size ? fmtBytes(r.size) : ""].filter(Boolean).join(" \u00b7 "), () => { dlg.close(); jumpTo(r.key); }), r);
   async function resolveAll() {                       // pinned messages are fetched once each (at most 50), then searched like anything else
@@ -124,12 +134,13 @@ export function initChatSearch({ $, msgData, nameOf, jumpTo, fetchOlder, oldestL
   const mlist = $("mediaList"), mnote = $("mediaNote"); let mkind = "all";
   function paintMedia() {
     mlist.replaceChildren();
-    const res = records().filter(r => (mkind === "all" ? r.k === "image" || r.k === "video" || r.k === "audio" : r.k === mkind)).sort((a, b) => b.ts - a.ts);
+    const res = records().filter(r => { const k = mediaKind(r); return k && (mkind === "all" || k === mkind); }).sort((a, b) => b.ts - a.ts);
     for (const r of res.slice(0, 600)) {
-      if (r.k === "audio") { mlist.append(row(ICON.audio, r.name || "Voice message", [nameOf(r.from), when(r.ts), r.size ? fmtBytes(r.size) : ""].filter(Boolean).join(" \u00b7 "), () => { dlg.close(); jumpTo(r.key); })); continue; }
-      const t = document.createElement("button"); t.type = "button"; t.className = "media-tile"; t.title = [nameOf(r.from), when(r.ts)].join(" \u00b7 ");
-      const ic = document.createElement("span"); ic.className = "cs-ic"; ic.textContent = ICON[r.k]; t.append(ic);
-      if (r.k === "video") { const pl = document.createElement("span"); pl.className = "play"; pl.textContent = "\u25b6"; t.append(pl); }
+      const mk = mediaKind(r);
+      const t = document.createElement("button"); t.type = "button"; t.className = "media-tile" + (mk === "audio" ? " audio" : ""); t.title = [r.name, nameOf(r.from), when(r.ts)].filter(Boolean).join(" \u00b7 ");
+      const ic = document.createElement("span"); ic.className = "cs-ic"; ic.textContent = ICON[mk]; t.append(ic);
+      if (mk === "video") { const pl = document.createElement("span"); pl.className = "play"; pl.textContent = "\u25b6"; t.append(pl); }
+      if (mk === "audio") { const cap = document.createElement("span"); cap.className = "cap"; cap.textContent = r.name || "Voice message"; t.append(cap); }
       t.onclick = () => { dlg.close(); jumpTo(r.key); };
       mlist.append(withThumb(t, r, tioMedia));
     }

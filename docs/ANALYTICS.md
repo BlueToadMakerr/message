@@ -10,12 +10,15 @@ QuickMessage can send anonymous usage statistics to **Google Analytics for Fireb
 Nothing is collected, and the Analytics SDK isn't even downloaded, while: signed out, the choice isn't known yet, it is off, the device uses a private server / own database (`docs/SERVER-PRIVATE.md`), or the browser sends *Do Not Track*. Ad features are off (consent mode: `analytics_storage` only; no advertising id on Android).
 
 ## What is collected
-Never: message text, names, email address, friend codes, chat / account / message ids, file names, links, who talks to whom. Error text has links, email addresses and friend codes stripped and is cut to 100 characters.
+Events are tied to the account's random Firebase id as GA `user_id` (web) / user id (Android), so one account's activity can be followed live in GA (Realtime, User explorer; turn on developer mode in Account for DebugView). It is a random id, not a name or email, and it is removed the moment analytics is switched off or the user signs out. Never: message text, names, email address, friend codes, file names, links, who talks to whom. Error text has links, email addresses and friend codes stripped and is cut to 100 characters.
 
 | Event | Parameters | Why |
 |---|---|---|
 | `screen_view` | `screen_name` (index, message, call, account, …) | which parts are used |
-| `app_error` | `kind` (js / promise), `file`, `line`, `msg`, `page` | errors found before people report them (max 5 per page load) |
+| `ui_click` | `control` (a button's fixed id / label, never typed text), `page` | which controls are used and which never are (max 300 per page load) |
+| `page_time`, `page_timing` | `page`, `secs` (bucket) / `ms`, `ttfb` | time spent per screen, load speed |
+| `media_control` (Android) | `op` | media notification buttons |
+| `app_error` | `kind` (js / promise / console), `file`, `line`, `msg`, `page` | errors found before people report them (max 5 per page load) |
 | `app_fatal`, `page_load_failed` | `kind`, `detail`, `page`, `code` | the "This page hit a problem" screens |
 | `message_sent` | `type` (text / image / video / audio / file / code), `reply`, `encrypted`, `group` | feature use |
 | `tray_send` | `files` (bucket) | attachment tray use |
